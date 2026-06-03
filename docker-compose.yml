@@ -1,0 +1,15 @@
+services:
+  planificador:
+    build: .
+    container_name: gyc-planificador
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # acceso al PostgreSQL/Prefect en la red local
+
+# Nota: el código (app/templates/static) va dentro de la imagen.
+# Tras cambiar código/plantillas:  docker compose up -d --build
+# Para hot-reload en desarrollo, ver docker-compose.dev.yml

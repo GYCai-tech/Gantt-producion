@@ -1,0 +1,27 @@
+# Entornos y artefactos locales (no deben entrar en la imagen)
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Secretos y datos locales
+.env
+.env.*
+
+# Desarrollo / temporales
+scratch/
+.git/
+.gitignore
+.idea/
+.vscode/
+*.log
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Documentación / otros no necesarios en runtime
+Organizacion-proyectos/
+README*.md

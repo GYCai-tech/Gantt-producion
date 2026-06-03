@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}GYC · Planificador de Producción{% endblock %}
+
+{% block body %}
+<div class="app">
+
+  <!-- ── Barra superior ── -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand__mark">GYC</div>
+      <div class="brand__name">Planificador de Producción<small>Carga de trabajo · tiempo real</small></div>
+    </div>
+
+    <div class="segmented" role="tablist" aria-label="Vista">
+      <button id="tab-empleado" class="is-active" onclick="App.setVista('empleado')">Operarios</button>
+      <button id="tab-maquina"  onclick="App.setVista('maquina')">Máquinas</button>
+    </div>
+
+    <div class="topbar__right">
+      <button class="btn-refresh" id="btn-refresh" onclick="App.refrescar()" title="Traer datos del ERP ahora">
+        <svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        <span id="refresh-label">Actualizar</span>
+      </button>
+      <span class="topbar__clock" id="clock"></span>
+    </div>
+  </header>
+
+  <!-- ── Espacio de trabajo ── -->
+  <div class="workspace">
+
+    <!-- Cola de trabajo -->
+    <aside class="backlog" id="backlog">
+      <div class="backlog__head">
+        <span class="backlog__title">Cola de trabajo</span>
+        <span class="pill-count" id="backlog-count">0</span>
+      </div>
+      <div class="search">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" placeholder="Buscar orden, operación o artículo…" oninput="App.filterBacklog(this.value)">
+      </div>
+      <div class="backlog__filters">
+        <div class="seg-sm" id="cola-tipo">
+          <button class="is-active" onclick="App.setColaTipo('todo')">Todo</button>
+          <button onclick="App.setColaTipo('bono')">Bonos</button>
+          <button onclick="App.setColaTipo('orden')">Órdenes</button>
+        </div>
+        <select class="select-sm" id="cola-orden" onchange="App.setColaOrden(this.value)" title="Ordenar por">
+          <option value="urgencia">Urgencia</option>
+          <option value="fecha">Fecha prevista</option>
+          <option value="tiempo">Tiempo estimado</option>
+        </select>
+      </div>
+      <div class="backlog__list" id="backlog-list"></div>
+    </aside>
+
+    <!-- Panel principal -->
+    <main class="panel">
+
+      <div class="controls">
+        <button class="icon-btn" title="Mostrar/ocultar cola de trabajo" onclick="App.toggleBacklog()" aria-label="Cola de trabajo">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="7" height="16" rx="1.5"/><path d="M14 4h7M14 9h7M14 14h7M14 19h7" stroke-linecap="round"/></svg>
+        </button>
+        <div class="sep"></div>
+        <button class="icon-btn" onclick="App.nav(-1)" aria-label="Anterior">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <span class="range-label" id="range-label"></span>
+        <button class="icon-btn" onclick="App.nav(1)" aria-label="Siguiente">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        <button class="btn" onclick="App.today()">Hoy</button>
+        <div class="sep"></div>
+        <div class="zoom" id="zoom"></div>
+        <div class="sep"></div>
+        <div class="zoom" id="carga">
+          <button class="is-active" onclick="App.setCarga('todos')">Todos</button>
+          <button onclick="App.setCarga('con')">Con carga</button>
+          <button onclick="App.setCarga('sin')">Libres</button>
+        </div>
+
+        <div class="summary" id="summary"></div>
+      </div>
+
+      <div class="areas" id="areas"></div>
+
+      <!-- Gantt -->
+      <div class="gantt" id="gantt">
+        <div class="gantt__inner" id="gantt-inner">
+          <div class="gantt__head">
+            <div class="gantt__corner" id="gantt-corner">Operarios</div>
+            <div class="axis" id="axis"></div>
+          </div>
+          <div class="gantt__main" id="gantt-main">
+            <div class="gantt__bg" id="gantt-bg"></div>
+            <div class="gantt__rows" id="gantt-rows"></div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<!-- Tooltip -->
+<div class="tip" id="tip"></div>
+
+<!-- Modal: asignar -->
+<div class="overlay" id="ov-asignar">
+  <div class="modal">
+    <div class="modal__head">
+      <div class="modal__title">Asignar orden <b id="a-orden"></b></div>
+      <button class="modal__close" onclick="App.closeModal('ov-asignar')">×</button>
+    </div>
+    <form onsubmit="App.submitAsignar(event)">
+      <div class="modal__body">
+        <div class="meta-line"><b id="a-art"></b> · <span id="a-cant"></span> uds · <span id="a-horas"></span> h estimadas</div>
+        <div class="meta-line" id="a-op-wrap" style="margin-top:-8px">Operación: <b id="a-op"></b></div>
+        <div class="field">
+          <label id="a-reclabel">Operario</label>
+          <select id="a-recurso" required></select>
+        </div>
+        <div class="field field--row">
+          <div><label>Inicio</label><input type="datetime-local" id="a-start" required oninput="App.recalcFin()"></div>
+          <div><label>Fin</label><input type="datetime-local" id="a-end" required></div>
+        </div>
+        <div class="field">
+          <label>Notas <span style="color:var(--ink-3);font-weight:500">(opcional)</span></label>
+          <textarea id="a-notas" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button type="button" class="btn" onclick="App.closeModal('ov-asignar')">Cancelar</button>
+        <button type="submit" class="btn btn--primary">Confirmar asignación</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: detalle -->
+<div class="overlay" id="ov-detalle">
+  <div class="modal modal--sm">
+    <div class="modal__head">
+      <div class="modal__title">Orden <b id="d-orden"></b></div>
+      <button class="modal__close" onclick="App.closeModal('ov-detalle')">×</button>
+    </div>
+    <div class="modal__body" id="d-body"></div>
+    <div class="modal__foot">
+      <button class="btn btn--danger" id="d-quitar" onclick="App.desprogramar()">Quitar de la planificación</button>
+      <button class="btn" onclick="App.closeModal('ov-detalle')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/app.js"></script>
+{% endblock %}
