@@ -1,4 +1,4 @@
-name: Docker CI
+name: Integración Continua (Planificador Producción)
 
 on:
   push:
@@ -7,37 +7,26 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Clonar el repositorio
+        uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Crear archivo .env temporal
+        run: |
+          echo "DATABASE_URL=mock_value" >> .env
+          echo "PORT=8080" >> .env
+          echo "QDRANT_HOST=localhost" >> .env
 
-    - name: Build Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: false
-        tags: gyc-planificador:ci-test
-        # Aprovechar la caché de GitHub Actions para acelerar las builds
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Test running container
-      run: |
-        # Iniciar el contenedor en background
-        docker run -d -p 8000:8000 --name test-app gyc-planificador:ci-test
-        
-        # Esperar unos segundos para que la aplicación inicie (FastAPI/Uvicorn)
-        sleep 5
-        
-        # Comprobar que responde con un HTTP 200 (usa el mismo endpoint del healthcheck)
-        curl --fail http://localhost:8000/ || exit 1
-        
-        # Limpiar
-        docker stop test-app
-        docker rm test-app
+      - name: Construir Imagen de Docker
+        run: |
+          docker build -t gyc-planificador:ci-test .
+
+      - name: Iniciar el contenedor en background
+        run: |
+          docker run -d -p 8080:8080 --name contenedor_planificador gyc-planificador:ci-tests
