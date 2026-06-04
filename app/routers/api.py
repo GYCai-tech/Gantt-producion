@@ -47,6 +47,22 @@ def add_work_minutes(start: datetime, minutes: float) -> datetime:
     return day
 
 
+def _snap_to_work(dt: datetime) -> datetime:
+    """Devuelve `dt` si cae dentro de un tramo de jornada; si no, el inicio del siguiente tramo."""
+    for _ in range(400):
+        if dt.weekday() >= 5:
+            dt = _next_workday_start(dt); continue
+        midnight = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        cm = (dt - midnight).total_seconds() / 60
+        for a, b in _SEGMENTOS:
+            if cm < a:
+                return midnight + timedelta(minutes=a)
+            if cm < b:
+                return dt
+        dt = _next_workday_start(dt)                          # día agotado
+    return dt
+
+
 def _estimar_fin(inicio: datetime, min_est: float, min_real: float, ahora: datetime) -> datetime:
     """Proyección de fin para un bono en curso sin fecha_fin_real."""
     min_rest = max(min_est - min_real, 0)
@@ -255,6 +271,95 @@ def get_items(
                 "operarios":  r["num_operarios"],
                 "notas":      None,
             })
+
+        # ── Vista de operarios: trabajado (pasado) + programado (futuro) ──
+        #  Sale de analytics.v_asignaciones_empleado (1 fila por empleado·orden·bono).
+        #  El "en curso" ya lo cubre el bloque de bonos activos de arriba.
+        if vista == "empleado":
+
+            # C) TRABAJADO: bonos completados, con inicio/fin reales del bono.
+            trabajado = conn.execute(text("""
+                SELECT idempleado, idorden, idbono, operacion, articulo,
+                       cantidad_pedida, fecha_prevista_fin, minutos_reales,
+                       piezas_producidas, fecha_inicio_real, fecha_fin_real
+                FROM analytics.v_asignaciones_empleado
+                WHERE fase = 'TRABAJADO'
+                  AND fecha_inicio_real IS NOT NULL AND fecha_fin_real IS NOT NULL
+                  AND fecha_inicio_real < :hasta AND fecha_fin_real > :desde
+            """), {"desde": desde, "hasta": hasta}).mappings().all()
+
+            for r in trabajado:
+                result.append({
+                    "id":         f"trab_{r['idempleado']}_{r['idorden']}_{r['idbono']}",
+                    "idorden":    str(r["idorden"]),
+                    "idbono":     r["idbono"],
+                    "recurso_id": str(r["idempleado"]),
+                    "tipo":       "trabajado",
+                    "estado":     "completado",
+                    "estado_label": "Completado",
+                    "situacion":  "COMPLETADO",
+                    "art":        r["articulo"],
+                    "operacion":  r["operacion"],
+                    "cantidad":   r["cantidad_pedida"],
+                    "prev":       r["fecha_prevista_fin"].isoformat() if r["fecha_prevista_fin"] else None,
+                    "start":      r["fecha_inicio_real"].isoformat(),
+                    "end":        r["fecha_fin_real"].isoformat(),
+                    "estimado":   False,
+                    "progreso":   None,
+                    "operarios":  None,
+                    "notas":      None,
+                    "min_real":   float(r["minutos_reales"]) if r["minutos_reales"] is not None else None,
+                    "piezas":     float(r["piezas_producidas"]) if r["piezas_producidas"] is not None else None,
+                })
+
+            # D) PROGRAMADO: bonos pendientes sin horas reales → cola futura por
+            #    empleado, arrancando en "ahora" y encadenando cada bono con su
+            #    duración estimada (tope visual para no desbordar el Gantt).
+            PROG_FALLBACK_MIN = 90       # sin histórico de su operación
+            PROG_CAP_MIN      = 1050     # tope visual: 2 jornadas efectivas
+            prog = conn.execute(text("""
+                SELECT idempleado, idorden, idbono, operacion, articulo,
+                       cantidad_pedida, fecha_prevista_fin, min_estimados
+                FROM analytics.v_asignaciones_empleado
+                WHERE fase = 'PROGRAMADO' AND estado_orden IN (0, 1)
+                ORDER BY idempleado, fecha_prevista_fin ASC NULLS LAST, idorden, idbono
+            """)).mappings().all()
+
+            queue_start = _snap_to_work(ahora.replace(second=0, microsecond=0))
+            emp_actual, cursor = None, queue_start
+            for r in prog:
+                if r["idempleado"] != emp_actual:
+                    emp_actual, cursor = r["idempleado"], queue_start
+                # Duración estimada → ancho de la barra. Tope visual; la estimación
+                # real se conserva en `min_est` (tooltip).
+                est_real = float(r["min_estimados"] or 0) or PROG_FALLBACK_MIN
+                dur      = min(est_real, PROG_CAP_MIN)
+                start = _snap_to_work(cursor)
+                fin   = add_work_minutes(start, dur)
+                cursor = fin
+                if fin <= desde or start >= hasta:
+                    continue
+                result.append({
+                    "id":         f"prog_{r['idempleado']}_{r['idorden']}_{r['idbono']}",
+                    "idorden":    str(r["idorden"]),
+                    "idbono":     r["idbono"],
+                    "recurso_id": str(r["idempleado"]),
+                    "tipo":       "programado",
+                    "estado":     "programado",
+                    "estado_label": "Programado",
+                    "situacion":  "PROGRAMADO",
+                    "art":        r["articulo"],
+                    "operacion":  r["operacion"],
+                    "cantidad":   r["cantidad_pedida"],
+                    "prev":       r["fecha_prevista_fin"].isoformat() if r["fecha_prevista_fin"] else None,
+                    "start":      start.isoformat(),
+                    "end":        fin.isoformat(),
+                    "estimado":   True,
+                    "progreso":   None,
+                    "operarios":  None,
+                    "notas":      None,
+                    "min_est":    round(est_real),
+                })
 
     return result
 

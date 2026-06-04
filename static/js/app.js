@@ -8,7 +8,7 @@ const App = (() => {
 
   // ── Configuración ──────────────────────────────────────────────────
   const RAIL = 232;
-  const BAR_H = 26, LANE_GAP = 5, ROW_PAD = 7;     // geometría de carriles
+  const BAR_H = 36, LANE_GAP = 7, ROW_PAD = 10;    // geometría de carriles
   const WORK_INI = 7, WORK_FIN = 16;               // jornada
   const VIS_MIN = (WORK_FIN - WORK_INI) * 60;      // 540 min visibles/día
   const BREAK = { ini: 11 * 60, fin: 11 * 60 + 15 };
@@ -26,12 +26,12 @@ const App = (() => {
   const ST_LABEL = {
     retrasada:'Retrasada', riesgo:'En riesgo', plazo:'En plazo', 'sin-estimar':'Sin estimar',
     vencida:'Vencida', urgente:'Urgente', normal:'En plazo', 'sin-fecha':'Sin fecha',
-    parada:'Parada', pausada:'Pausada',
+    parada:'Parada', pausada:'Pausada', completado:'Completado', programado:'Programado',
   };
   const ST_COLOR = {
     retrasada:'#d83b46', vencida:'#d83b46', riesgo:'#c4710c', urgente:'#c4710c',
     plazo:'#1f9254', normal:'#1f9254', 'sin-estimar':'#79859a', 'sin-fecha':'#79859a',
-    parada:'#9a4b52', pausada:'#5b6b8a',
+    parada:'#9a4b52', pausada:'#5b6b8a', completado:'#6b7689', programado:'#5b63b0',
   };
   const SITU_KEY = { PARADA:'parada', PAUSADA:'pausada' };
 
@@ -372,12 +372,21 @@ const App = (() => {
       if (it.progreso != null) rows.push(`<div class="tip__row">Progreso <span>${it.progreso}%</span></div>`);
       if (it.operarios) rows.push(`<div class="tip__row">Operarios <span>${it.operarios}</span></div>`);
     }
-    rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}</span></div>`);
+    if (it.tipo === 'trabajado') {
+      if (it.min_real != null) rows.push(`<div class="tip__row">Tiempo real <span>${Math.round(it.min_real)} min</span></div>`);
+      if (it.piezas) rows.push(`<div class="tip__row">Piezas <span>${it.piezas}</span></div>`);
+    }
+    if (it.tipo === 'programado' && it.min_est != null) {
+      const h = it.min_est / 60;
+      rows.push(`<div class="tip__row">Duración est. <span>${h >= 1 ? h.toFixed(1) + ' h' : it.min_est + ' min'}</span></div>`);
+    }
+    rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}${it.tipo === 'programado' ? ' ~' : ''}</span></div>`);
     rows.push(`<div class="tip__row">Fin <span>${fmtDt(it.end)}${it.estimado ? ' ~' : ''}</span></div>`);
     if (it.prev) rows.push(`<div class="tip__row">Prevista <span>${fmtDate(it.prev)}</span></div>`);
     if (it.notas) rows.push(`<div class="tip__row">Notas <span>${esc(it.notas)}</span></div>`);
+    const MARK = { real:'▶ ', trabajado:'✓ ', programado:'◷ ' };
     const badge = `<span style="color:${ST_COLOR[it.estado]}">●</span> ${ST_LABEL[it.estado] || it.estado_label}`;
-    tip.innerHTML = `<b>${it.tipo === 'real' ? '▶ ' : ''}${esc(it.idorden)}</b> — ${esc(it.art || '')}<hr>${rows.join('')}` +
+    tip.innerHTML = `<b>${MARK[it.tipo] || ''}${esc(it.idorden)}</b> — ${esc(it.art || '')}<hr>${rows.join('')}` +
                     `<div class="tip__row" style="margin-top:6px">Estado <span>${badge}</span></div>`;
     tip.classList.add('is-visible');
     moveTip(e);
@@ -617,12 +626,15 @@ const App = (() => {
     const bar = document.querySelector(`.bar[data-id="${CSS.escape(String(id))}"]`);
     if (bar) bar.classList.add('is-selected');
 
-    const real = it.tipo === 'real';
+    const editable = it.tipo === 'planificado';
     const grp = grupos.find(g => String(g.id) === String(it.recurso_id));
     $('d-orden').textContent = it.idorden;
-    const aviso = real
-      ? `<div class="notice">▶ ${esc(it.situacion || 'EN CURSO')} (ERP) · solo lectura${it.estimado ? ' · fin estimado' : ''}</div>`
-      : '';
+    const AVISO = {
+      real:       `▶ ${esc(it.situacion || 'EN CURSO')} (ERP) · solo lectura${it.estimado ? ' · fin estimado' : ''}`,
+      trabajado:  `✓ Completado (ERP) · solo lectura`,
+      programado: `◷ Programado (ERP) · cola estimada · solo lectura`,
+    };
+    const aviso = editable ? '' : `<div class="notice">${AVISO[it.tipo] || ''}</div>`;
     $('d-body').innerHTML = aviso +
       `<dl class="dl">
         <dt>${vista === 'empleado' ? 'Operario' : 'Máquina'}</dt><dd>${esc(grp ? grp.nombre : it.recurso_id)}</dd>
@@ -634,7 +646,7 @@ const App = (() => {
         ${it.prev ? `<dt>Prevista</dt><dd>${fmtDate(it.prev)}</dd>` : ''}
         ${it.notas ? `<dt>Notas</dt><dd>${esc(it.notas)}</dd>` : ''}
       </dl>`;
-    $('d-quitar').style.display = real ? 'none' : '';
+    $('d-quitar').style.display = editable ? '' : 'none';
     openModal('ov-detalle');
   }
 
@@ -685,11 +697,16 @@ const App = (() => {
     $('range-label').textContent = days.length === 1 ? a : `${a} — ${b}`;
   }
   function updateSummary() {
-    const plan = items.filter(i => i.tipo === 'planificado').length;
-    const real = items.filter(i => i.tipo === 'real').length;
-    $('summary').innerHTML =
-      `<span><span class="dot" style="background:var(--accent)"></span><b>${plan}</b> asignadas</span>` +
-      `<span><span class="dot" style="background:var(--verde)"></span><b>${real}</b> en curso</span>`;
+    const n = t => items.filter(i => i.tipo === t).length;
+    const parts = [
+      `<span><span class="dot" style="background:var(--accent)"></span><b>${n('planificado')}</b> asignadas</span>`,
+      `<span><span class="dot" style="background:var(--verde)"></span><b>${n('real')}</b> en curso</span>`,
+    ];
+    if (vista === 'empleado') {
+      parts.push(`<span><span class="dot" style="background:#6b7689"></span><b>${n('trabajado')}</b> trabajadas</span>`);
+      parts.push(`<span><span class="dot" style="background:#5b63b0"></span><b>${n('programado')}</b> programadas</span>`);
+    }
+    $('summary').innerHTML = parts.join('');
   }
 
   function setCarga(v) {
