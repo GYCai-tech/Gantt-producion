@@ -25,31 +25,28 @@ jobs:
         run: |
           docker build -t gyc-planificador:ci-test .
 
-  # 🚀 TRABAJO 2: Conectarse a tu Debian y actualizar la app en vivo
+  # 🚀 TRABAJO 2: Desplegar directamente en el servidor (self-hosted runner)
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: build-and-test # Solo se ejecuta si el build de arriba dio verde ✅
-    
+
     steps:
-      - name: Conectar al servidor Debian vía SSH y reiniciar Docker
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          password: ${{ secrets.SERVER_PASSWORD }}
-          script: |
-            # 1. Entrar a la carpeta real que acabas de clonar con éxito
-            cd /home/goyco/apps/control_producion
-            
-            # 2. Descargar los últimos cambios (usará el token memorizado)
-            git pull origin main
-            
-            # 3. Detener y limpiar el contenedor viejo en producción usando sudo
-            sudo docker stop contenedor_planificador || true
-            sudo docker rm contenedor_planificador || true
-            
-            # 4. Reconstruir la imagen real en tu servidor Debian
-            sudo docker build -t gyc-planificador:latest .
-            
-            # 5. Volver a encender el contenedor actualizado en el puerto que desees (ej: 8085)
-            sudo docker run -d -p 8085:8080 --name contenedor_planificador gyc-planificador:latest
+      - name: Clonar el repositorio en el servidor
+        uses: actions/checkout@v4
+
+      - name: Reconstruir y reiniciar el contenedor
+        working-directory: /home/goyco/apps/control_producion
+        run: |
+          git pull origin main
+
+          docker stop contenedor_planificador || true
+          docker rm   contenedor_planificador || true
+
+          docker build -t gyc-planificador:latest .
+
+          docker run -d \
+            -p 8085:8080 \
+            --name contenedor_planificador \
+            --env-file .env \
+            --restart unless-stopped \
+            gyc-planificador:latest
