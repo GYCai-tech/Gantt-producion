@@ -31,22 +31,15 @@ jobs:
     needs: build-and-test # Solo se ejecuta si el build de arriba dio verde ✅
 
     steps:
-      - name: Clonar el repositorio en el servidor
-        uses: actions/checkout@v4
-
       - name: Reconstruir y reiniciar el contenedor
         working-directory: /home/goyco/apps/control_producion
         run: |
           git pull origin main
 
-          docker stop contenedor_planificador || true
-          docker rm   contenedor_planificador || true
+          # Detener y eliminar el despliegue anterior (incluye contenedores huérfanos)
+          docker compose down --remove-orphans || true
+          # Por si quedó un contenedor huérfano con el nombre fijo de un despliegue antiguo
+          docker rm -f gyc-planificador || true
 
-          docker build -t gyc-planificador:latest .
-
-          docker run -d \
-            -p 8085:8080 \
-            --name contenedor_planificador \
-            --env-file .env \
-            --restart unless-stopped \
-            gyc-planificador:latest
+          # Reconstruir y levantar usando docker-compose.yml
+          docker compose up -d --build
