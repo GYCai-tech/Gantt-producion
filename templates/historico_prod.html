@@ -114,47 +114,56 @@
     box-shadow: var(--shadow-2); line-height: 1.5;
   }
 
-  /* ── Orden cards ── */
-  .hp-orders { display: flex; flex-direction: column; gap: 12px; }
-  .order-card {
+  /* ── Bono cards (una por bono) ── */
+  .hp-bonos { display: flex; flex-direction: column; gap: 6px; }
+
+  .bono-card {
     background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-    overflow: hidden;
+    overflow: hidden; transition: box-shadow .15s;
   }
-  .order-card__head {
-    display: flex; align-items: center; gap: 14px;
-    padding: 12px 16px; border-bottom: 1px solid var(--line-2); cursor: pointer;
-    user-select: none;
+  .bono-card:hover { box-shadow: var(--shadow-1); }
+
+  .bono-card__head {
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 16px; cursor: pointer; user-select: none;
   }
-  .order-card__head:hover { background: var(--surface-2); }
+  .bono-card__head:hover { background: var(--surface-2); }
+  .bono-card.open .bono-card__head { border-bottom: 1px solid var(--line-2); }
+
   .order-badge {
-    background: var(--brand); color: #fff; font-size: 11px; font-weight: 700;
-    padding: 3px 8px; border-radius: 5px; letter-spacing: .04em; flex-shrink: 0;
+    background: var(--brand); color: #fff; font-size: 10.5px; font-weight: 700;
+    padding: 2px 7px; border-radius: 5px; letter-spacing: .04em; flex-shrink: 0;
   }
-  .order-card__art { font-size: 14px; font-weight: 600; color: var(--ink); flex: 1; min-width: 0; }
-  .order-card__art small { display: block; font-size: 11.5px; font-weight: 400; color: var(--ink-3); }
-  .order-card__meta { display: flex; gap: 16px; margin-left: auto; flex-shrink: 0; }
-  .order-card__meta-item { font-size: 12px; color: var(--ink-3); text-align: right; }
-  .order-card__meta-item strong { display: block; font-size: 13.5px; color: var(--ink); font-weight: 600; }
-  .order-card__chevron { color: var(--ink-3); font-size: 16px; transition: transform .2s; flex-shrink: 0; }
-  .order-card.open .order-card__chevron { transform: rotate(180deg); }
 
-  .order-card__bonos { padding: 0 16px 12px; display: none; }
-  .order-card.open .order-card__bonos { display: block; }
+  .bono-card__info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .bono-card__art  { font-size: 13.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bono-card__sub  { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .bono-card__sub-text { font-size: 12px; color: var(--ink-2); }
 
-  .bono-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
-  .bono-table th {
-    text-align: left; padding: 7px 10px; font-size: 11px; font-weight: 600;
-    color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em;
-    border-bottom: 1px solid var(--line);
+  .bono-card__right { display: flex; align-items: center; gap: 16px; margin-left: auto; flex-shrink: 0; }
+  .bono-card__date  { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .bono-card__hrs   { font-size: 13px; font-weight: 600; color: var(--ink); min-width: 52px; text-align: right; }
+  .bono-card__chev  { color: var(--ink-3); font-size: 15px; transition: transform .2s; }
+  .bono-card.open .bono-card__chev { transform: rotate(180deg); }
+
+  /* Panel de detalle de la orden */
+  .bono-card__detail { display: none; padding: 14px 16px; background: var(--surface-2); }
+  .bono-card.open .bono-card__detail { display: block; }
+
+  .detail-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px 24px;
   }
-  .bono-table td { padding: 9px 10px; border-bottom: 1px solid var(--line-2); color: var(--ink); }
-  .bono-table tr:last-child td { border-bottom: none; }
-  .bono-table tr:hover td { background: var(--surface-2); }
+  .detail-item { display: flex; flex-direction: column; gap: 2px; }
+  .detail-item__label { font-size: 10.5px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
+  .detail-item__value { font-size: 13.5px; color: var(--ink); font-weight: 500; }
+
+  /* Pills */
   .pill {
     display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600;
   }
   .pill-maquina { background: var(--accent-2); color: var(--accent); }
   .pill-bono    { background: var(--gris-bg);  color: var(--gris); }
+  .pill-op      { background: var(--ambar-bg); color: var(--ambar); }
 
   /* ── Empty / loading ── */
   .hp-empty {
@@ -417,68 +426,91 @@
       <p class="hp-section-title">Actividad diaria</p>
       <div class="heatmap-wrap">${buildHeatmap(actividad, desde, hasta)}</div>`;
 
-    // Agrupar bonos por orden
-    const byOrder = {};
-    bonos.forEach(b => {
-      if (!byOrder[b.idorden]) byOrder[b.idorden] = { articulo: b.articulo, primera_fecha: b.primera_fecha, bonos: [] };
-      byOrder[b.idorden].bonos.push(b);
-    });
+    // Una card por bono
+    const bonoCards = bonos.map(b => {
+      const horas = b.minutos_trabajados ? (b.minutos_trabajados / 60).toFixed(2) + ' h' : '—';
+      const opPill = b.operacion
+        ? `<span class="pill pill-op">${escHtml(b.operacion)}</span>`
+        : '';
+      const maqPill = b.matricula_maquina
+        ? `<span class="pill pill-maquina">${escHtml(b.matricula_maquina)}</span>`
+        : '';
+      const bonoPill = `<span class="pill pill-bono">Bono ${b.idbono}</span>`;
 
-    const orderCards = Object.entries(byOrder).map(([idorden, data]) => {
-      const totalH = data.bonos.reduce((s, b) => s + (b.minutos_trabajados || 0), 0) / 60;
-      const fechaFmt = formatDate(data.primera_fecha);
-      const bonosRows = data.bonos.map(b => `
-        <tr>
-          <td><span class="pill pill-bono">Bono ${b.idbono}</span></td>
-          <td>${b.operacion ? escHtml(b.operacion) : '<span style="color:var(--ink-3)">—</span>'}</td>
-          <td>${b.matricula_maquina ? `<span class="pill pill-maquina">${escHtml(b.matricula_maquina)}</span>` : '<span style="color:var(--ink-3)">—</span>'}</td>
-          <td>${formatDate(b.primera_fecha)}</td>
-          <td style="text-align:right">${b.minutos_trabajados ? (b.minutos_trabajados / 60).toFixed(2) + ' h' : '—'}</td>
-        </tr>`).join('');
+      const fpFmt = b.fecha_prevista_fin ? formatDate(b.fecha_prevista_fin) : '—';
+      const cantidad = b.cantidad_pedida != null ? b.cantidad_pedida : '—';
 
       return `
-        <div class="order-card" data-order="${idorden}">
-          <div class="order-card__head">
-            <span class="order-badge">#${idorden}</span>
-            <div class="order-card__art">
-              ${escHtml(data.articulo || '')}
-              <small>Primera actividad: ${fechaFmt} · ${data.bonos.length} bono${data.bonos.length !== 1 ? 's' : ''}</small>
-            </div>
-            <div class="order-card__meta">
-              <div class="order-card__meta-item">
-                <strong>${totalH.toFixed(1)} h</strong>
-                horas totales
-              </div>
-              <div class="order-card__meta-item">
-                <strong>${data.bonos.length}</strong>
-                bonos
+        <div class="bono-card">
+          <div class="bono-card__head">
+            <span class="order-badge">#${b.idorden}</span>
+            <div class="bono-card__info">
+              <div class="bono-card__art">${escHtml(b.articulo || b.idarticulo || '')}</div>
+              <div class="bono-card__sub">
+                ${bonoPill}
+                ${opPill}
+                ${maqPill}
               </div>
             </div>
-            <span class="order-card__chevron">&#8964;</span>
+            <div class="bono-card__right">
+              <span class="bono-card__date">${formatDate(b.primera_fecha)}</span>
+              <span class="bono-card__hrs">${horas}</span>
+              <span class="bono-card__chev">&#8964;</span>
+            </div>
           </div>
-          <div class="order-card__bonos">
-            <table class="bono-table">
-              <thead>
-                <tr>
-                  <th>Bono</th><th>Operación</th><th>Máquina</th><th>Primera fecha</th><th style="text-align:right">Horas</th>
-                </tr>
-              </thead>
-              <tbody>${bonosRows}</tbody>
-            </table>
+          <div class="bono-card__detail">
+            <div class="detail-grid">
+              <div class="detail-item">
+                <span class="detail-item__label">Orden</span>
+                <span class="detail-item__value">${b.idorden}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-item__label">Artículo</span>
+                <span class="detail-item__value">${escHtml(b.idarticulo || '')} — ${escHtml(b.articulo || '')}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-item__label">Operación</span>
+                <span class="detail-item__value">${b.operacion ? escHtml(b.operacion) : '—'}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-item__label">Bono</span>
+                <span class="detail-item__value">${b.idbono}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-item__label">Máquina</span>
+                <span class="detail-item__value">${b.matricula_maquina ? escHtml(b.matricula_maquina) : '—'}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-item__label">Primera actividad</span>
+                <span class="detail-item__value">${formatDate(b.primera_fecha)}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-item__label">Cantidad pedida</span>
+                <span class="detail-item__value">${cantidad}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-item__label">Fecha prevista fin</span>
+                <span class="detail-item__value">${fpFmt}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-item__label">Horas trabajadas</span>
+                <span class="detail-item__value">${horas}</span>
+              </div>
+            </div>
           </div>
         </div>`;
     }).join('');
 
     const ordersSection = `
-      <p class="hp-section-title">Órdenes y bonos (${Object.keys(byOrder).length})</p>
-      <div class="hp-orders">${orderCards}</div>`;
+      <p class="hp-section-title">Bonos trabajados (${bonos.length})</p>
+      <div class="hp-bonos">${bonoCards}</div>`;
 
     hpResults.innerHTML = statsHtml + heatmapHtml + ordersSection;
 
     // Eventos accordion
-    hpResults.querySelectorAll('.order-card__head').forEach(head => {
+    hpResults.querySelectorAll('.bono-card__head').forEach(head => {
       head.addEventListener('click', () => {
-        head.closest('.order-card').classList.toggle('open');
+        head.closest('.bono-card').classList.toggle('open');
       });
     });
 

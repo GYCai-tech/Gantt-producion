@@ -603,6 +603,8 @@ def get_historico_bonos(
                 MIN(f.hinicial)::date                            AS primera_fecha,
                 o.idarticulo,
                 COALESCE(da.descrip, o.idarticulo::text)        AS articulo,
+                o.cantidad_pedida,
+                o.fecha_prevista_fin,
                 de.nombre_completo,
                 ROUND(SUM(
                     CASE WHEN f.hfinal IS NOT NULL
@@ -622,7 +624,8 @@ def get_historico_bonos(
               AND f.hinicial >= :desde
               AND f.hinicial <  :hasta_excl
             GROUP BY f.idorden, f.idbono, fb.operacion, f.matricula_maquina,
-                     o.idarticulo, da.descrip, de.nombre_completo
+                     o.idarticulo, da.descrip, o.cantidad_pedida, o.fecha_prevista_fin,
+                     de.nombre_completo
             ORDER BY MIN(f.hinicial) DESC
         """), {"idempleado": idempleado, "desde": desde_dt, "hasta_excl": hasta_excl}).mappings().all()
     return [dict(r) for r in rows]
