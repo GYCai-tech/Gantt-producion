@@ -580,6 +580,84 @@ def refrescar():
     return {"flow_run_id": data.get("id"), "estado": (data.get("state") or {}).get("type")}
 
 
+# ─────────────────────────────────────────────────────────────────────
+#  HISTÓRICO DE PRODUCCIÓN POR EMPLEADO
+# ─────────────────────────────────────────────────────────────────────
+
+@router.get("/historico/bonos")
+def get_historico_bonos(
+    idempleado: int = Query(...),
+    desde: datetime = Query(...),
+    hasta: datetime = Query(...),
+):
+    desde_dt = desde.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    hasta_excl = (hasta + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                f.idorden::text                                  AS idorden,
+                f.idbono,
+                fb.operacion,
+                f.matricula_maquina,
+                MIN(f.hinicial)::date                            AS primera_fecha,
+                o.idarticulo,
+                COALESCE(da.descrip, o.idarticulo::text)        AS articulo,
+                de.nombre_completo,
+                ROUND(SUM(
+                    CASE WHEN f.hfinal IS NOT NULL
+                         THEN EXTRACT(EPOCH FROM (f.hfinal - f.hinicial)) / 60.0
+                         ELSE 0 END
+                )::numeric, 1)                                   AS minutos_trabajados
+            FROM core.fact_fichajes f
+            JOIN core.fact_ordenes o
+                ON f.idorden::text = o.idorden::text
+            LEFT JOIN core.fact_bonos fb
+                ON f.idorden::text = fb.idorden::text AND f.idbono = fb.idbono
+            JOIN core.dim_empleados de
+                ON f.idempleado = de.idempleado
+            LEFT JOIN core.dim_articulo da
+                ON o.idarticulo = da.idarticulo
+            WHERE f.idempleado = :idempleado
+              AND f.hinicial >= :desde
+              AND f.hinicial <  :hasta_excl
+            GROUP BY f.idorden, f.idbono, fb.operacion, f.matricula_maquina,
+                     o.idarticulo, da.descrip, de.nombre_completo
+            ORDER BY MIN(f.hinicial) DESC
+        """), {"idempleado": idempleado, "desde": desde_dt, "hasta_excl": hasta_excl}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.get("/historico/actividad-diaria")
+def get_actividad_diaria(
+    idempleado: int = Query(...),
+    desde: datetime = Query(...),
+    hasta: datetime = Query(...),
+):
+    desde_dt = desde.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    hasta_excl = (hasta + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                f.hinicial::date                              AS fecha,
+                COUNT(DISTINCT f.idorden::text || '-' || f.idbono::text) AS num_bonos,
+                COUNT(DISTINCT f.idorden)                    AS num_ordenes,
+                ROUND(SUM(
+                    CASE WHEN f.hfinal IS NOT NULL
+                         THEN EXTRACT(EPOCH FROM (f.hfinal - f.hinicial)) / 60.0
+                         ELSE 0 END
+                )::numeric, 1)                               AS minutos_trabajados
+            FROM core.fact_fichajes f
+            WHERE f.idempleado = :idempleado
+              AND f.hinicial >= :desde
+              AND f.hinicial <  :hasta_excl
+            GROUP BY f.hinicial::date
+            ORDER BY f.hinicial::date
+        """), {"idempleado": idempleado, "desde": desde_dt, "hasta_excl": hasta_excl}).mappings().all()
+    return [dict(r) for r in rows]
+
+
 @router.get("/refrescar/{flow_run_id}")
 def refrescar_estado(flow_run_id: str):
     """Consulta el estado de un flow run (para sondear hasta que termine)."""

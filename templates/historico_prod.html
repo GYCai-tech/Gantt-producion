@@ -1,0 +1,586 @@
+{% extends "base.html" %}
+
+{% block title %}GYC · Histórico de Producción{% endblock %}
+
+{% block head %}
+<style>
+  /* ── Layout ── */
+  .hp-page { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+  /* ── Título ── */
+  .hp-title { font-size: 20px; font-weight: 700; letter-spacing: -.02em; color: var(--ink); margin: 0 0 20px; }
+  .hp-title span { color: var(--ink-3); font-weight: 400; font-size: 14px; margin-left: 10px; }
+
+  /* ── Filtros ── */
+  .hp-filters {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px 20px; margin-bottom: 24px;
+  }
+  .hp-field { display: flex; flex-direction: column; gap: 5px; }
+  .hp-label { font-size: 11px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
+
+  /* Picker de empleado (custom searchable) */
+  .emp-picker { position: relative; width: 280px; }
+  .emp-search-input {
+    width: 100%; padding: 8px 36px 8px 12px; font-size: 14px; font-family: inherit;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2);
+    color: var(--ink); outline: none; transition: border-color .15s;
+  }
+  .emp-search-input:focus { border-color: var(--accent); background: var(--surface); }
+  .emp-search-icon {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    color: var(--ink-3); pointer-events: none; font-size: 15px;
+  }
+  .emp-dropdown {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: var(--shadow-2); max-height: 260px; overflow-y: auto; display: none;
+  }
+  .emp-dropdown.open { display: block; }
+  .emp-option {
+    padding: 9px 14px; font-size: 13.5px; cursor: pointer; color: var(--ink);
+    display: flex; flex-direction: column; gap: 1px; border-bottom: 1px solid var(--line-2);
+  }
+  .emp-option:last-child { border-bottom: none; }
+  .emp-option:hover, .emp-option.selected { background: var(--accent-2); color: var(--accent); }
+  .emp-option small { font-size: 11px; color: var(--ink-3); }
+  .emp-option.selected small { color: var(--accent); opacity: .8; }
+  .emp-none { padding: 16px; text-align: center; color: var(--ink-3); font-size: 13px; }
+
+  /* Date inputs */
+  .date-input {
+    padding: 8px 12px; font-size: 14px; font-family: inherit;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2);
+    color: var(--ink); outline: none; transition: border-color .15s;
+  }
+  .date-input:focus { border-color: var(--accent); background: var(--surface); }
+
+  /* Botón consultar */
+  .btn-consultar {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 20px; font-size: 14px; font-weight: 600; font-family: inherit;
+    background: var(--accent); color: #fff; border: none; border-radius: 8px;
+    cursor: pointer; transition: opacity .15s; white-space: nowrap;
+  }
+  .btn-consultar:hover { opacity: .88; }
+  .btn-consultar:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* ── Stats ── */
+  .hp-stats {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px;
+  }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px 20px; display: flex; flex-direction: column; gap: 4px;
+  }
+  .stat-card__value { font-size: 28px; font-weight: 700; color: var(--ink); letter-spacing: -.03em; line-height: 1; }
+  .stat-card__label { font-size: 12px; color: var(--ink-3); font-weight: 500; }
+  .stat-card--accent .stat-card__value { color: var(--accent); }
+
+  /* ── Heatmap ── */
+  .hp-section-title {
+    font-size: 13px; font-weight: 600; color: var(--ink-2); text-transform: uppercase;
+    letter-spacing: .07em; margin: 0 0 12px;
+  }
+  .heatmap-wrap {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px 20px; margin-bottom: 24px; overflow-x: auto;
+  }
+  .heatmap-grid { display: flex; flex-direction: column; gap: 6px; min-width: 600px; }
+  .heatmap-week { display: flex; gap: 4px; align-items: flex-end; }
+  .heatmap-day {
+    width: 32px; height: 32px; border-radius: 5px; cursor: default;
+    transition: transform .1s; position: relative; flex-shrink: 0;
+    background: var(--line-2);
+  }
+  .heatmap-day:hover { transform: scale(1.15); z-index: 5; }
+  .heatmap-day[data-level="1"] { background: #b8d4f8; }
+  .heatmap-day[data-level="2"] { background: #6da8f0; }
+  .heatmap-day[data-level="3"] { background: #2f6feb; }
+  .heatmap-day[data-level="4"] { background: #1a4db8; }
+  .heatmap-day.weekend { opacity: .35; }
+  .heatmap-day.future { background: transparent; border: 1px dashed var(--line); }
+  .heatmap-labels { display: flex; gap: 4px; margin-bottom: 4px; }
+  .heatmap-labels .day-lbl {
+    width: 32px; text-align: center; font-size: 10px; font-weight: 600;
+    color: var(--ink-3); text-transform: uppercase; letter-spacing: .04em; flex-shrink: 0;
+  }
+  /* Tooltip via title is used; custom tooltip: */
+  .hm-tooltip {
+    position: fixed; z-index: 200; background: var(--ink); color: #fff;
+    font-size: 12px; border-radius: 6px; padding: 7px 10px; pointer-events: none;
+    opacity: 0; transition: opacity .12s; white-space: nowrap;
+    box-shadow: var(--shadow-2); line-height: 1.5;
+  }
+
+  /* ── Orden cards ── */
+  .hp-orders { display: flex; flex-direction: column; gap: 12px; }
+  .order-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .order-card__head {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line-2); cursor: pointer;
+    user-select: none;
+  }
+  .order-card__head:hover { background: var(--surface-2); }
+  .order-badge {
+    background: var(--brand); color: #fff; font-size: 11px; font-weight: 700;
+    padding: 3px 8px; border-radius: 5px; letter-spacing: .04em; flex-shrink: 0;
+  }
+  .order-card__art { font-size: 14px; font-weight: 600; color: var(--ink); flex: 1; min-width: 0; }
+  .order-card__art small { display: block; font-size: 11.5px; font-weight: 400; color: var(--ink-3); }
+  .order-card__meta { display: flex; gap: 16px; margin-left: auto; flex-shrink: 0; }
+  .order-card__meta-item { font-size: 12px; color: var(--ink-3); text-align: right; }
+  .order-card__meta-item strong { display: block; font-size: 13.5px; color: var(--ink); font-weight: 600; }
+  .order-card__chevron { color: var(--ink-3); font-size: 16px; transition: transform .2s; flex-shrink: 0; }
+  .order-card.open .order-card__chevron { transform: rotate(180deg); }
+
+  .order-card__bonos { padding: 0 16px 12px; display: none; }
+  .order-card.open .order-card__bonos { display: block; }
+
+  .bono-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .bono-table th {
+    text-align: left; padding: 7px 10px; font-size: 11px; font-weight: 600;
+    color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em;
+    border-bottom: 1px solid var(--line);
+  }
+  .bono-table td { padding: 9px 10px; border-bottom: 1px solid var(--line-2); color: var(--ink); }
+  .bono-table tr:last-child td { border-bottom: none; }
+  .bono-table tr:hover td { background: var(--surface-2); }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600;
+  }
+  .pill-maquina { background: var(--accent-2); color: var(--accent); }
+  .pill-bono    { background: var(--gris-bg);  color: var(--gris); }
+
+  /* ── Empty / loading ── */
+  .hp-empty {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 48px; text-align: center; color: var(--ink-3); font-size: 14px;
+  }
+  .hp-empty svg { display: block; margin: 0 auto 16px; color: var(--line); }
+  .hp-spinner {
+    display: inline-block; width: 20px; height: 20px;
+    border: 3px solid var(--accent-2); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hp-loading { display: none; align-items: center; gap: 10px; color: var(--ink-3); font-size: 13px; }
+  .hp-loading.visible { display: flex; }
+
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .hp-stats { grid-template-columns: repeat(2, 1fr); }
+    .emp-picker { width: 100%; }
+    .hp-filters { flex-direction: column; }
+  }
+  @media (max-width: 600px) {
+    .hp-stats { grid-template-columns: 1fr 1fr; }
+    .order-card__meta { display: none; }
+  }
+
+  /* ── Navbar override ── */
+  .app-navbar { display: flex; align-items: center; justify-content: space-between; padding: 0 24px; height: 52px; background: var(--surface); border-bottom: 1px solid var(--line); }
+  .navbar-brand { font-size: 15px; font-weight: 700; color: var(--ink); letter-spacing: -.01em; }
+  .navbar-links { display: flex; gap: 4px; }
+  .nav-link { padding: 6px 14px; font-size: 13.5px; font-weight: 500; color: var(--ink-2); text-decoration: none; border-radius: 7px; transition: background .12s, color .12s; }
+  .nav-link:hover { background: var(--accent-2); color: var(--accent); }
+  .nav-link.active { background: var(--accent); color: #fff; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="hp-page">
+
+  <h1 class="hp-title">Histórico de Producción <span>por empleado</span></h1>
+
+  <!-- ── Filtros ── -->
+  <div class="hp-filters">
+
+    <!-- Empleado (searchable) -->
+    <div class="hp-field" style="flex:1; min-width:220px;">
+      <label class="hp-label">Empleado</label>
+      <div class="emp-picker">
+        <input type="text" id="emp-search" class="emp-search-input" placeholder="Buscar empleado…" autocomplete="off">
+        <span class="emp-search-icon">⌕</span>
+        <div id="emp-dropdown" class="emp-dropdown" role="listbox"></div>
+        <input type="hidden" id="emp-id">
+      </div>
+    </div>
+
+    <!-- Desde -->
+    <div class="hp-field">
+      <label class="hp-label">Desde</label>
+      <input type="date" id="f-desde" class="date-input">
+    </div>
+
+    <!-- Hasta -->
+    <div class="hp-field">
+      <label class="hp-label">Hasta</label>
+      <input type="date" id="f-hasta" class="date-input">
+    </div>
+
+    <!-- Botón -->
+    <div class="hp-field">
+      <label class="hp-label">&nbsp;</label>
+      <button class="btn-consultar" id="btn-consultar" disabled>
+        <span id="btn-icon">&#128269;</span> Consultar
+      </button>
+    </div>
+
+    <!-- Spinner -->
+    <div class="hp-loading" id="hp-loading">
+      <span class="hp-spinner"></span> Cargando…
+    </div>
+
+  </div>
+
+  <!-- ── Resultados (inicialmente vacíos) ── -->
+  <div id="hp-results">
+    <div class="hp-empty">
+      <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z"/>
+      </svg>
+      Selecciona un empleado y un periodo para ver su historial de producción.
+    </div>
+  </div>
+
+</div>
+
+<!-- Tooltip flotante para el heatmap -->
+<div class="hm-tooltip" id="hm-tooltip"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  'use strict';
+
+  // ── Estado ──────────────────────────────────────────────────────────
+  let employees = [];
+  let selectedEmp = null;   // { id, nombre, grupo }
+
+  // ── Elementos ───────────────────────────────────────────────────────
+  const empSearch   = document.getElementById('emp-search');
+  const empDropdown = document.getElementById('emp-dropdown');
+  const empIdInput  = document.getElementById('emp-id');
+  const fDesde      = document.getElementById('f-desde');
+  const fHasta      = document.getElementById('f-hasta');
+  const btnConsultar= document.getElementById('btn-consultar');
+  const hpResults   = document.getElementById('hp-results');
+  const hpLoading   = document.getElementById('hp-loading');
+  const hmTooltip   = document.getElementById('hm-tooltip');
+
+  // ── Fechas por defecto: último mes ──────────────────────────────────
+  const hoy = new Date();
+  const hace30 = new Date(hoy); hace30.setDate(hoy.getDate() - 30);
+  fDesde.value = hace30.toISOString().slice(0, 10);
+  fHasta.value = hoy.toISOString().slice(0, 10);
+
+  // ── Cargar empleados ─────────────────────────────────────────────────
+  fetch('/api/recursos?tipo=empleado')
+    .then(r => r.json())
+    .then(data => {
+      employees = data;
+    });
+
+  // ── Picker de empleado (custom searchable) ───────────────────────────
+  empSearch.addEventListener('focus', () => renderDropdown(empSearch.value));
+  empSearch.addEventListener('input', () => {
+    selectedEmp = null;
+    empIdInput.value = '';
+    updateBtn();
+    renderDropdown(empSearch.value);
+  });
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.emp-picker')) closeDropdown();
+  });
+
+  function renderDropdown(q) {
+    const term = q.trim().toLowerCase();
+    const filtered = term
+      ? employees.filter(e =>
+          e.nombre.toLowerCase().includes(term) ||
+          e.id.includes(term) ||
+          (e.grupo || '').toLowerCase().includes(term))
+      : employees.slice(0, 80);
+
+    if (!filtered.length) {
+      empDropdown.innerHTML = '<div class="emp-none">Sin resultados</div>';
+    } else {
+      empDropdown.innerHTML = filtered.map(e => `
+        <div class="emp-option${selectedEmp && selectedEmp.id === e.id ? ' selected' : ''}"
+             data-id="${e.id}" data-nombre="${escHtml(e.nombre)}" data-grupo="${escHtml(e.grupo || '')}">
+          ${escHtml(e.nombre)}
+          <small>${e.id}${e.grupo ? ' · ' + escHtml(e.grupo) : ''}</small>
+        </div>`).join('');
+    }
+    empDropdown.classList.add('open');
+    empDropdown.querySelectorAll('.emp-option').forEach(el => {
+      el.addEventListener('mousedown', ev => {
+        ev.preventDefault();
+        selectEmp({ id: el.dataset.id, nombre: el.dataset.nombre, grupo: el.dataset.grupo });
+      });
+    });
+  }
+
+  function selectEmp(emp) {
+    selectedEmp = emp;
+    empSearch.value = emp.nombre;
+    empIdInput.value = emp.id;
+    closeDropdown();
+    updateBtn();
+  }
+
+  function closeDropdown() {
+    empDropdown.classList.remove('open');
+  }
+
+  function updateBtn() {
+    btnConsultar.disabled = !selectedEmp;
+  }
+
+  // ── Consulta ─────────────────────────────────────────────────────────
+  btnConsultar.addEventListener('click', consultar);
+
+  async function consultar() {
+    if (!selectedEmp) return;
+    const desde = fDesde.value;
+    const hasta = fHasta.value;
+    if (!desde || !hasta || desde > hasta) {
+      alert('El rango de fechas no es válido.');
+      return;
+    }
+
+    hpLoading.classList.add('visible');
+    btnConsultar.disabled = true;
+    hpResults.innerHTML = '';
+
+    try {
+      const [bonos, actividad] = await Promise.all([
+        fetch(`/api/historico/bonos?idempleado=${selectedEmp.id}&desde=${desde}&hasta=${hasta}`).then(r => r.json()),
+        fetch(`/api/historico/actividad-diaria?idempleado=${selectedEmp.id}&desde=${desde}&hasta=${hasta}`).then(r => r.json()),
+      ]);
+      renderResults(bonos, actividad, desde, hasta);
+    } catch (err) {
+      hpResults.innerHTML = `<div class="hp-empty" style="color:var(--rojo)">Error al cargar datos: ${escHtml(String(err))}</div>`;
+    } finally {
+      hpLoading.classList.remove('visible');
+      btnConsultar.disabled = false;
+    }
+  }
+
+  // ── Renderizado ──────────────────────────────────────────────────────
+  function renderResults(bonos, actividad, desde, hasta) {
+    if (!bonos.length) {
+      hpResults.innerHTML = `<div class="hp-empty">
+        <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776"/>
+        </svg>
+        No hay registros de trabajo para <strong>${escHtml(selectedEmp.nombre)}</strong> en el periodo seleccionado.
+      </div>`;
+      return;
+    }
+
+    // Stats
+    const totalOrdenes = new Set(bonos.map(b => b.idorden)).size;
+    const totalBonos = bonos.length;
+    const diasConTrabajo = actividad.length;
+    const totalHoras = bonos.reduce((s, b) => s + (b.minutos_trabajados || 0), 0) / 60;
+
+    const statsHtml = `
+      <div class="hp-stats">
+        <div class="stat-card">
+          <div class="stat-card__value">${totalOrdenes}</div>
+          <div class="stat-card__label">Órdenes trabajadas</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__value">${totalBonos}</div>
+          <div class="stat-card__label">Bonos trabajados</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__value">${diasConTrabajo}</div>
+          <div class="stat-card__label">Días con actividad</div>
+        </div>
+        <div class="stat-card stat-card--accent">
+          <div class="stat-card__value">${totalHoras.toFixed(1)} h</div>
+          <div class="stat-card__label">Horas trabajadas</div>
+        </div>
+      </div>`;
+
+    // Heatmap
+    const heatmapHtml = `
+      <p class="hp-section-title">Actividad diaria</p>
+      <div class="heatmap-wrap">${buildHeatmap(actividad, desde, hasta)}</div>`;
+
+    // Agrupar bonos por orden
+    const byOrder = {};
+    bonos.forEach(b => {
+      if (!byOrder[b.idorden]) byOrder[b.idorden] = { articulo: b.articulo, primera_fecha: b.primera_fecha, bonos: [] };
+      byOrder[b.idorden].bonos.push(b);
+    });
+
+    const orderCards = Object.entries(byOrder).map(([idorden, data]) => {
+      const totalH = data.bonos.reduce((s, b) => s + (b.minutos_trabajados || 0), 0) / 60;
+      const fechaFmt = formatDate(data.primera_fecha);
+      const bonosRows = data.bonos.map(b => `
+        <tr>
+          <td><span class="pill pill-bono">Bono ${b.idbono}</span></td>
+          <td>${b.operacion ? escHtml(b.operacion) : '<span style="color:var(--ink-3)">—</span>'}</td>
+          <td>${b.matricula_maquina ? `<span class="pill pill-maquina">${escHtml(b.matricula_maquina)}</span>` : '<span style="color:var(--ink-3)">—</span>'}</td>
+          <td>${formatDate(b.primera_fecha)}</td>
+          <td style="text-align:right">${b.minutos_trabajados ? (b.minutos_trabajados / 60).toFixed(2) + ' h' : '—'}</td>
+        </tr>`).join('');
+
+      return `
+        <div class="order-card" data-order="${idorden}">
+          <div class="order-card__head">
+            <span class="order-badge">#${idorden}</span>
+            <div class="order-card__art">
+              ${escHtml(data.articulo || '')}
+              <small>Primera actividad: ${fechaFmt} · ${data.bonos.length} bono${data.bonos.length !== 1 ? 's' : ''}</small>
+            </div>
+            <div class="order-card__meta">
+              <div class="order-card__meta-item">
+                <strong>${totalH.toFixed(1)} h</strong>
+                horas totales
+              </div>
+              <div class="order-card__meta-item">
+                <strong>${data.bonos.length}</strong>
+                bonos
+              </div>
+            </div>
+            <span class="order-card__chevron">&#8964;</span>
+          </div>
+          <div class="order-card__bonos">
+            <table class="bono-table">
+              <thead>
+                <tr>
+                  <th>Bono</th><th>Operación</th><th>Máquina</th><th>Primera fecha</th><th style="text-align:right">Horas</th>
+                </tr>
+              </thead>
+              <tbody>${bonosRows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }).join('');
+
+    const ordersSection = `
+      <p class="hp-section-title">Órdenes y bonos (${Object.keys(byOrder).length})</p>
+      <div class="hp-orders">${orderCards}</div>`;
+
+    hpResults.innerHTML = statsHtml + heatmapHtml + ordersSection;
+
+    // Eventos accordion
+    hpResults.querySelectorAll('.order-card__head').forEach(head => {
+      head.addEventListener('click', () => {
+        head.closest('.order-card').classList.toggle('open');
+      });
+    });
+
+    // Heatmap tooltip
+    hpResults.querySelectorAll('.heatmap-day[data-fecha]').forEach(cell => {
+      cell.addEventListener('mouseenter', showHmTooltip);
+      cell.addEventListener('mousemove', moveHmTooltip);
+      cell.addEventListener('mouseleave', hideHmTooltip);
+    });
+  }
+
+  // ── Heatmap ──────────────────────────────────────────────────────────
+  function buildHeatmap(actividad, desde, hasta) {
+    const actMap = {};
+    let maxMin = 0;
+    actividad.forEach(d => {
+      actMap[d.fecha] = d;
+      if (d.minutos_trabajados > maxMin) maxMin = d.minutos_trabajados;
+    });
+
+    // Generar todas las fechas del rango
+    const start = new Date(desde + 'T00:00:00');
+    const end   = new Date(hasta + 'T00:00:00');
+    const dias  = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      dias.push(d.toISOString().slice(0, 10));
+    }
+
+    // Agrupar por semanas (lunes a domingo)
+    const semanas = [];
+    let semana = [];
+    // Encontrar el primer lunes antes o igual al primer día
+    const primerDia = new Date(dias[0] + 'T00:00:00');
+    const dow0 = (primerDia.getDay() + 6) % 7; // 0=lunes
+    for (let p = 0; p < dow0; p++) semana.push(null); // relleno inicial
+
+    dias.forEach(fecha => {
+      semana.push(fecha);
+      const wd = (new Date(fecha + 'T00:00:00').getDay() + 6) % 7;
+      if (wd === 6) { semanas.push(semana); semana = []; }
+    });
+    if (semana.length) semanas.push(semana);
+
+    const DOW_LABELS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+    const hoy = new Date().toISOString().slice(0, 10);
+
+    let html = `<div class="heatmap-grid">`;
+    html += `<div class="heatmap-labels">${DOW_LABELS.map(l => `<div class="day-lbl">${l}</div>`).join('')}</div>`;
+
+    semanas.forEach(sem => {
+      html += `<div class="heatmap-week">`;
+      for (let i = 0; i < 7; i++) {
+        const fecha = sem[i] || null;
+        if (!fecha) {
+          html += `<div class="heatmap-day" style="background:transparent;"></div>`;
+          continue;
+        }
+        const act = actMap[fecha];
+        const isWeekend = i >= 5;
+        const isFuture = fecha > hoy;
+        let level = 0;
+        if (act && !isFuture) {
+          const ratio = act.minutos_trabajados / Math.max(maxMin, 1);
+          level = ratio < .25 ? 1 : ratio < .5 ? 2 : ratio < .75 ? 3 : 4;
+        }
+        const cls = ['heatmap-day', isWeekend ? 'weekend' : '', isFuture ? 'future' : ''].filter(Boolean).join(' ');
+        const tooltip = act
+          ? `${formatDate(fecha)}\n${(act.minutos_trabajados / 60).toFixed(1)} h · ${act.num_ordenes} orden${act.num_ordenes !== 1 ? 'es' : ''} · ${act.num_bonos} bono${act.num_bonos !== 1 ? 's' : ''}`
+          : formatDate(fecha);
+        html += `<div class="${cls}" data-level="${level}" data-fecha="${fecha}" data-tip="${escAttr(tooltip)}"></div>`;
+      }
+      html += `</div>`;
+    });
+    html += `</div>`;
+    return html;
+  }
+
+  function showHmTooltip(e) {
+    const tip = e.currentTarget.dataset.tip;
+    hmTooltip.textContent = tip.replace(/\n/g, ' | ');
+    hmTooltip.style.opacity = '1';
+    moveHmTooltip(e);
+  }
+  function moveHmTooltip(e) {
+    hmTooltip.style.left = (e.clientX + 12) + 'px';
+    hmTooltip.style.top  = (e.clientY - 36) + 'px';
+  }
+  function hideHmTooltip() { hmTooltip.style.opacity = '0'; }
+
+  // ── Utilidades ───────────────────────────────────────────────────────
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function escAttr(s) {
+    return String(s).replace(/"/g, '&quot;').replace(/\n/g, '&#10;');
+  }
+  function formatDate(iso) {
+    if (!iso) return '—';
+    const [y, m, d] = String(iso).slice(0, 10).split('-');
+    return `${d}/${m}/${y}`;
+  }
+
+})();
+</script>
+{% endblock %}

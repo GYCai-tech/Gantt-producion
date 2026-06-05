@@ -9,3 +9,8 @@ templates = Jinja2Templates(directory="templates")
 @router.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@router.get("/historico-produccion", response_class=HTMLResponse)
+def historico_produccion(request: Request):
+    return templates.TemplateResponse("historico_prod.html", {"request": request})

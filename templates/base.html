@@ -1,17 +1,39 @@
 <!doctype html>
 <html lang="es">
+
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>{% block title %}GYC · Planificador{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/app.css"/>
+  <link rel="stylesheet" href="/static/css/app.css" />
   {% block head %}{% endblock %}
 </head>
+
 <body>
-  {% block body %}{% endblock %}
+
+  <header class="app-navbar">
+    <div class="navbar-brand">
+      <strong>GYC</strong> · Planificador
+    </div>
+    <nav class="navbar-links">
+      <a href="/" class="nav-link {% if request.url.path == '/' %}active{% endif %}">
+        Planificador
+      </a>
+
+      <a href="/historico-produccion"
+        class="nav-link {% if request.url.path == '/historico-produccion' %}active{% endif %}">
+        Historico Produccion
+      </a>
+    </nav>
+  </header>
+  <main class="app-container">
+    {% block body %}{% endblock %}
+  </main>
+
   {% block scripts %}{% endblock %}
 </body>
+
 </html>
