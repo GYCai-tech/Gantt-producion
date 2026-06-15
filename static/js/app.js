@@ -124,6 +124,7 @@ const App = (() => {
   function tickClock() {
     $('clock').textContent = new Date().toLocaleString('es-ES',
       { weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' });
+    if (items.length) render();
   }
 
   // ── Carga de datos ─────────────────────────────────────────────────
@@ -294,6 +295,7 @@ const App = (() => {
 
   function buildBar(it, W, top) {
     let lx = workX(it.start), rx = workX(it.end);
+    if (it.en_curso) rx = Math.max(rx, workX(new Date(Date.now() + 30 * 60000)));
     if (rx <= 0 || lx >= W) return null;
     lx = clamp(lx, 0, W); rx = clamp(rx, 0, W);
     const w = Math.max(rx - lx, 6);
