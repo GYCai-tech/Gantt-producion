@@ -306,8 +306,9 @@ const App = (() => {
     if (String(it.id) === String(selectedId)) bar.classList.add('is-selected');
 
     const sub = it.operacion || it.art || '';
+    const bonoLabel = it.idbono != null ? `·${it.idbono}` : '';
     bar.innerHTML = (it.tipo === 'real' && it.en_curso ? '<span class="bar__live"></span>' : '') +
-                    `<span class="bar__id">${esc(it.idorden)}</span>` +
+                    `<span class="bar__id">${esc(it.idorden)}<span class="bar__bono">${esc(bonoLabel)}</span></span>` +
                     (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '');
     if (it.tipo === 'real' && it.progreso != null) {
       const p = document.createElement('div');

@@ -49,7 +49,7 @@ html, body {
 }
 
 button { font-family: inherit; }
-
+  
 /* ===================== Shell ===================== */
 .app { display: flex; flex-direction: column; height: 100vh; }
 
@@ -320,6 +320,7 @@ button { font-family: inherit; }
 .bar.is-selected { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent); z-index: 4; }
 .bar.is-dragging { z-index: 10; box-shadow: var(--shadow-2); cursor: grabbing; }
 .bar__id { font-weight: 700; flex-shrink: 0; }
+.bar__bono { font-weight: 400; opacity: .75; font-size: .85em; }
 .bar__sub { font-weight: 500; opacity: .8; overflow: hidden; text-overflow: ellipsis; }
 
 /* Planificadas: arrastrables (sólidas) */
@@ -353,6 +354,18 @@ button { font-family: inherit; }
 
 /* Mini barra de progreso dentro de la barra real */
 .bar__prog { position: absolute; left: 0; bottom: 0; height: 3px; background: currentColor; opacity: .45; border-radius: 0 2px 2px 0; }
+
+/* Punto "live" en bonos en curso ahora mismo */
+.bar__live {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  background: #1da764; box-shadow: 0 0 0 0 rgba(29, 167, 100, .55);
+  animation: live-pulse 2s infinite;
+}
+@keyframes live-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(29, 167, 100, .55); }
+  70%  { box-shadow: 0 0 0 5px rgba(29, 167, 100, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(29, 167, 100, 0); }
+}
 
 /* ===================== Tooltip ===================== */
 .tip {
@@ -437,3 +450,57 @@ button { font-family: inherit; }
 }
 .toast.is-visible { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.is-error { background: var(--rojo); }
+
+
+/* Estilos para la barra de navegación superior */
+.app-navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: #1e293b; /* Color pizarra oscuro elegante */
+  padding: 0 24px;
+  height: 56px;
+  color: #ffffff;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.navbar-brand {
+  font-size: 1.1rem;
+  color: #f8fafc;
+}
+
+.navbar-links {
+  display: flex;
+  gap: 8px;
+  height: 100%;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  color: #94a3b8; /* Gris suave por defecto */
+  text-decoration: none;
+  padding: 0 16px;
+  font-weight: 500;
+  font-size: 0.95rem;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.nav-link:hover {
+  color: #ffffff;
+  background-color: #334155;
+}
+
+/* Resalta automáticamente la pestaña en la que se encuentra el usuario */
+.nav-link.active {
+  color: #ffffff;
+  border-bottom-color: #3b82f6; /* Línea azul debajo de la pestaña activa */
+  background-color: #1e293b;
+}
+
+/* Contenedor principal para que el contenido no quede pegado al menú */
+.app-container {
+  min-height: calc(100vh - 56px);
+  background-color: #f8fafc;
+}
