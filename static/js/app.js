@@ -1,57 +1,51 @@
 /* ============================================================
-   GYC · Planificador de Producción — motor del Gantt
+   GYC · Seguimiento de Producción — motor del Gantt
+   Muestra actividad real: bonos en curso y completados.
    Eje en horas de trabajo (7–16, descanso 11:00–11:15).
-   Unidad = día (con zoom). Bonos solapados se apilan en carriles.
    ============================================================ */
 const App = (() => {
   'use strict';
 
   // ── Configuración ──────────────────────────────────────────────────
-  const RAIL = 232;
-  const BAR_H = 36, LANE_GAP = 7, ROW_PAD = 10;    // geometría de carriles
-  const WORK_INI = 7, WORK_FIN = 16;               // jornada
-  const VIS_MIN = (WORK_FIN - WORK_INI) * 60;      // 540 min visibles/día
-  const BREAK = { ini: 11 * 60, fin: 11 * 60 + 15 };
-  const SNAP_MIN = 15;
+  const RAIL    = 232;
+  const BAR_H   = 36, LANE_GAP = 7, ROW_PAD = 10;
+  const WORK_INI = 7, WORK_FIN = 16;
+  const VIS_MIN  = (WORK_FIN - WORK_INI) * 60;       // 540 min/día
+  const BREAK    = { ini: 11 * 60, fin: 11 * 60 + 15 };
 
-  // Zoom = nº de días que llenan el ancho de página (las horas se estiran hasta el final).
   const ZOOM = [
     { key: 'Día',     days: 1, tick: 1 },
     { key: '3 días',  days: 3, tick: 2 },
     { key: 'Semana',  days: 5, tick: 2 },
   ];
-  const MIN_PPH = 8;        // ancho mínimo de hora (si no cabe, hay scroll horizontal)
-  let _pph = 70;            // ancho de hora calculado para llenar el ancho disponible
+  const MIN_PPH = 8;
+  let _pph = 70;
 
   const ST_LABEL = {
-    retrasada:'Retrasada', riesgo:'En riesgo', plazo:'En plazo', 'sin-estimar':'Sin estimar',
-    vencida:'Vencida', urgente:'Urgente', normal:'En plazo', 'sin-fecha':'Sin fecha',
-    parada:'Parada', pausada:'Pausada', completado:'Completado', programado:'Programado',
+    plazo: 'En curso', completado: 'Completado',
+    retrasada: 'Retrasada', riesgo: 'En riesgo', 'sin-estimar': 'Sin estimar',
+    parada: 'Parada', pausada: 'Pausada',
   };
   const ST_COLOR = {
-    retrasada:'#d83b46', vencida:'#d83b46', riesgo:'#c4710c', urgente:'#c4710c',
-    plazo:'#1f9254', normal:'#1f9254', 'sin-estimar':'#79859a', 'sin-fecha':'#79859a',
-    parada:'#9a4b52', pausada:'#5b6b8a', completado:'#6b7689', programado:'#5b63b0',
+    plazo: '#1f9254', completado: '#6b7689',
+    retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#79859a',
+    parada: '#9a4b52', pausada: '#5b6b8a',
   };
-  const SITU_KEY = { PARADA:'parada', PAUSADA:'pausada' };
 
   // ── Estado ─────────────────────────────────────────────────────────
   let vista = 'empleado';
-  let zi = 0;
+  let zi = 2;                          // zoom por defecto: Semana
   let winStart, winEnd, days = [];
   let allGrupos = [], grupos = [], items = [];
   const itemMap = new Map();
-  let backlog = [], areaActive = 'todos', cargaFilter = 'todos', selectedId = null;
-  let colaSearch = '', colaTipo = 'todo', colaOrden = 'urgencia';
-  let _recursosCache = { empleado: null, maquina: null };
+  let areaActive = 'todos', cargaFilter = 'todos', selectedId = null;
 
   // ── Utilidades de fecha ────────────────────────────────────────────
-  const HOUR = 3600000, DAY = 86400000;
+  const DAY = 86400000;
   const pad = n => String(n).padStart(2, '0');
   const startOfDay = d => { const r = new Date(d); r.setHours(0,0,0,0); return r; };
   const addDays = (d, n) => new Date(+d + n * DAY);
   const isWeekend = d => d.getDay() === 0 || d.getDay() === 6;
-  const toInput = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   const fmtDt = s => s ? new Date(s).toLocaleString('es-ES',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
   const fmtDate = s => s ? new Date(s).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
   const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
@@ -61,7 +55,6 @@ const App = (() => {
   const dayWidth = () => (VIS_MIN / 60) * pph();
   const timelineW = () => days.length * dayWidth();
 
-  // Ancho de hora para que los días del zoom llenen el ancho disponible del Gantt.
   function computePph() {
     const avail = $('gantt').clientWidth - RAIL - 1;
     const horas = cfg().days * (WORK_FIN - WORK_INI);
@@ -88,7 +81,7 @@ const App = (() => {
     winEnd = addDays(days[days.length - 1], 1);
   }
 
-  // Tiempo (wall-clock) → x en píxeles sobre el eje comprimido (solo jornada)
+  // Tiempo → x en píxeles (solo jornada comprimida)
   function workX(dt) {
     const d = new Date(dt), d0 = startOfDay(d);
     let idx = days.findIndex(x => +x === +d0);
@@ -100,64 +93,40 @@ const App = (() => {
       if (last === -1) return 0;
       idx = last; mins = VIS_MIN;
     } else {
-      mins = clamp((+d - (+d0 + WORK_INI * HOUR)) / 60000, 0, VIS_MIN);
+      mins = clamp((+d - (+d0 + WORK_INI * 3600000)) / 60000, 0, VIS_MIN);
     }
     return idx * dayWidth() + (mins / 60) * pph();
   }
 
-  // x en píxeles → tiempo wall-clock
-  function xToTime(px) {
-    const idx = clamp(Math.floor(px / dayWidth()), 0, days.length - 1);
-    const mins = clamp((px - idx * dayWidth()) / pph() * 60, 0, VIS_MIN);
-    const t = new Date(days[idx]); t.setHours(WORK_INI, 0, 0, 0);
-    return new Date(+t + mins * 60000);
-  }
-
-  function snap(d) {
-    const r = new Date(d);
-    let m = Math.round((r.getHours() * 60 + r.getMinutes()) / SNAP_MIN) * SNAP_MIN;
-    m = clamp(m, WORK_INI * 60, WORK_FIN * 60);
-    r.setHours(0, m, 0, 0);
-    return r;
-  }
-
   // ── Arranque ───────────────────────────────────────────────────────
   function init() {
-    winStart = startOfDay(new Date());
+    // Empezar desde el lunes de la semana actual
+    const now = new Date();
+    const dow = now.getDay();
+    const daysToMon = dow === 0 ? 6 : dow - 1;
+    winStart = startOfDay(addDays(now, -daysToMon));
     buildDays();
     renderZoom();
     tickClock(); setInterval(tickClock, 30000);
     loadGrupos()
-      .then(() => Promise.all([loadItems(), loadBacklog()]))
+      .then(() => loadItems())
       .then(() => { setTimeout(scrollToNow, 100); maybeAutoRefresh(); });
-    setInterval(() => { loadItems(); loadBacklog(); }, 300000);
+    setInterval(loadItems, 300000);
   }
 
-  // Al entrar a la app: traer datos frescos del ERP (salvo refresco reciente).
   const REFRESH_COOLDOWN_MIN = 5;
   function maybeAutoRefresh() {
     const last = +(localStorage.getItem('gyc_last_refresh') || 0);
-    if (Date.now() - last < REFRESH_COOLDOWN_MIN * 60000) return;  // datos ya recientes
-    refrescar(true);   // modo automático (silencioso ante errores)
+    if (Date.now() - last < REFRESH_COOLDOWN_MIN * 60000) return;
+    refrescar(true);
   }
 
   function tickClock() {
     $('clock').textContent = new Date().toLocaleString('es-ES',
-      { weekday:'long', day:'2-digit', month:'long', hour:'2-digit', minute:'2-digit' });
+      { weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' });
   }
 
   // ── Carga de datos ─────────────────────────────────────────────────
-  function setVista(v) {
-    if (v === vista) return;
-    vista = v;
-    $('tab-empleado').classList.toggle('is-active', v === 'empleado');
-    $('tab-maquina').classList.toggle('is-active', v === 'maquina');
-    $('gantt-corner').textContent = v === 'empleado' ? 'Operarios' : 'Máquinas';
-    areaActive = 'todos';
-    _recursosCache.empleado = _recursosCache.maquina = null;
-    loadGrupos().then(loadItems);
-  }
-
   async function loadGrupos() {
     allGrupos = await (await fetch(`/api/grupos?vista=${vista}`)).json();
     renderAreas();
@@ -174,12 +143,7 @@ const App = (() => {
     updateSummary();
   }
 
-  async function loadBacklog() {
-    backlog = await (await fetch('/api/backlog')).json();
-    renderCola();
-  }
-
-  // ── Áreas (filtros) ────────────────────────────────────────────────
+  // ── Áreas ──────────────────────────────────────────────────────────
   function renderAreas() {
     const areas = ['todos', ...new Set(allGrupos.map(g => g.area || 'Sin área'))];
     $('areas').innerHTML = areas.map(a =>
@@ -222,7 +186,7 @@ const App = (() => {
 
       const tick = cfg().tick;
       if (tick > 0) {
-        for (let h = WORK_INI; h < WORK_FIN; h += tick) {   // sin la última hora (borde del día)
+        for (let h = WORK_INI; h < WORK_FIN; h += tick) {
           const t = document.createElement('div');
           t.className = 'axis__tick';
           t.style.left = (left + (h - WORK_INI) * pph()) + 'px';
@@ -242,7 +206,6 @@ const App = (() => {
       const ln = document.createElement('div');
       ln.className = 'bg-dayline'; ln.style.left = left + 'px';
       bg.appendChild(ln);
-      // descanso 11:00–11:15
       const br = document.createElement('div');
       br.className = 'bg-break';
       br.style.left = (left + (BREAK.ini / 60 - WORK_INI) * pph()) + 'px';
@@ -254,7 +217,6 @@ const App = (() => {
     end.className = 'bg-dayline'; end.style.left = W + 'px';
     bg.appendChild(end);
 
-    // línea de "ahora"
     const now = new Date();
     if (!isWeekend(now) && +now >= +days[0] && +now < +winEnd) {
       const nl = document.createElement('div');
@@ -267,7 +229,7 @@ const App = (() => {
     const cont = $('gantt-rows');
     cont.innerHTML = '';
     if (!grupos.length) {
-      cont.innerHTML = `<div class="gantt__empty">No hay ${vista === 'empleado' ? 'operarios' : 'máquinas'} para esta área.</div>`;
+      cont.innerHTML = `<div class="gantt__empty">No hay operarios para esta área.</div>`;
       return;
     }
     const byRes = new Map();
@@ -286,9 +248,8 @@ const App = (() => {
     }
     if (!lista.length) {
       cont.innerHTML = `<div class="gantt__empty">${
-        cargaFilter === 'con' ? 'Ningún recurso con carga en esta vista.' :
-        cargaFilter === 'sin' ? 'Todos los recursos tienen carga.' :
-        `No hay ${vista === 'empleado' ? 'operarios' : 'máquinas'} para esta área.`}</div>`;
+        cargaFilter === 'con' ? 'Ningún operario con actividad en esta vista.' :
+        'Todos los operarios tienen actividad.'}</div>`;
       return;
     }
 
@@ -296,7 +257,7 @@ const App = (() => {
       const its = (byRes.get(String(grp.id)) || []).slice()
         .sort((a, b) => new Date(a.start) - new Date(b.start));
 
-      // Asignación de carriles: solapados → carriles distintos
+      // Asignación de carriles (bonos solapados → carriles distintos)
       const laneEnd = [];
       its.forEach(it => {
         const s = +new Date(it.start), e = +new Date(it.end);
@@ -314,12 +275,11 @@ const App = (() => {
       const label = document.createElement('div');
       label.className = 'row__label';
       label.innerHTML = `<div class="row__name">${esc(grp.nombre)}</div>` +
-                        `<div class="row__sub">${esc(grp.sub || '')}${lanes > 1 ? ` · ${lanes} a la vez` : ''}</div>`;
+                        `<div class="row__sub">${esc(grp.sub || '')}${lanes > 1 ? ` · ${lanes} paralelos` : ''}</div>`;
 
       const track = document.createElement('div');
       track.className = 'row__track'; track.style.width = W + 'px';
       track.dataset.rid = grp.id;
-      attachDrop(track);
 
       its.forEach(it => {
         const top = ROW_PAD + it._lane * (BAR_H + LANE_GAP);
@@ -346,7 +306,8 @@ const App = (() => {
     if (String(it.id) === String(selectedId)) bar.classList.add('is-selected');
 
     const sub = it.operacion || it.art || '';
-    bar.innerHTML = `<span class="bar__id">${esc(it.idorden)}</span>` +
+    bar.innerHTML = (it.tipo === 'real' && it.en_curso ? '<span class="bar__live"></span>' : '') +
+                    `<span class="bar__id">${esc(it.idorden)}</span>` +
                     (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '');
     if (it.tipo === 'real' && it.progreso != null) {
       const p = document.createElement('div');
@@ -357,8 +318,7 @@ const App = (() => {
     bar.addEventListener('mouseenter', e => showTip(e, it));
     bar.addEventListener('mousemove', moveTip);
     bar.addEventListener('mouseleave', hideTip);
-    bar.addEventListener('click', () => { if (!bar.dataset.moved) openDetalle(it.id); });
-    if (it.tipo === 'planificado') attachBarDrag(bar, it);
+    bar.addEventListener('click', () => openDetalle(it.id));
     return bar;
   }
 
@@ -374,18 +334,13 @@ const App = (() => {
     }
     if (it.tipo === 'trabajado') {
       if (it.min_real != null) rows.push(`<div class="tip__row">Tiempo real <span>${Math.round(it.min_real)} min</span></div>`);
-      if (it.piezas) rows.push(`<div class="tip__row">Piezas <span>${it.piezas}</span></div>`);
+      if (it.piezas)           rows.push(`<div class="tip__row">Piezas <span>${it.piezas}</span></div>`);
     }
-    if (it.tipo === 'programado' && it.min_est != null) {
-      const h = it.min_est / 60;
-      rows.push(`<div class="tip__row">Duración est. <span>${h >= 1 ? h.toFixed(1) + ' h' : it.min_est + ' min'}</span></div>`);
-    }
-    rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}${it.tipo === 'programado' ? ' ~' : ''}</span></div>`);
+    rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}</span></div>`);
     rows.push(`<div class="tip__row">Fin <span>${fmtDt(it.end)}${it.estimado ? ' ~' : ''}</span></div>`);
     if (it.prev) rows.push(`<div class="tip__row">Prevista <span>${fmtDate(it.prev)}</span></div>`);
-    if (it.notas) rows.push(`<div class="tip__row">Notas <span>${esc(it.notas)}</span></div>`);
-    const MARK = { real:'▶ ', trabajado:'✓ ', programado:'◷ ' };
-    const badge = `<span style="color:${ST_COLOR[it.estado]}">●</span> ${ST_LABEL[it.estado] || it.estado_label}`;
+    const MARK = { real: '▶ ', trabajado: '✓ ' };
+    const badge = `<span style="color:${ST_COLOR[it.estado] || '#79859a'}">●</span> ${ST_LABEL[it.estado] || it.estado_label}`;
     tip.innerHTML = `<b>${MARK[it.tipo] || ''}${esc(it.idorden)}</b> — ${esc(it.art || '')}<hr>${rows.join('')}` +
                     `<div class="tip__row" style="margin-top:6px">Estado <span>${badge}</span></div>`;
     tip.classList.add('is-visible');
@@ -395,230 +350,13 @@ const App = (() => {
     const tip = $('tip');
     let x = e.clientX + 14, y = e.clientY + 14;
     const r = tip.getBoundingClientRect();
-    if (x + r.width > innerWidth - 10) x = e.clientX - r.width - 14;
+    if (x + r.width > innerWidth - 10)  x = e.clientX - r.width - 14;
     if (y + r.height > innerHeight - 10) y = e.clientY - r.height - 14;
     tip.style.left = x + 'px'; tip.style.top = y + 'px';
   }
   function hideTip() { $('tip').classList.remove('is-visible'); }
 
-  // ── Arrastre de barras planificadas ────────────────────────────────
-  function attachBarDrag(bar, it) {
-    bar.addEventListener('pointerdown', e => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      hideTip();
-      const startX = e.clientX, startY = e.clientY;
-      const origLeft = parseFloat(bar.style.left);
-      const w = parseFloat(bar.style.width);
-      let targetTrack = bar.parentElement, moved = false;
-
-      const onMove = ev => {
-        const dx = ev.clientX - startX;
-        if (Math.abs(dx) > 3 || Math.abs(ev.clientY - startY) > 3) { moved = true; bar.classList.add('is-dragging'); bar.dataset.moved = '1'; }
-        if (!moved) return;
-        let nl = clamp(origLeft + dx, 0, timelineW() - w);
-        bar.style.left = nl + 'px';
-        const el = document.elementFromPoint(ev.clientX, ev.clientY);
-        const tr = el && el.closest ? el.closest('.row__track') : null;
-        if (tr && tr !== targetTrack) {
-          document.querySelectorAll('.row__track.is-drop-target').forEach(t => t.classList.remove('is-drop-target'));
-          if (tr !== bar.parentElement) tr.classList.add('is-drop-target');
-          targetTrack = tr;
-        }
-      };
-
-      const onUp = async () => {
-        document.removeEventListener('pointermove', onMove);
-        document.removeEventListener('pointerup', onUp);
-        document.querySelectorAll('.row__track.is-drop-target').forEach(t => t.classList.remove('is-drop-target'));
-        bar.classList.remove('is-dragging');
-        if (!moved) { delete bar.dataset.moved; return; }
-        setTimeout(() => delete bar.dataset.moved, 50);
-
-        const nl = parseFloat(bar.style.left);
-        const dur = new Date(it.end) - new Date(it.start);
-        const start = snap(xToTime(nl));
-        const end = new Date(+start + dur);
-        const rid = (targetTrack && targetTrack.dataset.rid) || it.recurso_id;
-        try {
-          const r = await fetch(`/api/programar/${it.id}`, {
-            method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ start: start.toISOString(), end: end.toISOString(), recurso_id: rid }),
-          });
-          if (!r.ok) throw 0;
-          toast('Asignación movida');
-        } catch { toast('No se pudo mover', true); }
-        await loadItems();
-      };
-
-      document.addEventListener('pointermove', onMove);
-      document.addEventListener('pointerup', onUp);
-    });
-  }
-
-  // ── Drop desde el backlog ──────────────────────────────────────────
-  function attachDrop(track) {
-    track.addEventListener('dragover', e => { e.preventDefault(); track.classList.add('is-drop-target'); });
-    track.addEventListener('dragleave', () => track.classList.remove('is-drop-target'));
-    track.addEventListener('drop', e => {
-      e.preventDefault();
-      track.classList.remove('is-drop-target');
-      const idorden = e.dataTransfer.getData('idorden');
-      if (!idorden) return;
-      const rect = track.getBoundingClientRect();
-      const t = snap(xToTime(e.clientX - rect.left));
-      openAsignar(idorden, e.dataTransfer.getData('art'), e.dataTransfer.getData('cant'),
-                  parseFloat(e.dataTransfer.getData('horas')) || 8, t, track.dataset.rid,
-                  parseInt(e.dataTransfer.getData('idbono')) || 0, e.dataTransfer.getData('op'));
-    });
-  }
-
-  // ── Cola de trabajo ────────────────────────────────────────────────
-  const _diasRetraso = prev => {
-    if (!prev) return 0;
-    return Math.floor((+startOfDay(new Date()) - +startOfDay(new Date(prev))) / DAY);
-  };
-  function _colaSort() {
-    const prevT = o => o.fecha_prevista_fin ? +new Date(o.fecha_prevista_fin) : Infinity;
-    const urg = o => o.nivel === 'bono'
-      ? (o.situacion === 'PARADA' ? 0 : 1)
-      : ({ VENCIDA:0, URGENTE:1, NORMAL:2 }[o.prioridad] ?? 3);
-    return {
-      urgencia: (a, b) => urg(a) - urg(b) || prevT(a) - prevT(b),
-      fecha:    (a, b) => prevT(a) - prevT(b),
-      tiempo:   (a, b) => (b.horas_estimadas || 0) - (a.horas_estimadas || 0),
-    }[colaOrden];
-  }
-
-  function renderCola() {
-    const q = colaSearch.toLowerCase().trim();
-    const data = backlog.filter(o => !q
-      || o.idorden.toLowerCase().includes(q)
-      || (o.articulo || '').toLowerCase().includes(q)
-      || (o.operacion || '').toLowerCase().includes(q));
-
-    $('backlog-count').textContent = data.length;
-    const sortFn = _colaSort();
-    const bonos   = colaTipo === 'orden' ? [] : data.filter(o => o.nivel === 'bono').sort(sortFn);
-    const ordenes = colaTipo === 'bono'  ? [] : data.filter(o => o.nivel === 'orden').sort(sortFn);
-
-    const el = $('backlog-list');
-    if (!bonos.length && !ordenes.length) {
-      el.innerHTML = `<div class="backlog__empty">${q || colaTipo !== 'todo' ? 'Sin resultados' : 'Nada pendiente ✓'}</div>`;
-      return;
-    }
-    const sumH = list => { const s = list.reduce((a, o) => a + (o.horas_estimadas || 0), 0); return s ? `~${Math.round(s)} h` : ''; };
-    const section = (titulo, list) => !list.length ? '' :
-      `<div class="backlog__group">${titulo} · ${list.length}<span class="grp-sum">${sumH(list)}</span></div>` + list.map(card).join('');
-    el.innerHTML = section('Bonos a replanificar', bonos) + section('Órdenes programadas', ordenes);
-  }
-
-  function card(o) {
-    const esBono = o.nivel === 'bono';
-    // color del borde = situación (bonos) o urgencia (órdenes)
-    const state = esBono
-      ? (SITU_KEY[o.situacion] || 'sin-estimar')
-      : (o.prioridad || 'sin-fecha').toLowerCase().replace(/ /g, '-');
-    // etiqueta: bonos muestran su situación; órdenes muestran "PROGRAMADA" (estado ERP)
-    const tagCls = esBono ? state : 'programada';
-    const lbl = esBono ? (o.situacion || '—') : 'PROGRAMADA';
-    const horas = o.horas_estimadas || (esBono ? 1 : 8);
-    const title = esBono ? esc(o.operacion || '—') : `Orden ${o.idorden}`;
-    const subline = esBono ? `Orden ${o.idorden} · ${esc(o.articulo || '—')}` : esc(o.articulo || '—');
-    const dias = _diasRetraso(o.fecha_prevista_fin);
-    const late = dias > 0 ? `<span class="chip-late">▲ ${dias} d</span>` : '';
-    return `<div class="order" draggable="true" style="--accent-state:${ST_COLOR[state] || '#79859a'}"
-      data-idorden="${o.idorden}" data-idbono="${o.idbono || 0}" data-op="${esc(o.operacion || '')}"
-      data-art="${esc(o.articulo || '')}" data-cant="${o.cantidad_pedida}" data-horas="${horas}"
-      ondragstart="App.dragStart(event,this)" ondragend="App.dragEnd(this)"
-      onclick="App.openAsignar('${o.idorden}','${esc(o.articulo || '').replace(/'/g,"\\'")}',${o.cantidad_pedida},${horas},null,null,${o.idbono || 0},'${esc(o.operacion || '').replace(/'/g,"\\'")}')">
-      <div class="order__top">
-        <span class="order__id">${title}</span>
-        <span class="tag tag--${tagCls}">${lbl}</span>
-      </div>
-      <div class="order__art">${subline}</div>
-      <div class="order__meta">
-        ${o.horas_estimadas ? `<span>~${o.horas_estimadas} h</span>` : ''}
-        ${esBono && o.num_operarios ? `<span>${o.num_operarios} op.</span>` : ''}
-        ${!esBono && o.cantidad_pedida != null ? `<span>${o.cantidad_pedida} uds</span>` : ''}
-        ${o.fecha_prevista_fin ? `<span>Prev ${fmtDate(o.fecha_prevista_fin)}</span>` : ''}
-        ${late}
-      </div>
-    </div>`;
-  }
-
-  function filterBacklog(q) { colaSearch = q; renderCola(); }
-  function setColaTipo(t) {
-    colaTipo = t;
-    [...$('cola-tipo').children].forEach(b => b.classList.toggle('is-active', b.textContent.trim().toLowerCase() === (t === 'todo' ? 'todo' : t === 'bono' ? 'bonos' : 'órdenes')));
-    renderCola();
-  }
-  function setColaOrden(v) { colaOrden = v; renderCola(); }
-
-  function dragStart(e, el) {
-    el.classList.add('is-dragging');
-    ['idorden', 'idbono', 'op', 'art', 'cant', 'horas'].forEach(k => e.dataTransfer.setData(k, el.dataset[k]));
-    e.dataTransfer.effectAllowed = 'copy';
-  }
-  function dragEnd(el) { el.classList.remove('is-dragging'); document.querySelectorAll('.row__track.is-drop-target').forEach(t => t.classList.remove('is-drop-target')); }
-
-  // ── Modal asignar ──────────────────────────────────────────────────
-  let _aData = { idbono: 0 };
-  async function openAsignar(idorden, art, cant, horas, start, rid, idbono, op) {
-    _aData = { idbono: idbono || 0 };
-    $('a-orden').textContent = idorden;
-    $('a-art').textContent = art || '—';
-    $('a-cant').textContent = cant;
-    $('a-horas').textContent = horas || '—';
-    $('a-op').textContent = op || '';
-    $('a-op-wrap').style.display = op ? '' : 'none';
-    $('a-reclabel').textContent = vista === 'empleado' ? 'Operario' : 'Máquina';
-    $('a-notas').value = '';
-    $('a-start').dataset.horas = horas || 8;
-
-    const s = start instanceof Date ? start : (() => { const d = startOfDay(new Date()); d.setHours(WORK_INI, 0, 0, 0); return d; })();
-    $('a-start').value = toInput(s);
-    $('a-end').value = toInput(new Date(+s + (horas || 8) * HOUR));
-
-    if (!_recursosCache[vista]) _recursosCache[vista] = await (await fetch(`/api/recursos?tipo=${vista}`)).json();
-    const sel = $('a-recurso');
-    sel.innerHTML = _recursosCache[vista].map(r =>
-      `<option value="${r.id}">${r.grupo ? '[' + r.grupo + '] ' : ''}${esc(r.nombre)}</option>`).join('');
-    if (rid) sel.value = String(rid);
-
-    openModal('ov-asignar');
-  }
-
-  function recalcFin() {
-    const v = $('a-start').value; if (!v) return;
-    const h = parseFloat($('a-start').dataset.horas) || 8;
-    $('a-end').value = toInput(new Date(+new Date(v) + h * HOUR));
-  }
-
-  async function submitAsignar(e) {
-    e.preventDefault();
-    try {
-      const r = await fetch('/api/programar', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          idorden: $('a-orden').textContent,
-          idbono: _aData.idbono,
-          recurso_tipo: vista,
-          recurso_id: $('a-recurso').value,
-          start: new Date($('a-start').value).toISOString(),
-          end: new Date($('a-end').value).toISOString(),
-          notas: $('a-notas').value || null,
-        }),
-      });
-      if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.detail || 'No se pudo asignar'); }
-      closeModal('ov-asignar');
-      toast('Orden asignada');
-      await loadGrupos();
-      await Promise.all([loadItems(), loadBacklog()]);
-    } catch (err) { toast(err.message || 'Error al asignar', true); }
-  }
-
-  // ── Modal detalle ──────────────────────────────────────────────────
+  // ── Modal detalle (solo lectura) ───────────────────────────────────
   function openDetalle(id) {
     const it = itemMap.get(String(id)); if (!it) return;
     selectedId = id;
@@ -626,40 +364,26 @@ const App = (() => {
     const bar = document.querySelector(`.bar[data-id="${CSS.escape(String(id))}"]`);
     if (bar) bar.classList.add('is-selected');
 
-    const editable = it.tipo === 'planificado';
     const grp = grupos.find(g => String(g.id) === String(it.recurso_id));
     $('d-orden').textContent = it.idorden;
     const AVISO = {
-      real:       `▶ ${esc(it.situacion || 'EN CURSO')} (ERP) · solo lectura${it.estimado ? ' · fin estimado' : ''}`,
-      trabajado:  `✓ Completado (ERP) · solo lectura`,
-      programado: `◷ Programado (ERP) · cola estimada · solo lectura`,
+      real:      `▶ En curso · fin estimado`,
+      trabajado: `✓ Completado`,
     };
-    const aviso = editable ? '' : `<div class="notice">${AVISO[it.tipo] || ''}</div>`;
-    $('d-body').innerHTML = aviso +
+    $('d-body').innerHTML =
+      `<div class="notice">${AVISO[it.tipo] || ''}</div>` +
       `<dl class="dl">
-        <dt>${vista === 'empleado' ? 'Operario' : 'Máquina'}</dt><dd>${esc(grp ? grp.nombre : it.recurso_id)}</dd>
+        <dt>Operario</dt><dd>${esc(grp ? grp.nombre : it.recurso_id)}</dd>
         <dt>Bono</dt><dd>${it.idbono || '—'}${it.operacion ? ' · ' + esc(it.operacion) : ''}</dd>
         <dt>Artículo</dt><dd>${esc(it.art || '—')}</dd>
         <dt>Inicio</dt><dd>${fmtDt(it.start)}</dd>
         <dt>Fin</dt><dd>${fmtDt(it.end)}${it.estimado ? ' <span style="color:var(--ink-3)">(est.)</span>' : ''}</dd>
         ${it.progreso != null ? `<dt>Progreso</dt><dd>${it.progreso}%</dd>` : ''}
+        ${it.min_real != null ? `<dt>Tiempo real</dt><dd>${Math.round(it.min_real)} min</dd>` : ''}
+        ${it.piezas  != null ? `<dt>Piezas</dt><dd>${it.piezas}</dd>` : ''}
         ${it.prev ? `<dt>Prevista</dt><dd>${fmtDate(it.prev)}</dd>` : ''}
-        ${it.notas ? `<dt>Notas</dt><dd>${esc(it.notas)}</dd>` : ''}
       </dl>`;
-    $('d-quitar').style.display = editable ? '' : 'none';
     openModal('ov-detalle');
-  }
-
-  async function desprogramar() {
-    if (!selectedId) return;
-    try {
-      const r = await fetch(`/api/programar/${selectedId}`, { method: 'DELETE' });
-      if (!r.ok) throw 0;
-      closeModal('ov-detalle'); selectedId = null;
-      toast('Asignación eliminada');
-      await loadGrupos();
-      await Promise.all([loadItems(), loadBacklog()]);
-    } catch { toast('No se pudo eliminar', true); }
   }
 
   // ── Navegación / zoom ──────────────────────────────────────────────
@@ -669,7 +393,10 @@ const App = (() => {
     loadItems();
   }
   function today() {
-    winStart = startOfDay(new Date());
+    const now = new Date();
+    const dow = now.getDay();
+    const daysToMon = dow === 0 ? 6 : dow - 1;
+    winStart = startOfDay(addDays(now, -daysToMon));
     buildDays();
     loadItems();
     setTimeout(scrollToNow, 120);
@@ -697,28 +424,22 @@ const App = (() => {
     $('range-label').textContent = days.length === 1 ? a : `${a} — ${b}`;
   }
   function updateSummary() {
-    const n = t => items.filter(i => i.tipo === t).length;
-    const parts = [
-      `<span><span class="dot" style="background:var(--accent)"></span><b>${n('planificado')}</b> asignadas</span>`,
-      `<span><span class="dot" style="background:var(--verde)"></span><b>${n('real')}</b> en curso</span>`,
-    ];
-    if (vista === 'empleado') {
-      parts.push(`<span><span class="dot" style="background:#6b7689"></span><b>${n('trabajado')}</b> trabajadas</span>`);
-      parts.push(`<span><span class="dot" style="background:#5b63b0"></span><b>${n('programado')}</b> programadas</span>`);
-    }
-    $('summary').innerHTML = parts.join('');
+    const en_curso  = items.filter(i => i.tipo === 'real').length;
+    const trabajado = items.filter(i => i.tipo === 'trabajado').length;
+    $('summary').innerHTML =
+      `<span><span class="dot" style="background:var(--verde)"></span><b>${en_curso}</b> en curso</span>` +
+      `<span><span class="dot" style="background:#6b7689"></span><b>${trabajado}</b> completadas</span>`;
   }
 
   function setCarga(v) {
     cargaFilter = v;
-    [...$('carga').children].forEach(b => b.classList.toggle('is-active', b.textContent.trim().toLowerCase().startsWith(
-      v === 'todos' ? 'todos' : v === 'con' ? 'con' : 'libres')));
+    [...$('carga').children].forEach(b => b.classList.toggle('is-active',
+      b.textContent.trim().toLowerCase().startsWith(
+        v === 'todos' ? 'todos' : v === 'con' ? 'con' : 'sin')));
     render();
   }
 
-  function toggleBacklog() { $('backlog').classList.toggle('is-collapsed'); setTimeout(render, 60); }
-
-  // ── Refresco bajo demanda del ETL (Prefect) ────────────────────────
+  // ── Refresco ETL (Prefect) ─────────────────────────────────────────
   const _ESTADO_LBL = {
     SCHEDULED: 'En cola…', PENDING: 'Preparando…', RUNNING: 'Ejecutando…',
     COMPLETED: 'Listo', PAUSED: 'En pausa…', CANCELLING: 'Cancelando…',
@@ -730,17 +451,17 @@ const App = (() => {
     _refreshing = true; btn.classList.add('is-busy'); lbl.textContent = 'Lanzando…';
     try {
       const r = await fetch('/api/refrescar', { method: 'POST' });
-      if (r.status === 503 && auto) return;   // sin configurar: en auto no molestamos
+      if (r.status === 503 && auto) return;
       if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || 'No se pudo lanzar el flujo'); }
       const { flow_run_id, estado: est0 } = await r.json();
       if (!flow_run_id) throw new Error('Prefect no devolvió un id de ejecución');
 
       const FIN = ['COMPLETED', 'FAILED', 'CRASHED', 'CANCELLED'];
-      const deadline = Date.now() + 180000;   // 3 min máx
+      const deadline = Date.now() + 180000;
       let estado = est0 || 'SCHEDULED';
       lbl.textContent = _ESTADO_LBL[estado] || 'Actualizando…';
       while (Date.now() < deadline) {
-        await new Promise(res => setTimeout(res, 1500));   // sondeo ágil
+        await new Promise(res => setTimeout(res, 1500));
         try {
           const s = await (await fetch(`/api/refrescar/${flow_run_id}`)).json();
           if (s.estado) estado = s.estado;
@@ -748,12 +469,11 @@ const App = (() => {
         lbl.textContent = _ESTADO_LBL[estado] || 'Actualizando…';
         if (FIN.includes(estado)) break;
       }
-
       if (estado === 'COMPLETED') {
         localStorage.setItem('gyc_last_refresh', String(Date.now()));
         lbl.textContent = 'Recargando…';
         await loadGrupos();
-        await Promise.all([loadItems(), loadBacklog()]);
+        await loadItems();
         toast(auto ? 'Datos actualizados al entrar' : 'Datos actualizados desde el ERP');
       } else if (FIN.includes(estado)) {
         if (!auto) toast('El flujo terminó en estado ' + estado, true);
@@ -767,8 +487,8 @@ const App = (() => {
     }
   }
 
-  // ── Modales / toast / util ─────────────────────────────────────────
-  function openModal(id) { $(id).classList.add('is-open'); }
+  // ── Utilidades UI ──────────────────────────────────────────────────
+  function openModal(id)  { $(id).classList.add('is-open'); }
   function closeModal(id) { $(id).classList.remove('is-open'); }
   let _toastT;
   function toast(msg, err) {
@@ -776,7 +496,9 @@ const App = (() => {
     t.className = 'toast is-visible' + (err ? ' is-error' : '');
     clearTimeout(_toastT); _toastT = setTimeout(() => t.classList.remove('is-visible'), 2600);
   }
-  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  }
 
   document.addEventListener('click', e => { if (e.target.classList.contains('overlay')) e.target.classList.remove('is-open'); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.overlay.is-open').forEach(o => o.classList.remove('is-open')); });
@@ -784,9 +506,7 @@ const App = (() => {
   window.addEventListener('resize', () => { clearTimeout(_rsT); _rsT = setTimeout(() => { if (grupos.length || items.length) render(); }, 150); });
 
   return {
-    setVista, setArea, setCarga, nav, today, setZoom, toggleBacklog, refrescar,
-    filterBacklog, setColaTipo, setColaOrden, dragStart, dragEnd, openAsignar, recalcFin, submitAsignar,
-    openModal, closeModal, desprogramar, init,
+    setArea, setCarga, nav, today, setZoom, refrescar, openModal, closeModal, init,
   };
 })();
 
