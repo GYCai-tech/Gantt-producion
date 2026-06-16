@@ -326,8 +326,7 @@ def get_items(
                 min_estimados, minutos_reales,
                 fichaje_activo_desde AS inicio
             FROM analytics.v_asignaciones_empleado
-            WHERE fase = 'EN_CURSO'
-              AND fichaje_activo_desde IS NOT NULL
+            WHERE fichaje_activo_desde IS NOT NULL
         """)).mappings().all()
 
         for r in activos:
@@ -407,8 +406,8 @@ def get_items(
                 idempleado, idorden, idbono, operacion, articulo,
                 cantidad_pedida, fecha_prevista_fin, min_estimados, situacion
             FROM analytics.v_asignaciones_empleado
-            WHERE (fase = 'PROGRAMADO'
-               OR (fase = 'EN_CURSO' AND fichaje_activo_desde IS NULL))
+            WHERE fase IN ('EN_CURSO', 'PROGRAMADO')
+              AND fichaje_activo_desde IS NULL
               AND min_estimados > 0
             ORDER BY idempleado,
                      CASE fase WHEN 'EN_CURSO' THEN 0 ELSE 1 END,
