@@ -194,6 +194,7 @@ def get_items(
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
                 WHERE m.estado_bono = 1
+                  AND m.situacion NOT IN ('COMPLETADO', 'ANULADO')
                 ORDER BY m.matricula,
                          (m.fichaje_activo_desde IS NOT NULL) DESC,
                          COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) DESC NULLS LAST
@@ -325,6 +326,7 @@ def get_items(
                 COALESCE(fichaje_activo_desde, fecha_asignacion) AS inicio
             FROM analytics.v_asignaciones_empleado
             WHERE estado_bono = 1
+              AND situacion NOT IN ('COMPLETADO', 'ANULADO')
         """)).mappings().all()
 
         for r in activos:
@@ -401,12 +403,17 @@ def get_items(
 
         prog_emp = conn.execute(text("""
             SELECT
-                idempleado, idorden, idbono, operacion, articulo,
-                cantidad_pedida, fecha_prevista_fin, min_estimados, situacion, estado_bono
-            FROM analytics.v_asignaciones_empleado
-            WHERE estado_bono IN (0, 3)
-              AND min_estimados > 0
-            ORDER BY idempleado, fecha_prevista_fin NULLS LAST
+                e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
+                e.cantidad_pedida, e.fecha_prevista_fin, e.min_estimados, e.situacion, e.estado_bono
+            FROM analytics.v_asignaciones_empleado e
+            WHERE e.estado_bono IN (0, 3)
+              AND e.min_estimados > 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM analytics.v_asignaciones_empleado e2
+                  WHERE e2.idorden = e.idorden AND e2.idbono = e.idbono
+                    AND e2.estado_bono = 2
+              )
+            ORDER BY e.idempleado, e.fecha_prevista_fin NULLS LAST
         """)).mappings().all()
 
         result += _encadenar_programadas(
