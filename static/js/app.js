@@ -408,6 +408,7 @@ const App = (() => {
   }
   function setVista(v) {
     vista = v;
+    areaActive = 'todos';
     [...$('vista-tabs').children].forEach(b => b.classList.toggle('is-active', b.dataset.v === v));
     $('gantt-corner').textContent = v === 'maquina' ? 'Máquinas' : 'Operarios';
     loadGrupos().then(() => loadItems());
