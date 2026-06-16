@@ -193,6 +193,11 @@ def get_items(
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
                 WHERE m.situacion = 'EN_CURSO'
+                  AND m.fichaje_activo_desde = (
+                      SELECT MAX(m2.fichaje_activo_desde)
+                      FROM core.fact_asignaciones_maquina m2
+                      WHERE m2.matricula = m.matricula AND m2.situacion = 'EN_CURSO'
+                  )
             """)).mappings().all()
 
             MAX_MAQ_MIN = 10 * 9 * 60  # 10 días laborables → tope visual del Gantt
