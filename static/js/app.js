@@ -436,11 +436,13 @@ const App = (() => {
     $('range-label').textContent = days.length === 1 ? a : `${a} — ${b}`;
   }
   function updateSummary() {
-    const en_curso  = items.filter(i => i.tipo === 'real').length;
-    const trabajado = items.filter(i => i.tipo === 'trabajado').length;
+    const en_curso   = items.filter(i => i.tipo === 'real').length;
+    const trabajado  = items.filter(i => i.tipo === 'trabajado').length;
+    const programado = items.filter(i => i.tipo === 'programado').length;
     $('summary').innerHTML =
       `<span><span class="dot" style="background:var(--verde)"></span><b>${en_curso}</b> en curso</span>` +
-      `<span><span class="dot" style="background:#6b7689"></span><b>${trabajado}</b> completadas</span>`;
+      `<span><span class="dot" style="background:#6b7689"></span><b>${trabajado}</b> completadas</span>` +
+      `<span><span class="dot" style="background:#8a93d8"></span><b>${programado}</b> programadas</span>`;
   }
 
   function setCarga(v) {

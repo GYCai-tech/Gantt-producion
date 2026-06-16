@@ -1,5 +1,6 @@
 import os
 import httpx
+from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 from datetime import datetime, timedelta
@@ -40,6 +41,56 @@ def add_work_minutes(start: datetime, minutes: float) -> datetime:
             remaining -= avail
         day = _next_workday_start(day)
     return day
+
+
+def _estado_programado(fecha_prevista_fin) -> str:
+    if fecha_prevista_fin is None:
+        return 'sin-estimar'
+    return 'retrasada' if fecha_prevista_fin < datetime.now() else 'plazo'
+
+
+def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, cap_min=None):
+    """Encadena órdenes programadas por recurso, una tras otra, desde next_start_map."""
+    by_recurso = defaultdict(list)
+    for r in rows:
+        by_recurso[str(r[recurso_key])].append(r)
+
+    items = []
+    for rid, orders in by_recurso.items():
+        orders.sort(key=lambda x: (x['fecha_prevista_fin'] or datetime.max))
+        t = next_start_map.get(rid, ahora)
+        for r in orders:
+            min_est = float(r.get('min_estimados') or 0)
+            if min_est <= 0:
+                continue
+            if cap_min:
+                min_est = min(min_est, cap_min)
+            start = t
+            end   = add_work_minutes(start, min_est)
+            t     = end
+            prev  = r['fecha_prevista_fin']
+            items.append({
+                "id":           f"{id_prefix}_{r[recurso_key]}_{r['idorden']}_{r['idbono']}",
+                "idorden":      str(r['idorden']),
+                "idbono":       r['idbono'],
+                "recurso_id":   rid,
+                "tipo":         "programado",
+                "en_curso":     False,
+                "estado":       _estado_programado(prev),
+                "estado_label": "Programado",
+                "situacion":    str(r.get('situacion', 'PENDIENTE')),
+                "art":          r['articulo'],
+                "operacion":    r['operacion'],
+                "cantidad":     r.get('cantidad_pedida') or r.get('cantidad'),
+                "prev":         prev.isoformat() if prev else None,
+                "start":        start.isoformat(),
+                "end":          end.isoformat(),
+                "estimado":     True,
+                "progreso":     None,
+                "operarios":    None,
+                "notas":        None,
+            })
+    return items
 
 
 def _estimar_fin(inicio: datetime, min_est: float, min_real: float, ahora: datetime) -> datetime:
@@ -214,6 +265,51 @@ def get_items(
                     "piezas":       float(r["piezas_producidas"]) if r["piezas_producidas"] is not None else None,
                 })
 
+            # ── Máquinas programadas (encadenadas tras EN_CURSO) ──────────
+            next_start = defaultdict(lambda: ahora)
+            for it in result:
+                if it['en_curso']:
+                    rid = it['recurso_id']
+                    end_dt = datetime.fromisoformat(it['end'])
+                    if end_dt > next_start[rid]:
+                        next_start[rid] = end_dt
+
+            prog_maq = conn.execute(text("""
+                WITH hist_art_op AS (
+                    SELECT idarticulo::text, operacion,
+                           AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
+                    FROM core.fact_bonos
+                    WHERE estado_orden = 2
+                      AND cantidad_objetivo > 0 AND min_reales > 0
+                    GROUP BY idarticulo, operacion
+                ),
+                hist_op AS (
+                    SELECT operacion,
+                           AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
+                    FROM core.fact_bonos
+                    WHERE estado_orden = 2
+                      AND cantidad_objetivo > 0 AND min_reales > 0
+                    GROUP BY operacion
+                )
+                SELECT
+                    m.matricula AS recurso, m.idorden, m.idbono, m.operacion, m.articulo,
+                    m.cantidad_pedida, m.fecha_prevista_fin, m.situacion,
+                    ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados
+                FROM core.fact_asignaciones_maquina m
+                LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
+                LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
+                WHERE m.situacion IN ('PENDIENTE', 'ACTIVADO')
+                ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
+            """)).mappings().all()
+
+            # Adaptar clave para _encadenar_programadas
+            prog_maq_rows = [dict(r) | {'recurso_key_val': str(r['recurso'])} for r in prog_maq]
+            for r in prog_maq_rows:
+                r['matricula'] = r['recurso']
+            result += _encadenar_programadas(
+                prog_maq_rows, 'matricula', 'maq_prog', next_start, ahora, cap_min=MAX_MAQ_MIN
+            )
+
             return result
 
         # ── Empleados: bonos en curso ──────────────────────────────────
@@ -289,6 +385,28 @@ def get_items(
                 "min_real":     float(r["minutos_reales"]) if r["minutos_reales"] is not None else None,
                 "piezas":       float(r["piezas_producidas"]) if r["piezas_producidas"] is not None else None,
             })
+
+        # ── Empleados: programados (encadenados tras EN_CURSO) ─────────
+        next_start = defaultdict(lambda: ahora)
+        for it in result:
+            if it.get('en_curso'):
+                rid = it['recurso_id']
+                end_dt = datetime.fromisoformat(it['end'])
+                if end_dt > next_start[rid]:
+                    next_start[rid] = end_dt
+
+        prog_emp = conn.execute(text("""
+            SELECT
+                idempleado, idorden, idbono, operacion, articulo,
+                cantidad_pedida, fecha_prevista_fin, min_estimados, situacion
+            FROM analytics.v_asignaciones_empleado
+            WHERE fase = 'PROGRAMADO' AND min_estimados > 0
+            ORDER BY idempleado, fecha_prevista_fin NULLS LAST
+        """)).mappings().all()
+
+        result += _encadenar_programadas(
+            [dict(r) for r in prog_emp], 'idempleado', 'emp_prog', next_start, ahora
+        )
 
     return result
 

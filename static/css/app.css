@@ -337,10 +337,11 @@ button { font-family: inherit; }
 .bar.st-completado { background: #eef1f5; border-color: #cdd5e0; color: #59657a; }
 
 /* Programado: futuro estimado → borde discontinuo + trama diagonal */
-.bar--programado {
-  border-style: dashed;
+.bar--programado { border-style: dashed; }
+.bar--programado::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
   background-image: repeating-linear-gradient(45deg,
-    transparent, transparent 5px, rgba(53,58,115,.10) 5px, rgba(53,58,115,.10) 10px);
+    transparent, transparent 5px, rgba(0,0,0,.07) 5px, rgba(0,0,0,.07) 10px);
 }
 
 /* Colores por estado */
