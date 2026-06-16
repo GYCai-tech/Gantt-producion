@@ -226,8 +226,9 @@ const App = (() => {
   function renderRows(W) {
     const cont = $('gantt-rows');
     cont.innerHTML = '';
+    const recursoLabel = vista === 'maquina' ? 'máquinas' : 'operarios';
     if (!grupos.length) {
-      cont.innerHTML = `<div class="gantt__empty">No hay operarios para esta área.</div>`;
+      cont.innerHTML = `<div class="gantt__empty">No hay ${recursoLabel} para esta área.</div>`;
       return;
     }
     const byRes = new Map();
@@ -246,8 +247,8 @@ const App = (() => {
     }
     if (!lista.length) {
       cont.innerHTML = `<div class="gantt__empty">${
-        cargaFilter === 'con' ? 'Ningún operario con actividad en esta vista.' :
-        'Todos los operarios tienen actividad.'}</div>`;
+        cargaFilter === 'con' ? `Ningún${vista === 'maquina' ? 'a máquina' : ' operario'} con actividad en esta vista.` :
+        `Tod${vista === 'maquina' ? 'as las máquinas' : 'os los operarios'} tienen actividad.`}</div>`;
       return;
     }
 
@@ -405,6 +406,12 @@ const App = (() => {
     loadItems();
     setTimeout(scrollToNow, 120);
   }
+  function setVista(v) {
+    vista = v;
+    [...$('vista-tabs').children].forEach(b => b.classList.toggle('is-active', b.dataset.v === v));
+    $('gantt-corner').textContent = v === 'maquina' ? 'Máquinas' : 'Operarios';
+    loadGrupos().then(() => loadItems());
+  }
   function setZoom(i) {
     zi = i;
     winStart = days[0];
@@ -510,7 +517,7 @@ const App = (() => {
   window.addEventListener('resize', () => { clearTimeout(_rsT); _rsT = setTimeout(() => { if (grupos.length || items.length) render(); }, 150); });
 
   return {
-    setArea, setCarga, nav, today, setZoom, refrescar, openModal, closeModal, init,
+    setArea, setCarga, setVista, nav, today, setZoom, refrescar, openModal, closeModal, init,
   };
 })();
 

@@ -55,35 +55,46 @@ def _estimar_fin(inicio: datetime, min_est: float, min_real: float, ahora: datet
 
 
 # ─────────────────────────────────────────────────────────────────────
-#  GRUPOS  (filas del Gantt: operarios con actividad reciente o activa)
+#  GRUPOS  (filas del Gantt)
 # ─────────────────────────────────────────────────────────────────────
 
 @router.get("/grupos")
 def get_grupos(vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
     engine = get_engine()
     with engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT
-                de.idempleado::text                    AS id,
-                de.nombre_completo                     AS nombre,
-                COALESCE(de.departamento, 'Sin depto') AS sub,
-                COALESCE(de.departamento, 'Sin depto') AS area
-            FROM core.dim_empleados de
-            WHERE (de.fechabaja IS NULL OR de.fechabaja > CURRENT_DATE)
-              AND (
-                  LOWER(de.departamento) IN ('producción','produccion','logística','logistica')
-                  OR de.idempleado IN (
-                      SELECT DISTINCT idempleado FROM analytics.v_asignaciones_empleado
-                      WHERE fase = 'EN_CURSO'
+        if vista == 'maquina':
+            rows = conn.execute(text("""
+                SELECT
+                    dm.matricula::text                    AS id,
+                    dm.descrip                            AS nombre,
+                    COALESCE(dm.tipo, 'Sin tipo')         AS sub,
+                    COALESCE(dm.area, 'Sin área')         AS area
+                FROM core.dim_maquinas dm
+                ORDER BY dm.area, dm.descrip
+            """)).mappings().all()
+        else:
+            rows = conn.execute(text("""
+                SELECT
+                    de.idempleado::text                    AS id,
+                    de.nombre_completo                     AS nombre,
+                    COALESCE(de.departamento, 'Sin depto') AS sub,
+                    COALESCE(de.departamento, 'Sin depto') AS area
+                FROM core.dim_empleados de
+                WHERE (de.fechabaja IS NULL OR de.fechabaja > CURRENT_DATE)
+                  AND (
+                      LOWER(de.departamento) IN ('producción','produccion','logística','logistica')
+                      OR de.idempleado IN (
+                          SELECT DISTINCT idempleado FROM analytics.v_asignaciones_empleado
+                          WHERE fase = 'EN_CURSO'
+                      )
                   )
-              )
-            ORDER BY de.nombre_completo
-        """)).mappings().all()
+                ORDER BY de.nombre_completo
+            """)).mappings().all()
     return [dict(r) for r in rows]
 
 
 # ─────────────────────────────────────────────────────────────────────
-#  ITEMS  (barras del Gantt: en curso + trabajados en la ventana)
+#  ITEMS  (barras del Gantt)
 # ─────────────────────────────────────────────────────────────────────
 
 @router.get("/items")
@@ -103,7 +114,87 @@ def get_items(
     engine = get_engine()
     with engine.connect() as conn:
 
-        # ── Bonos en curso (siempre visibles, independiente de la ventana) ──
+        if vista == 'maquina':
+            # ── Máquinas en curso ──────────────────────────────────────
+            activos = conn.execute(text("""
+                SELECT
+                    matricula, maquina, idorden, idbono, operacion, articulo,
+                    situacion, cantidad_pedida, fecha_prevista_fin,
+                    minutos_reales, fichaje_activo_desde
+                FROM core.fact_asignaciones_maquina
+                WHERE situacion = 'EN_CURSO'
+            """)).mappings().all()
+
+            for r in activos:
+                inicio = r["fichaje_activo_desde"] or ahora
+                fin    = max(inicio, ahora) + timedelta(minutes=10)
+                result.append({
+                    "id":           f"maq_real_{r['matricula']}_{r['idorden']}_{r['idbono']}",
+                    "idorden":      str(r["idorden"]),
+                    "idbono":       r["idbono"],
+                    "recurso_id":   str(r["matricula"]),
+                    "tipo":         "real",
+                    "en_curso":     True,
+                    "estado":       "plazo",
+                    "estado_label": "En curso",
+                    "situacion":    "EN_CURSO",
+                    "art":          r["articulo"],
+                    "operacion":    r["operacion"],
+                    "cantidad":     r["cantidad_pedida"],
+                    "prev":         r["fecha_prevista_fin"].isoformat() if r["fecha_prevista_fin"] else None,
+                    "start":        inicio.isoformat(),
+                    "end":          fin.isoformat(),
+                    "estimado":     True,
+                    "progreso":     None,
+                    "operarios":    None,
+                    "notas":        None,
+                })
+
+            # ── Máquinas completadas (dentro de la ventana) ────────────
+            completados = conn.execute(text("""
+                SELECT
+                    matricula, maquina, idorden, idbono, operacion, articulo,
+                    cantidad_pedida, fecha_prevista_fin, minutos_reales,
+                    piezas_producidas, fecha_asignacion
+                FROM core.fact_asignaciones_maquina
+                WHERE situacion = 'COMPLETADO'
+                  AND fecha_asignacion IS NOT NULL
+                  AND fecha_asignacion < :hasta
+                  AND fecha_asignacion > :desde_aprox
+            """), {"hasta": hasta, "desde_aprox": desde - timedelta(days=1)}).mappings().all()
+
+            for r in completados:
+                inicio   = r["fecha_asignacion"]
+                min_real = float(r["minutos_reales"] or 0)
+                fin      = add_work_minutes(inicio, min_real) if min_real > 0 else inicio + timedelta(minutes=15)
+                if fin <= desde:
+                    continue
+                result.append({
+                    "id":           f"maq_trab_{r['matricula']}_{r['idorden']}_{r['idbono']}",
+                    "idorden":      str(r["idorden"]),
+                    "idbono":       r["idbono"],
+                    "recurso_id":   str(r["matricula"]),
+                    "tipo":         "trabajado",
+                    "estado":       "completado",
+                    "estado_label": "Completado",
+                    "situacion":    "COMPLETADO",
+                    "art":          r["articulo"],
+                    "operacion":    r["operacion"],
+                    "cantidad":     r["cantidad_pedida"],
+                    "prev":         r["fecha_prevista_fin"].isoformat() if r["fecha_prevista_fin"] else None,
+                    "start":        inicio.isoformat(),
+                    "end":          fin.isoformat(),
+                    "estimado":     False,
+                    "progreso":     None,
+                    "operarios":    None,
+                    "notas":        None,
+                    "min_real":     float(r["minutos_reales"]) if r["minutos_reales"] is not None else None,
+                    "piezas":       float(r["piezas_producidas"]) if r["piezas_producidas"] is not None else None,
+                })
+
+            return result
+
+        # ── Empleados: bonos en curso ──────────────────────────────────
         activos = conn.execute(text("""
             SELECT
                 idempleado, idorden, idbono, operacion, articulo,
@@ -141,7 +232,7 @@ def get_items(
                 "notas":        None,
             })
 
-        # ── Bonos trabajados (completados dentro de la ventana visible) ──
+        # ── Empleados: bonos trabajados (completados en la ventana) ────
         trabajados = conn.execute(text("""
             SELECT
                 idempleado, idorden, idbono, operacion, articulo,
