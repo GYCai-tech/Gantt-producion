@@ -144,11 +144,12 @@ def get_items(
                 WHERE m.situacion = 'EN_CURSO'
             """)).mappings().all()
 
+            MAX_MAQ_MIN = 10 * 9 * 60  # 10 días laborables → tope visual del Gantt
             for r in activos:
                 inicio   = r["fichaje_activo_desde"] or ahora
                 min_est  = float(r["min_estimados"] or 0)
                 min_real = float(r["minutos_reales"] or 0)
-                fin      = _estimar_fin(inicio, min_est, min_real, ahora)
+                fin      = _estimar_fin(inicio, min(min_est, min_real + MAX_MAQ_MIN), min_real, ahora)
                 result.append({
                     "id":           f"maq_real_{r['matricula']}_{r['idorden']}_{r['idbono']}",
                     "idorden":      str(r["idorden"]),
