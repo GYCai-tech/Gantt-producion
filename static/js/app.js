@@ -34,11 +34,11 @@ const App = (() => {
 
   // ── Estado ─────────────────────────────────────────────────────────
   let vista = 'empleado';
-  let zi = 2;                          // zoom por defecto: Semana
+  let zi = 0;                          // zoom por defecto: Día
   let winStart, winEnd, days = [];
   let allGrupos = [], grupos = [], items = [];
   const itemMap = new Map();
-  let areaActive = 'todos', cargaFilter = 'todos', selectedId = null;
+  let areaActive = 'todos', cargaFilter = 'con', selectedId = null;
 
   // ── Utilidades de fecha ────────────────────────────────────────────
   const DAY = 86400000;
@@ -100,11 +100,8 @@ const App = (() => {
 
   // ── Arranque ───────────────────────────────────────────────────────
   function init() {
-    // Empezar desde el lunes de la semana actual
     const now = new Date();
-    const dow = now.getDay();
-    const daysToMon = dow === 0 ? 6 : dow - 1;
-    winStart = startOfDay(addDays(now, -daysToMon));
+    winStart = startOfDay(now);
     buildDays();
     renderZoom();
     tickClock(); setInterval(tickClock, 30000);
@@ -397,9 +394,13 @@ const App = (() => {
   }
   function today() {
     const now = new Date();
-    const dow = now.getDay();
-    const daysToMon = dow === 0 ? 6 : dow - 1;
-    winStart = startOfDay(addDays(now, -daysToMon));
+    if (cfg().days === 1) {
+      winStart = startOfDay(now);
+    } else {
+      const dow = now.getDay();
+      const daysToMon = dow === 0 ? 6 : dow - 1;
+      winStart = startOfDay(addDays(now, -daysToMon));
+    }
     buildDays();
     loadItems();
     setTimeout(scrollToNow, 120);
