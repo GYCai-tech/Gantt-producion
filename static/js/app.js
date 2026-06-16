@@ -266,8 +266,12 @@ const App = (() => {
     }
 
     lista.forEach(grp => {
+      const TIPO_PRIO = { real: 0, trabajado: 1, programado: 2 };
       const its = (byRes.get(String(grp.id)) || []).slice()
-        .sort((a, b) => new Date(a.start) - new Date(b.start));
+        .sort((a, b) => {
+          const p = (TIPO_PRIO[a.tipo] ?? 3) - (TIPO_PRIO[b.tipo] ?? 3);
+          return p !== 0 ? p : new Date(a.start) - new Date(b.start);
+        });
 
       // Asignación de carriles (bonos solapados → carriles distintos)
       const laneEnd = [];
