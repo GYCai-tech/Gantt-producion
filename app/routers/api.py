@@ -76,8 +76,8 @@ def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, 
                 "recurso_id":   rid,
                 "tipo":         "programado",
                 "en_curso":     False,
-                "estado":       "plazo",
-                "estado_label": "Programado",
+                "estado":       "parada" if r.get('estado_bono') == 3 else "plazo",
+                "estado_label": "Bloqueado" if r.get('estado_bono') == 3 else "Programado",
                 "situacion":    str(r.get('situacion', 'PENDIENTE')),
                 "art":          r['articulo'],
                 "operacion":    r['operacion'],
@@ -297,12 +297,12 @@ def get_items(
                 )
                 SELECT
                     m.matricula AS recurso, m.idorden, m.idbono, m.operacion, m.articulo,
-                    m.cantidad_pedida, m.fecha_prevista_fin, m.situacion,
+                    m.cantidad_pedida, m.fecha_prevista_fin, m.situacion, m.estado_bono,
                     ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
-                WHERE m.estado_bono = 0
+                WHERE m.estado_bono IN (0, 3)
                 ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
             """)).mappings().all()
 
@@ -402,9 +402,9 @@ def get_items(
         prog_emp = conn.execute(text("""
             SELECT
                 idempleado, idorden, idbono, operacion, articulo,
-                cantidad_pedida, fecha_prevista_fin, min_estimados, situacion
+                cantidad_pedida, fecha_prevista_fin, min_estimados, situacion, estado_bono
             FROM analytics.v_asignaciones_empleado
-            WHERE estado_bono = 0
+            WHERE estado_bono IN (0, 3)
               AND min_estimados > 0
             ORDER BY idempleado, fecha_prevista_fin NULLS LAST
         """)).mappings().all()
