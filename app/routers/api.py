@@ -188,14 +188,15 @@ def get_items(
                     m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
                     m.situacion, m.cantidad_pedida, m.fecha_prevista_fin,
                     m.minutos_reales,
-                    m.fichaje_activo_desde AS inicio,
+                    COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) AS inicio,
                     ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
-                WHERE m.fichaje_activo_desde IS NOT NULL
+                WHERE m.estado_bono = 1
                 ORDER BY m.matricula,
-                         m.fichaje_activo_desde DESC NULLS LAST
+                         (m.fichaje_activo_desde IS NOT NULL) DESC,
+                         COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) DESC NULLS LAST
             """)).mappings().all()
 
             MAX_MAQ_MIN = 10 * 9 * 60  # 10 días laborables → tope visual del Gantt
@@ -301,11 +302,8 @@ def get_items(
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
-                WHERE m.situacion IN ('EN_CURSO', 'ACTIVADO', 'PENDIENTE')
-                  AND m.fichaje_activo_desde IS NULL
-                ORDER BY m.matricula,
-                         CASE m.situacion WHEN 'EN_CURSO' THEN 0 WHEN 'ACTIVADO' THEN 1 ELSE 2 END,
-                         m.fecha_prevista_fin NULLS LAST
+                WHERE m.estado_bono = 0
+                ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
             """)).mappings().all()
 
             # Adaptar clave para _encadenar_programadas
@@ -324,9 +322,9 @@ def get_items(
                 idempleado, idorden, idbono, operacion, articulo,
                 situacion, cantidad_pedida, fecha_prevista_fin,
                 min_estimados, minutos_reales,
-                fichaje_activo_desde AS inicio
+                COALESCE(fichaje_activo_desde, fecha_asignacion) AS inicio
             FROM analytics.v_asignaciones_empleado
-            WHERE fichaje_activo_desde IS NOT NULL
+            WHERE estado_bono = 1
         """)).mappings().all()
 
         for r in activos:
@@ -406,12 +404,9 @@ def get_items(
                 idempleado, idorden, idbono, operacion, articulo,
                 cantidad_pedida, fecha_prevista_fin, min_estimados, situacion
             FROM analytics.v_asignaciones_empleado
-            WHERE fase IN ('EN_CURSO', 'PROGRAMADO')
-              AND fichaje_activo_desde IS NULL
+            WHERE estado_bono = 0
               AND min_estimados > 0
-            ORDER BY idempleado,
-                     CASE fase WHEN 'EN_CURSO' THEN 0 ELSE 1 END,
-                     fecha_prevista_fin NULLS LAST
+            ORDER BY idempleado, fecha_prevista_fin NULLS LAST
         """)).mappings().all()
 
         result += _encadenar_programadas(
