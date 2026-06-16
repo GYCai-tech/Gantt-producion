@@ -212,7 +212,8 @@ def get_items(
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
-                WHERE m.estado_bono = 1
+                JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
+                WHERE fb.estado_bono = 1
                   AND m.situacion NOT IN ('COMPLETADO', 'ANULADO')
                 ORDER BY m.matricula,
                          (m.fichaje_activo_desde IS NOT NULL) DESC,
@@ -339,13 +340,14 @@ def get_items(
         # ── Empleados: bonos en curso ──────────────────────────────────
         activos = conn.execute(text("""
             SELECT
-                idempleado, idorden, idbono, operacion, articulo,
-                situacion, cantidad_pedida, fecha_prevista_fin, fecha_orden,
-                min_estimados, minutos_reales,
-                COALESCE(fichaje_activo_desde, fecha_asignacion) AS inicio
-            FROM analytics.v_asignaciones_empleado
-            WHERE estado_bono = 1
-              AND situacion NOT IN ('COMPLETADO', 'ANULADO')
+                e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
+                e.situacion, e.cantidad_pedida, e.fecha_prevista_fin, e.fecha_orden,
+                e.min_estimados, e.minutos_reales,
+                COALESCE(e.fichaje_activo_desde, e.fecha_asignacion) AS inicio
+            FROM analytics.v_asignaciones_empleado e
+            JOIN core.fact_bonos fb ON fb.idorden = e.idorden AND fb.idbono = e.idbono
+            WHERE fb.estado_bono = 1
+              AND e.situacion NOT IN ('COMPLETADO', 'ANULADO')
         """)).mappings().all()
 
         for r in activos:
@@ -354,7 +356,7 @@ def get_items(
             min_real = float(r["minutos_reales"] or 0)
             fin      = _estimar_fin(inicio, min_est, min_real, ahora)
             result.append({
-                "id":           f"real_{r['idorden']}_{r['idbono']}",
+                "id":           f"real_{r['idempleado']}_{r['idorden']}_{r['idbono']}",
                 "idorden":      str(r["idorden"]),
                 "idbono":       r["idbono"],
                 "recurso_id":   str(r["idempleado"]),
