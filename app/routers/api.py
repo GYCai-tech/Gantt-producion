@@ -188,14 +188,14 @@ def get_items(
                     m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
                     m.situacion, m.cantidad_pedida, m.fecha_prevista_fin,
                     m.minutos_reales,
-                    COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) AS inicio,
+                    m.fichaje_activo_desde AS inicio,
                     ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
-                WHERE m.situacion IN ('EN_CURSO', 'ACTIVADO')
+                WHERE m.fichaje_activo_desde IS NOT NULL
                 ORDER BY m.matricula,
-                         COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) DESC NULLS LAST
+                         m.fichaje_activo_desde DESC NULLS LAST
             """)).mappings().all()
 
             MAX_MAQ_MIN = 10 * 9 * 60  # 10 días laborables → tope visual del Gantt
@@ -271,7 +271,7 @@ def get_items(
             # ── Máquinas programadas (encadenadas tras EN_CURSO) ──────────
             next_start = defaultdict(lambda: ahora)
             for it in result:
-                if it['en_curso']:
+                if it.get('en_curso'):
                     rid = it['recurso_id']
                     end_dt = datetime.fromisoformat(it['end'])
                     if end_dt > next_start[rid]:
@@ -301,8 +301,11 @@ def get_items(
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
-                WHERE m.situacion = 'PENDIENTE'
-                ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
+                WHERE m.situacion IN ('EN_CURSO', 'ACTIVADO', 'PENDIENTE')
+                  AND m.fichaje_activo_desde IS NULL
+                ORDER BY m.matricula,
+                         CASE m.situacion WHEN 'EN_CURSO' THEN 0 WHEN 'ACTIVADO' THEN 1 ELSE 2 END,
+                         m.fecha_prevista_fin NULLS LAST
             """)).mappings().all()
 
             # Adaptar clave para _encadenar_programadas

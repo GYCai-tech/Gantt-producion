@@ -274,9 +274,12 @@ const App = (() => {
         });
 
       // Asignación de carriles (bonos solapados → carriles distintos)
+      // e_vis coincide con el ancho visual de buildBar: en_curso se extiende a now+10min
       const laneEnd = [];
       its.forEach(it => {
-        const s = +new Date(it.start), e = +new Date(it.end);
+        const s = +new Date(it.start);
+        let e = +new Date(it.end);
+        if (it.en_curso) e = Math.max(e, Date.now() + 10 * 60000);
         let lane = laneEnd.findIndex(end => end <= s);
         if (lane === -1) { lane = laneEnd.length; laneEnd.push(e); }
         else laneEnd[lane] = e;
