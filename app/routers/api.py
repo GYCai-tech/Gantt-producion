@@ -117,17 +117,38 @@ def get_items(
         if vista == 'maquina':
             # ── Máquinas en curso ──────────────────────────────────────
             activos = conn.execute(text("""
+                WITH hist_art_op AS (
+                    SELECT idarticulo::text, operacion,
+                           AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
+                    FROM core.fact_bonos
+                    WHERE estado_orden = 2
+                      AND cantidad_objetivo > 0 AND min_reales > 0
+                    GROUP BY idarticulo, operacion
+                ),
+                hist_op AS (
+                    SELECT operacion,
+                           AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
+                    FROM core.fact_bonos
+                    WHERE estado_orden = 2
+                      AND cantidad_objetivo > 0 AND min_reales > 0
+                    GROUP BY operacion
+                )
                 SELECT
-                    matricula, maquina, idorden, idbono, operacion, articulo,
-                    situacion, cantidad_pedida, fecha_prevista_fin,
-                    minutos_reales, fichaje_activo_desde
-                FROM core.fact_asignaciones_maquina
-                WHERE situacion = 'EN_CURSO'
+                    m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
+                    m.situacion, m.cantidad_pedida, m.fecha_prevista_fin,
+                    m.minutos_reales, m.fichaje_activo_desde,
+                    ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados
+                FROM core.fact_asignaciones_maquina m
+                LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
+                LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
+                WHERE m.situacion = 'EN_CURSO'
             """)).mappings().all()
 
             for r in activos:
-                inicio = r["fichaje_activo_desde"] or ahora
-                fin    = max(inicio, ahora) + timedelta(minutes=10)
+                inicio   = r["fichaje_activo_desde"] or ahora
+                min_est  = float(r["min_estimados"] or 0)
+                min_real = float(r["minutos_reales"] or 0)
+                fin      = _estimar_fin(inicio, min_est, min_real, ahora)
                 result.append({
                     "id":           f"maq_real_{r['matricula']}_{r['idorden']}_{r['idbono']}",
                     "idorden":      str(r["idorden"]),
@@ -145,7 +166,7 @@ def get_items(
                     "start":        inicio.isoformat(),
                     "end":          fin.isoformat(),
                     "estimado":     True,
-                    "progreso":     None,
+                    "progreso":     round(min(min_real / min_est * 100, 100)) if min_est > 0 else None,
                     "operarios":    None,
                     "notas":        None,
                 })
