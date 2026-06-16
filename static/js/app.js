@@ -38,7 +38,7 @@ const App = (() => {
   let winStart, winEnd, days = [];
   let allGrupos = [], grupos = [], items = [];
   const itemMap = new Map();
-  let areaActive = 'todos', cargaFilter = 'con', selectedId = null;
+  let areaActive = 'todos', cargaFilter = 'con', selectedId = null, searchTerm = '';
 
   // ── Utilidades de fecha ────────────────────────────────────────────
   const DAY = 86400000;
@@ -245,8 +245,21 @@ const App = (() => {
         return cargaFilter === 'con' ? has : !has;
       });
     }
+    if (searchTerm) {
+      const t = searchTerm.toLowerCase();
+      lista = lista.filter(grp => {
+        if ((grp.nombre || '').toLowerCase().includes(t)) return true;
+        if (String(grp.id).toLowerCase().includes(t)) return true;
+        return (byRes.get(String(grp.id)) || []).some(it =>
+          String(it.idorden).includes(t) ||
+          (it.art || '').toLowerCase().includes(t) ||
+          (it.operacion || '').toLowerCase().includes(t)
+        );
+      });
+    }
     if (!lista.length) {
       cont.innerHTML = `<div class="gantt__empty">${
+        searchTerm ? `Sin resultados para "<b>${esc(searchTerm)}</b>".` :
         cargaFilter === 'con' ? `Ningún${vista === 'maquina' ? 'a máquina' : ' operario'} con actividad en esta vista.` :
         `Tod${vista === 'maquina' ? 'as las máquinas' : 'os los operarios'} tienen actividad.`}</div>`;
       return;
@@ -406,9 +419,15 @@ const App = (() => {
     loadItems();
     setTimeout(scrollToNow, 120);
   }
+  function setSearch(v) {
+    searchTerm = v.trim().toLowerCase();
+    render();
+  }
   function setVista(v) {
     vista = v;
     areaActive = 'todos';
+    searchTerm = '';
+    const si = $('search-gantt'); if (si) si.value = '';
     [...$('vista-tabs').children].forEach(b => b.classList.toggle('is-active', b.dataset.v === v));
     $('gantt-corner').textContent = v === 'maquina' ? 'Máquinas' : 'Operarios';
     loadGrupos().then(() => loadItems());
@@ -520,7 +539,7 @@ const App = (() => {
   window.addEventListener('resize', () => { clearTimeout(_rsT); _rsT = setTimeout(() => { if (grupos.length || items.length) render(); }, 150); });
 
   return {
-    setArea, setCarga, setVista, nav, today, setZoom, refrescar, openModal, closeModal, init,
+    setArea, setCarga, setVista, setSearch, nav, today, setZoom, refrescar, openModal, closeModal, init,
   };
 })();
 

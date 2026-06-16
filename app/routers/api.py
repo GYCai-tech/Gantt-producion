@@ -121,7 +121,7 @@ def get_grupos(vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
                     COALESCE(dm.tipo, 'Sin tipo')         AS sub,
                     COALESCE(dm.area, 'Sin área')         AS area
                 FROM core.dim_maquinas dm
-                ORDER BY dm.area, dm.descrip
+                ORDER BY dm.descrip
             """)).mappings().all()
         else:
             rows = conn.execute(text("""

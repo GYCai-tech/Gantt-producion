@@ -219,6 +219,19 @@ button { font-family: inherit; }
 .zoom button.is-active { background: var(--brand); color: #fff; }
 .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
 .summary { margin-left: auto; display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.search-gantt-wrap {
+  position: relative; display: flex; align-items: center;
+}
+.search-gantt-wrap svg {
+  position: absolute; left: 9px; color: var(--ink-3); pointer-events: none;
+}
+#search-gantt {
+  height: 32px; padding: 0 10px 0 28px; width: 210px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); color: var(--ink); font-size: 12px; outline: none;
+}
+#search-gantt:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
+#search-gantt::placeholder { color: var(--ink-3); }
 .summary b { color: var(--ink); }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; vertical-align: middle; }
 
