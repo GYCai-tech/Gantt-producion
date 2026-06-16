@@ -34,7 +34,7 @@ jobs:
       - name: Reconstruir y reiniciar el contenedor
         working-directory: /home/goyco/apps/control_producion
         run: |
-          git pull origin main
+          git pull --ff-only origin main
 
           # Detener y eliminar el despliegue anterior (incluye contenedores huérfanos)
           docker compose down --remove-orphans || true
