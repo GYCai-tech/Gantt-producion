@@ -324,9 +324,10 @@ def get_items(
                 idempleado, idorden, idbono, operacion, articulo,
                 situacion, cantidad_pedida, fecha_prevista_fin,
                 min_estimados, minutos_reales,
-                COALESCE(fichaje_activo_desde, fecha_inicio_real) AS inicio
+                fichaje_activo_desde AS inicio
             FROM analytics.v_asignaciones_empleado
             WHERE fase = 'EN_CURSO'
+              AND fichaje_activo_desde IS NOT NULL
         """)).mappings().all()
 
         for r in activos:
@@ -406,8 +407,12 @@ def get_items(
                 idempleado, idorden, idbono, operacion, articulo,
                 cantidad_pedida, fecha_prevista_fin, min_estimados, situacion
             FROM analytics.v_asignaciones_empleado
-            WHERE fase = 'PROGRAMADO' AND min_estimados > 0
-            ORDER BY idempleado, fecha_prevista_fin NULLS LAST
+            WHERE (fase = 'PROGRAMADO'
+               OR (fase = 'EN_CURSO' AND fichaje_activo_desde IS NULL))
+              AND min_estimados > 0
+            ORDER BY idempleado,
+                     CASE fase WHEN 'EN_CURSO' THEN 0 ELSE 1 END,
+                     fecha_prevista_fin NULLS LAST
         """)).mappings().all()
 
         result += _encadenar_programadas(
