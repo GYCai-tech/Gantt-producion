@@ -59,7 +59,8 @@ SELECT
     round(COALESCE(
         NULLIF(hao.mpp, 0) * NULLIF(a.cantidad_objetivo, 0),
         NULLIF(ho.mpp,  0) * NULLIF(a.cantidad_objetivo, 0)
-    )) AS min_estimados
+    )) AS min_estimados,
+    a.fecha_orden
 FROM core.fact_asignaciones_empleado a
 LEFT JOIN core.fact_bonos b
        ON b.idorden = a.idorden AND b.idbono = a.idbono

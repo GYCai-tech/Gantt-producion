@@ -43,8 +43,17 @@ def add_work_minutes(start: datetime, minutes: float) -> datetime:
     return day
 
 
-def _estado_programado(fecha_prevista_fin) -> str:
-    if fecha_prevista_fin is None:
+def _prev_fiable(fecha_prevista, fecha_orden) -> bool:
+    """Devuelve False si fecha_prevista es igual a fecha_orden (relleno automático del ERP)."""
+    if fecha_prevista is None or fecha_orden is None:
+        return False
+    fp = fecha_prevista.replace(tzinfo=None) if hasattr(fecha_prevista, 'tzinfo') and fecha_prevista.tzinfo else fecha_prevista
+    fo = fecha_orden.replace(tzinfo=None) if hasattr(fecha_orden, 'tzinfo') and fecha_orden.tzinfo else fecha_orden
+    return abs((fp - fo).total_seconds()) >= 86400
+
+
+def _estado_programado(fecha_prevista_fin, fecha_orden=None) -> str:
+    if fecha_prevista_fin is None or not _prev_fiable(fecha_prevista_fin, fecha_orden):
         return 'sin-estimar'
     return 'retrasada' if fecha_prevista_fin < datetime.now() else 'plazo'
 
@@ -57,7 +66,11 @@ def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, 
 
     items = []
     for rid, orders in by_recurso.items():
-        orders.sort(key=lambda x: (x['fecha_prevista_fin'] or datetime.max))
+        orders.sort(key=lambda x: (
+            x['fecha_prevista_fin']
+            if _prev_fiable(x['fecha_prevista_fin'], x.get('fecha_orden'))
+            else datetime.max
+        ))
         t = next_start_map.get(rid, ahora)
         for r in orders:
             min_est = float(r.get('min_estimados') or 0)
@@ -68,7 +81,13 @@ def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, 
             start = t
             end   = add_work_minutes(start, min_est)
             t     = end
-            prev  = r['fecha_prevista_fin']
+            prev     = r['fecha_prevista_fin']
+            fiable   = _prev_fiable(prev, r.get('fecha_orden'))
+            if r.get('estado_bono') == 3:
+                estado, estado_label = "parada", "Bloqueado"
+            else:
+                estado = _estado_programado(prev, r.get('fecha_orden'))
+                estado_label = "Programado" if fiable else "Sin fecha"
             items.append({
                 "id":           f"{id_prefix}_{r[recurso_key]}_{r['idorden']}_{r['idbono']}",
                 "idorden":      str(r['idorden']),
@@ -76,13 +95,13 @@ def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, 
                 "recurso_id":   rid,
                 "tipo":         "programado",
                 "en_curso":     False,
-                "estado":       "parada" if r.get('estado_bono') == 3 else "plazo",
-                "estado_label": "Bloqueado" if r.get('estado_bono') == 3 else "Programado",
+                "estado":       estado,
+                "estado_label": estado_label,
                 "situacion":    str(r.get('situacion', 'PENDIENTE')),
                 "art":          r['articulo'],
                 "operacion":    r['operacion'],
                 "cantidad":     r.get('cantidad_pedida') or r.get('cantidad'),
-                "prev":         prev.isoformat() if prev else None,
+                "prev":         prev.isoformat() if fiable else None,
                 "start":        start.isoformat(),
                 "end":          end.isoformat(),
                 "estimado":     True,
@@ -186,7 +205,7 @@ def get_items(
                 )
                 SELECT DISTINCT ON (m.matricula)
                     m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
-                    m.situacion, m.cantidad_pedida, m.fecha_prevista_fin,
+                    m.situacion, m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden,
                     m.minutos_reales,
                     COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) AS inicio,
                     ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados
@@ -219,7 +238,7 @@ def get_items(
                     "art":          r["articulo"],
                     "operacion":    r["operacion"],
                     "cantidad":     r["cantidad_pedida"],
-                    "prev":         r["fecha_prevista_fin"].isoformat() if r["fecha_prevista_fin"] else None,
+                    "prev":         r["fecha_prevista_fin"].isoformat() if _prev_fiable(r["fecha_prevista_fin"], r["fecha_orden"]) else None,
                     "start":        inicio.isoformat(),
                     "end":          fin.isoformat(),
                     "estimado":     True,
@@ -232,7 +251,7 @@ def get_items(
             completados = conn.execute(text("""
                 SELECT
                     matricula, maquina, idorden, idbono, operacion, articulo,
-                    cantidad_pedida, fecha_prevista_fin, minutos_reales,
+                    cantidad_pedida, fecha_prevista_fin, fecha_orden, minutos_reales,
                     piezas_producidas, fecha_asignacion
                 FROM core.fact_asignaciones_maquina
                 WHERE situacion = 'COMPLETADO'
@@ -259,7 +278,7 @@ def get_items(
                     "art":          r["articulo"],
                     "operacion":    r["operacion"],
                     "cantidad":     r["cantidad_pedida"],
-                    "prev":         r["fecha_prevista_fin"].isoformat() if r["fecha_prevista_fin"] else None,
+                    "prev":         r["fecha_prevista_fin"].isoformat() if _prev_fiable(r["fecha_prevista_fin"], r["fecha_orden"]) else None,
                     "start":        inicio.isoformat(),
                     "end":          fin.isoformat(),
                     "estimado":     False,
@@ -298,7 +317,7 @@ def get_items(
                 )
                 SELECT
                     m.matricula AS recurso, m.idorden, m.idbono, m.operacion, m.articulo,
-                    m.cantidad_pedida, m.fecha_prevista_fin, m.situacion, m.estado_bono,
+                    m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden, m.situacion, m.estado_bono,
                     ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
@@ -321,7 +340,7 @@ def get_items(
         activos = conn.execute(text("""
             SELECT
                 idempleado, idorden, idbono, operacion, articulo,
-                situacion, cantidad_pedida, fecha_prevista_fin,
+                situacion, cantidad_pedida, fecha_prevista_fin, fecha_orden,
                 min_estimados, minutos_reales,
                 COALESCE(fichaje_activo_desde, fecha_asignacion) AS inicio
             FROM analytics.v_asignaciones_empleado
@@ -347,7 +366,7 @@ def get_items(
                 "art":          r["articulo"],
                 "operacion":    r["operacion"],
                 "cantidad":     r["cantidad_pedida"],
-                "prev":         r["fecha_prevista_fin"].isoformat() if r["fecha_prevista_fin"] else None,
+                "prev":         r["fecha_prevista_fin"].isoformat() if _prev_fiable(r["fecha_prevista_fin"], r["fecha_orden"]) else None,
                 "start":        inicio.isoformat(),
                 "end":          fin.isoformat(),
                 "estimado":     True,
@@ -360,7 +379,7 @@ def get_items(
         trabajados = conn.execute(text("""
             SELECT
                 idempleado, idorden, idbono, operacion, articulo,
-                cantidad_pedida, fecha_prevista_fin, minutos_reales,
+                cantidad_pedida, fecha_prevista_fin, fecha_orden, minutos_reales,
                 piezas_producidas, fecha_inicio_real, fecha_fin_real
             FROM analytics.v_asignaciones_empleado
             WHERE fase = 'TRABAJADO'
@@ -381,7 +400,7 @@ def get_items(
                 "art":          r["articulo"],
                 "operacion":    r["operacion"],
                 "cantidad":     r["cantidad_pedida"],
-                "prev":         r["fecha_prevista_fin"].isoformat() if r["fecha_prevista_fin"] else None,
+                "prev":         r["fecha_prevista_fin"].isoformat() if _prev_fiable(r["fecha_prevista_fin"], r["fecha_orden"]) else None,
                 "start":        r["fecha_inicio_real"].isoformat(),
                 "end":          r["fecha_fin_real"].isoformat(),
                 "estimado":     False,
@@ -404,7 +423,7 @@ def get_items(
         prog_emp = conn.execute(text("""
             SELECT
                 e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
-                e.cantidad_pedida, e.fecha_prevista_fin, e.min_estimados, e.situacion, e.estado_bono
+                e.cantidad_pedida, e.fecha_prevista_fin, e.fecha_orden, e.min_estimados, e.situacion, e.estado_bono
             FROM analytics.v_asignaciones_empleado e
             WHERE e.estado_bono IN (0, 3)
               AND e.min_estimados > 0
