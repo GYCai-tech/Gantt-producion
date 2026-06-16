@@ -184,25 +184,23 @@ def get_items(
                       AND cantidad_objetivo > 0 AND min_reales > 0
                     GROUP BY operacion
                 )
-                SELECT
+                SELECT DISTINCT ON (m.matricula)
                     m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
                     m.situacion, m.cantidad_pedida, m.fecha_prevista_fin,
-                    m.minutos_reales, m.fichaje_activo_desde,
+                    m.minutos_reales,
+                    COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) AS inicio,
                     ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
-                WHERE m.situacion = 'EN_CURSO'
-                  AND m.fichaje_activo_desde = (
-                      SELECT MAX(m2.fichaje_activo_desde)
-                      FROM core.fact_asignaciones_maquina m2
-                      WHERE m2.matricula = m.matricula AND m2.situacion = 'EN_CURSO'
-                  )
+                WHERE m.situacion IN ('EN_CURSO', 'ACTIVADO')
+                ORDER BY m.matricula,
+                         COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) DESC NULLS LAST
             """)).mappings().all()
 
             MAX_MAQ_MIN = 10 * 9 * 60  # 10 días laborables → tope visual del Gantt
             for r in activos:
-                inicio   = r["fichaje_activo_desde"] or ahora
+                inicio   = r["inicio"] or ahora
                 min_est  = float(r["min_estimados"] or 0)
                 min_real = float(r["minutos_reales"] or 0)
                 fin      = _estimar_fin(inicio, min(min_est, min_real + MAX_MAQ_MIN), min_real, ahora)
@@ -303,7 +301,7 @@ def get_items(
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
-                WHERE m.situacion IN ('PENDIENTE', 'ACTIVADO')
+                WHERE m.situacion = 'PENDIENTE'
                 ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
             """)).mappings().all()
 
