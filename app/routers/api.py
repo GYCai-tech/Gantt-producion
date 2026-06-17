@@ -203,7 +203,7 @@ def get_items(
                       AND cantidad_objetivo > 0 AND min_reales > 0
                     GROUP BY operacion
                 )
-                SELECT DISTINCT ON (m.matricula)
+                SELECT
                     m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
                     m.situacion, m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden,
                     m.minutos_reales,
@@ -323,7 +323,8 @@ def get_items(
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
-                WHERE m.estado_bono IN (0, 3)
+                JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
+                WHERE fb.estado_bono IN (0, 3)
                 ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
             """)).mappings().all()
 
@@ -382,14 +383,26 @@ def get_items(
             SELECT
                 idempleado, idorden, idbono, operacion, articulo,
                 cantidad_pedida, fecha_prevista_fin, fecha_orden, minutos_reales,
-                piezas_producidas, fecha_inicio_real, fecha_fin_real
+                piezas_producidas, fecha_inicio_real, fecha_fin_real, fecha_asignacion
             FROM analytics.v_asignaciones_empleado
             WHERE fase = 'TRABAJADO'
-              AND fecha_inicio_real IS NOT NULL AND fecha_fin_real IS NOT NULL
-              AND fecha_inicio_real < :hasta AND fecha_fin_real > :desde
-        """), {"desde": desde, "hasta": hasta}).mappings().all()
+              AND (fecha_inicio_real IS NOT NULL OR fecha_asignacion IS NOT NULL)
+        """)).mappings().all()
 
+        MAX_TRAB_MIN = 10 * 9 * 60
         for r in trabajados:
+            inicio = r["fecha_inicio_real"] or r["fecha_asignacion"]
+            if inicio is None:
+                continue
+            min_real = float(r["minutos_reales"] or 0)
+            if r["fecha_fin_real"] is not None:
+                fin = r["fecha_fin_real"]
+            else:
+                fin = add_work_minutes(inicio, min_real) if min_real > 0 else inicio + timedelta(minutes=30)
+            fin_cap = add_work_minutes(inicio, min(min_real, MAX_TRAB_MIN)) if min_real > 0 else fin
+            fin = min(fin, fin_cap)
+            if fin <= desde or inicio >= hasta:
+                continue
             result.append({
                 "id":           f"trab_{r['idempleado']}_{r['idorden']}_{r['idbono']}",
                 "idorden":      str(r["idorden"]),
@@ -403,9 +416,9 @@ def get_items(
                 "operacion":    r["operacion"],
                 "cantidad":     r["cantidad_pedida"],
                 "prev":         r["fecha_prevista_fin"].isoformat() if _prev_fiable(r["fecha_prevista_fin"], r["fecha_orden"]) else None,
-                "start":        r["fecha_inicio_real"].isoformat(),
-                "end":          r["fecha_fin_real"].isoformat(),
-                "estimado":     False,
+                "start":        inicio.isoformat(),
+                "end":          fin.isoformat(),
+                "estimado":     r["fecha_fin_real"] is None,
                 "progreso":     None,
                 "operarios":    None,
                 "notas":        None,
@@ -427,13 +440,9 @@ def get_items(
                 e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
                 e.cantidad_pedida, e.fecha_prevista_fin, e.fecha_orden, e.min_estimados, e.situacion, e.estado_bono
             FROM analytics.v_asignaciones_empleado e
-            WHERE e.estado_bono IN (0, 3)
+            JOIN core.fact_bonos fb ON fb.idorden = e.idorden AND fb.idbono = e.idbono
+            WHERE fb.estado_bono IN (0, 3)
               AND e.min_estimados > 0
-              AND NOT EXISTS (
-                  SELECT 1 FROM analytics.v_asignaciones_empleado e2
-                  WHERE e2.idorden = e.idorden AND e2.idbono = e.idbono
-                    AND e2.estado_bono = 2
-              )
             ORDER BY e.idempleado, e.fecha_prevista_fin NULLS LAST
         """)).mappings().all()
 
