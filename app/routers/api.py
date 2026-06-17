@@ -21,6 +21,20 @@ def _next_workday_start(dt: datetime) -> datetime:
     return nxt
 
 
+def _base_programadas(ahora: datetime) -> datetime:
+    """Punto de inicio para la cola de programadas.
+    Si ahora está fuera de jornada o en fin de semana, devuelve el inicio
+    del siguiente día laborable para que las barras sean visibles en el Gantt."""
+    if ahora.weekday() >= 5:
+        return _next_workday_start(ahora)
+    t = ahora.hour + ahora.minute / 60
+    if t < JORNADA_INICIO:
+        return ahora.replace(hour=JORNADA_INICIO, minute=0, second=0, microsecond=0)
+    if t >= JORNADA_FIN:
+        return _next_workday_start(ahora)
+    return ahora
+
+
 def add_work_minutes(start: datetime, minutes: float) -> datetime:
     if minutes <= 0:
         return start
@@ -291,7 +305,8 @@ def get_items(
                 })
 
             # ── Máquinas programadas (encadenadas tras EN_CURSO) ──────────
-            next_start = defaultdict(lambda: ahora)
+            base_prog = _base_programadas(ahora)
+            next_start = defaultdict(lambda: base_prog)
             for it in result:
                 if it.get('en_curso'):
                     rid = it['recurso_id']
@@ -427,7 +442,8 @@ def get_items(
             })
 
         # ── Empleados: programados (encadenados tras EN_CURSO) ─────────
-        next_start = defaultdict(lambda: ahora)
+        base_prog = _base_programadas(ahora)
+        next_start = defaultdict(lambda: base_prog)
         for it in result:
             if it.get('en_curso'):
                 rid = it['recurso_id']
