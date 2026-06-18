@@ -365,8 +365,8 @@ def get_items(
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = LOWER(m.operacion)
                 LEFT JOIN hist_op     ho  ON ho.operacion = LOWER(m.operacion)
                 LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
-                JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
-                WHERE fb.estado_bono IN (0, 3)
+                WHERE m.estado_bono IN (0, 3)
+                  AND m.estado_orden <> 2
                 ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
             """)).mappings().all()
 
@@ -483,8 +483,8 @@ def get_items(
                 e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
                 e.cantidad_pedida, e.fecha_prevista_fin, e.fecha_orden, e.min_estimados, e.situacion, e.estado_bono
             FROM analytics.v_asignaciones_empleado e
-            JOIN core.fact_bonos fb ON fb.idorden = e.idorden AND fb.idbono = e.idbono
-            WHERE fb.estado_bono IN (0, 3)
+            WHERE e.estado_bono IN (0, 3)
+              AND e.estado_orden <> 2
               AND e.min_estimados > 0
             ORDER BY e.idempleado, e.fecha_prevista_fin NULLS LAST
         """)).mappings().all()
