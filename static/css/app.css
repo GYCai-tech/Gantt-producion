@@ -381,14 +381,6 @@ button { font-family: inherit; }
   100% { box-shadow: 0 0 0 0 rgba(29, 167, 100, 0); }
 }
 
-/* Icono "pausado": bono abierto en el ERP pero sin nadie fichado ahora */
-.bar__pause {
-  display: inline-flex; align-items: center; justify-content: center;
-  flex-shrink: 0; font-size: 10px; line-height: 1;
-  width: 13px; height: 13px; border-radius: 50%;
-  background: #c77b1f; color: #fff;
-}
-
 /* ===================== Tooltip ===================== */
 .tip {
   position: fixed; z-index: 100; max-width: 280px; pointer-events: none;

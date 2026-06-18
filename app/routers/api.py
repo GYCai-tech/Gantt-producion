@@ -97,9 +97,7 @@ def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, 
             t     = end
             prev     = r['fecha_prevista_fin']
             fiable   = _prev_fiable(prev, r.get('fecha_orden'))
-            if r.get('estado_bono') == 1:
-                estado, estado_label = "pausada", "Pausado"
-            elif r.get('estado_bono') == 3:
+            if r.get('estado_bono') == 3:
                 estado, estado_label = "parada", "Bloqueado"
             else:
                 estado = _estado_programado(prev, r.get('fecha_orden'))
