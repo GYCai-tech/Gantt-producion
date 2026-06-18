@@ -87,7 +87,7 @@ def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, 
         ))
         t = next_start_map.get(rid, ahora)
         for r in orders:
-            min_est = float(r.get('min_estimados') or 0)
+            min_est = float(r.get('min_estimados') or 0) - float(r.get('minutos_reales') or 0)
             if min_est <= 0:
                 continue
             if cap_min:
@@ -97,7 +97,9 @@ def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, 
             t     = end
             prev     = r['fecha_prevista_fin']
             fiable   = _prev_fiable(prev, r.get('fecha_orden'))
-            if r.get('estado_bono') == 3:
+            if r.get('estado_bono') == 1:
+                estado, estado_label = "pausada", "Pausado"
+            elif r.get('estado_bono') == 3:
                 estado, estado_label = "parada", "Bloqueado"
             else:
                 estado = _estado_programado(prev, r.get('fecha_orden'))
@@ -239,9 +241,8 @@ def get_items(
                 JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
                 WHERE fb.estado_bono = 1
                   AND m.situacion NOT IN ('COMPLETADO', 'ANULADO')
-                ORDER BY m.matricula,
-                         (m.fichaje_activo_desde IS NOT NULL) DESC,
-                         COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) DESC NULLS LAST
+                  AND m.fichaje_activo_desde IS NOT NULL
+                ORDER BY m.matricula, m.fichaje_activo_desde DESC
             """)).mappings().all()
 
             MAX_MAQ_MIN = 10 * 9 * 60  # 10 días laborables → tope visual del Gantt
@@ -350,23 +351,27 @@ def get_items(
                       AND cantidad_objetivo > 0 AND min_reales > 0
                     GROUP BY LOWER(operacion)
                 ),
-                op_bono AS (   -- operario(s) ya preasignado(s) al bono en cola
+                op_bono AS (   -- operario(s) preasignado(s) o que dejaron pausado el bono en cola
                     SELECT idorden, idbono,
                            string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
                     FROM analytics.v_asignaciones_empleado
-                    WHERE fase = 'PROGRAMADO'
+                    WHERE fase IN ('PROGRAMADO', 'EN_CURSO')
                     GROUP BY idorden, idbono
                 )
                 SELECT
                     m.matricula AS recurso, m.idorden, m.idbono, m.operacion, m.articulo,
                     m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden, m.situacion, m.estado_bono,
+                    m.minutos_reales,
                     ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
                     op_bono.operarios
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = LOWER(m.operacion)
                 LEFT JOIN hist_op     ho  ON ho.operacion = LOWER(m.operacion)
                 LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
-                WHERE m.estado_bono IN (0, 3)
+                WHERE (
+                        m.estado_bono IN (0, 3)
+                        OR (m.estado_bono = 1 AND m.fichaje_activo_desde IS NULL)  -- pausado: abierto pero sin nadie fichado
+                      )
                   AND m.estado_orden <> 2
                 ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
             """)).mappings().all()
@@ -392,6 +397,7 @@ def get_items(
             JOIN core.fact_bonos fb ON fb.idorden = e.idorden AND fb.idbono = e.idbono
             WHERE fb.estado_bono = 1
               AND e.situacion NOT IN ('COMPLETADO', 'ANULADO')
+              AND e.fichaje_activo_desde IS NOT NULL
         """)).mappings().all()
 
         for r in activos:
@@ -482,9 +488,13 @@ def get_items(
         prog_emp = conn.execute(text("""
             SELECT
                 e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
-                e.cantidad_pedida, e.fecha_prevista_fin, e.fecha_orden, e.min_estimados, e.situacion, e.estado_bono
+                e.cantidad_pedida, e.fecha_prevista_fin, e.fecha_orden, e.min_estimados, e.situacion, e.estado_bono,
+                e.minutos_reales
             FROM analytics.v_asignaciones_empleado e
-            WHERE e.estado_bono IN (0, 3)
+            WHERE (
+                    e.estado_bono IN (0, 3)
+                    OR (e.estado_bono = 1 AND e.fichaje_activo_desde IS NULL)  -- pausado: abierto pero sin nadie fichado
+                  )
               AND e.estado_orden <> 2
               AND e.min_estimados > 0
             ORDER BY e.idempleado, e.fecha_prevista_fin NULLS LAST
