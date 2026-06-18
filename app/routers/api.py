@@ -202,20 +202,20 @@ def get_items(
             # ── Máquinas en curso ──────────────────────────────────────
             activos = conn.execute(text("""
                 WITH hist_art_op AS (
-                    SELECT idarticulo::text, operacion,
+                    SELECT idarticulo::text, LOWER(operacion) AS operacion,
                            AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
                     FROM core.fact_bonos
                     WHERE estado_orden = 2
                       AND cantidad_objetivo > 0 AND min_reales > 0
-                    GROUP BY idarticulo, operacion
+                    GROUP BY idarticulo, LOWER(operacion)
                 ),
                 hist_op AS (
-                    SELECT operacion,
+                    SELECT LOWER(operacion) AS operacion,
                            AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
                     FROM core.fact_bonos
                     WHERE estado_orden = 2
                       AND cantidad_objetivo > 0 AND min_reales > 0
-                    GROUP BY operacion
+                    GROUP BY LOWER(operacion)
                 ),
                 op_bono AS (   -- operario(s) fichados ahora mismo en cada bono
                     SELECT idorden, idbono,
@@ -232,8 +232,8 @@ def get_items(
                     ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
                     op_bono.operarios
                 FROM core.fact_asignaciones_maquina m
-                LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
-                LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
+                LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = LOWER(m.operacion)
+                LEFT JOIN hist_op     ho  ON ho.operacion = LOWER(m.operacion)
                 LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
                 JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
                 WHERE fb.estado_bono = 1
@@ -334,20 +334,20 @@ def get_items(
 
             prog_maq = conn.execute(text("""
                 WITH hist_art_op AS (
-                    SELECT idarticulo::text, operacion,
+                    SELECT idarticulo::text, LOWER(operacion) AS operacion,
                            AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
                     FROM core.fact_bonos
                     WHERE estado_orden = 2
                       AND cantidad_objetivo > 0 AND min_reales > 0
-                    GROUP BY idarticulo, operacion
+                    GROUP BY idarticulo, LOWER(operacion)
                 ),
                 hist_op AS (
-                    SELECT operacion,
+                    SELECT LOWER(operacion) AS operacion,
                            AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
                     FROM core.fact_bonos
                     WHERE estado_orden = 2
                       AND cantidad_objetivo > 0 AND min_reales > 0
-                    GROUP BY operacion
+                    GROUP BY LOWER(operacion)
                 ),
                 op_bono AS (   -- operario(s) ya preasignado(s) al bono en cola
                     SELECT idorden, idbono,
@@ -362,8 +362,8 @@ def get_items(
                     ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
                     op_bono.operarios
                 FROM core.fact_asignaciones_maquina m
-                LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
-                LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
+                LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = LOWER(m.operacion)
+                LEFT JOIN hist_op     ho  ON ho.operacion = LOWER(m.operacion)
                 LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
                 JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
                 WHERE fb.estado_bono IN (0, 3)

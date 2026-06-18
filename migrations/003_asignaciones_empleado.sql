@@ -15,18 +15,18 @@
 CREATE OR REPLACE VIEW analytics.v_asignaciones_empleado AS
 WITH hist_art_op AS (   -- min/pieza por artículo + operación (igual que v_tiempos_orden_bono)
         SELECT idarticulo::text AS idarticulo,
-               operacion,
+               LOWER(operacion) AS operacion,
                avg(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
         FROM core.fact_bonos
         WHERE estado_orden = 2 AND cantidad_objetivo > 0 AND min_reales > 0
-        GROUP BY idarticulo, operacion
+        GROUP BY idarticulo, LOWER(operacion)
      ),
      hist_op AS (       -- respaldo: min/pieza sólo por operación
-        SELECT operacion,
+        SELECT LOWER(operacion) AS operacion,
                avg(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
         FROM core.fact_bonos
         WHERE estado_orden = 2 AND cantidad_objetivo > 0 AND min_reales > 0
-        GROUP BY operacion
+        GROUP BY LOWER(operacion)
      )
 SELECT
     a.idempleado,
@@ -65,9 +65,9 @@ FROM core.fact_asignaciones_empleado a
 LEFT JOIN core.fact_bonos b
        ON b.idorden = a.idorden AND b.idbono = a.idbono
 LEFT JOIN hist_art_op hao
-       ON hao.idarticulo = a.idarticulo AND hao.operacion = a.operacion
+       ON hao.idarticulo = a.idarticulo AND hao.operacion = LOWER(a.operacion)
 LEFT JOIN hist_op ho
-       ON ho.operacion = a.operacion
+       ON ho.operacion = LOWER(a.operacion)
 WHERE a.situacion <> 'ANULADO';
 
 COMMENT ON VIEW analytics.v_asignaciones_empleado IS
