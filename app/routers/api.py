@@ -120,7 +120,7 @@ def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, 
                 "end":          end.isoformat(),
                 "estimado":     True,
                 "progreso":     None,
-                "operarios":    None,
+                "operarios":    r.get('operarios'),
                 "notas":        None,
             })
     return items
@@ -216,16 +216,25 @@ def get_items(
                     WHERE estado_orden = 2
                       AND cantidad_objetivo > 0 AND min_reales > 0
                     GROUP BY operacion
+                ),
+                op_bono AS (   -- operario(s) fichados ahora mismo en cada bono
+                    SELECT idorden, idbono,
+                           string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
+                    FROM analytics.v_asignaciones_empleado
+                    WHERE fase = 'EN_CURSO'
+                    GROUP BY idorden, idbono
                 )
                 SELECT
                     m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
                     m.situacion, m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden,
                     m.minutos_reales,
                     COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) AS inicio,
-                    ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados
+                    ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
+                    op_bono.operarios
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
+                LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
                 JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
                 WHERE fb.estado_bono = 1
                   AND m.situacion NOT IN ('COMPLETADO', 'ANULADO')
@@ -258,21 +267,30 @@ def get_items(
                     "end":          fin.isoformat(),
                     "estimado":     True,
                     "progreso":     round(min(min_real / min_est * 100, 100)) if min_est > 0 else None,
-                    "operarios":    None,
+                    "operarios":    r["operarios"],
                     "notas":        None,
                 })
 
             # ── Máquinas completadas (dentro de la ventana) ────────────
             completados = conn.execute(text("""
+                WITH op_bono AS (   -- operario(s) que trabajaron cada bono ya finalizado
+                    SELECT idorden, idbono,
+                           string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
+                    FROM analytics.v_asignaciones_empleado
+                    WHERE fase = 'TRABAJADO'
+                    GROUP BY idorden, idbono
+                )
                 SELECT
-                    matricula, maquina, idorden, idbono, operacion, articulo,
-                    cantidad_pedida, fecha_prevista_fin, fecha_orden, minutos_reales,
-                    piezas_producidas, fecha_asignacion
-                FROM core.fact_asignaciones_maquina
-                WHERE situacion = 'COMPLETADO'
-                  AND fecha_asignacion IS NOT NULL
-                  AND fecha_asignacion < :hasta
-                  AND fecha_asignacion > :desde_aprox
+                    m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
+                    m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden, m.minutos_reales,
+                    m.piezas_producidas, m.fecha_asignacion,
+                    op_bono.operarios
+                FROM core.fact_asignaciones_maquina m
+                LEFT JOIN op_bono ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
+                WHERE m.situacion = 'COMPLETADO'
+                  AND m.fecha_asignacion IS NOT NULL
+                  AND m.fecha_asignacion < :hasta
+                  AND m.fecha_asignacion > :desde_aprox
             """), {"hasta": hasta, "desde_aprox": desde - timedelta(days=1)}).mappings().all()
 
             for r in completados:
@@ -298,7 +316,7 @@ def get_items(
                     "end":          fin.isoformat(),
                     "estimado":     False,
                     "progreso":     None,
-                    "operarios":    None,
+                    "operarios":    r["operarios"],
                     "notas":        None,
                     "min_real":     float(r["minutos_reales"]) if r["minutos_reales"] is not None else None,
                     "piezas":       float(r["piezas_producidas"]) if r["piezas_producidas"] is not None else None,
@@ -330,14 +348,23 @@ def get_items(
                     WHERE estado_orden = 2
                       AND cantidad_objetivo > 0 AND min_reales > 0
                     GROUP BY operacion
+                ),
+                op_bono AS (   -- operario(s) ya preasignado(s) al bono en cola
+                    SELECT idorden, idbono,
+                           string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
+                    FROM analytics.v_asignaciones_empleado
+                    WHERE fase = 'PROGRAMADO'
+                    GROUP BY idorden, idbono
                 )
                 SELECT
                     m.matricula AS recurso, m.idorden, m.idbono, m.operacion, m.articulo,
                     m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden, m.situacion, m.estado_bono,
-                    ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados
+                    ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
+                    op_bono.operarios
                 FROM core.fact_asignaciones_maquina m
                 LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = m.operacion
                 LEFT JOIN hist_op     ho  ON ho.operacion = m.operacion
+                LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
                 JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
                 WHERE fb.estado_bono IN (0, 3)
                 ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
