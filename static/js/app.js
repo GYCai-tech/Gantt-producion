@@ -328,6 +328,7 @@ const App = (() => {
     const sub = it.operacion || it.art || '';
     const bonoLabel = it.idbono != null ? `·${it.idbono}` : '';
     bar.innerHTML = (it.tipo === 'real' && it.en_curso ? '<span class="bar__live"></span>' : '') +
+                    (it.estado === 'pausada' ? '<span class="bar__pause" title="Abierto pero sin fichaje activo">⏸</span>' : '') +
                     `<span class="bar__id">${esc(it.idorden)}<span class="bar__bono">${esc(bonoLabel)}</span></span>` +
                     (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '');
     if (it.tipo === 'real' && it.progreso != null) {
