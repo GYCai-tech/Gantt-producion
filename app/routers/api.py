@@ -127,14 +127,15 @@ def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, 
 
 
 def _estimar_fin(inicio: datetime, min_est: float, min_real: float, ahora: datetime) -> datetime:
-    min_rest = max(min_est - min_real, 0)
+    """Proyecta el fin de un bono en curso. Sin estimación histórica (min_est<=0) no
+    inventamos un final de jornada: la barra simplemente avanza con el reloj mientras
+    el bono siga abierto (igual que el resto, con el colchón mínimo de 10 min)."""
     base = max(inicio, ahora)
     if min_est > 0:
+        min_rest = max(min_est - min_real, 0)
         fin = add_work_minutes(base, min_rest if min_rest > 0 else 10)
     else:
-        fin = base.replace(hour=JORNADA_FIN, minute=0, second=0, microsecond=0)
-        if fin <= base:
-            fin = base + timedelta(hours=1)
+        fin = ahora + timedelta(minutes=10)
     return max(fin, ahora + timedelta(minutes=10))
 
 
