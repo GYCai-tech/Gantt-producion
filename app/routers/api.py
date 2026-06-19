@@ -90,8 +90,8 @@ def _planificar_programados(rows, deps, bono_fin, next_start, ahora):
     """Calcula inicio/fin de cada bono programado respetando a la vez la cola de
     su recurso y sus dependencias bono->bono (core.dependencias_bono).
 
-    Es *list scheduling* con cola de prioridad: un bono solo se considera "listo"
-    cuando todos sus bonos requeridos (los que también están en `rows`) ya se han
+    Es *list scheduling* con cola de prioridad: un nodo solo se considera "listo"
+    cuando todos sus requeridos (los que también están en `rows`) ya se han
     planificado; entre los listos se elige primero el de fecha_prevista_fin más
     temprana. A diferencia de iterar un número fijo de pasadas, esto converge
     siempre en una sola pasada sea cual sea la profundidad de la cadena, y como
@@ -99,53 +99,69 @@ def _planificar_programados(rows, deps, bono_fin, next_start, ahora):
     requerido vive en otro recurso o en otra vista (máquina/empleado) por
     completo — basta con que quien llama meta ahí TODOS los recursos a la vez.
 
+    Un mismo bono puede estar asignado a VARIOS recursos a la vez (ej. un bono
+    repartido entre 2-3 operarios); cada asignación es un nodo independiente
+    `(idorden, idbono, recurso_key)` con su propia cola, pero un dependiente no
+    se considera "listo" hasta que TODAS las asignaciones de cada requerido
+    terminan — por eso `bono_fin` (a nivel de bono, sin recurso) guarda el fin
+    más tardío entre las asignaciones de ese bono.
+
     `rows`: dicts con idorden, idbono, recurso_key (string namespaced para no
     chocar máquinas con empleados) y min_est (duración neta en minutos) ya
-    calculados. Devuelve {(idorden, idbono): (start, end)}.
+    calculados. Devuelve {(idorden, idbono, recurso_key): (start, end)}.
     """
-    by_key = {(r['idorden'], r['idbono']): r for r in rows if r['min_est'] > 0}
+    by_node = {}
+    nodos_de_bono = defaultdict(list)   # (idorden, idbono) -> [nodo, ...] (puede haber varios recursos)
+    for r in rows:
+        if r['min_est'] <= 0:
+            continue
+        bono_key = (r['idorden'], r['idbono'])
+        node = bono_key + (r['recurso_key'],)
+        by_node[node] = r
+        nodos_de_bono[bono_key].append(node)
 
-    dependientes = defaultdict(list)   # requerido -> [dependiente, ...] (sólo si ambos están en `rows`)
+    dependientes = defaultdict(list)   # nodo_requerido -> [nodo_dependiente, ...]
     pendientes = {}
-    for key in by_key:
-        reqs = [req for req in deps.get(key, []) if req in by_key]
-        pendientes[key] = len(reqs)
-        for req in reqs:
-            dependientes[req].append(key)
+    for node, r in by_node.items():
+        bono_key = (r['idorden'], r['idbono'])
+        req_nodos = [n for req in deps.get(bono_key, []) for n in nodos_de_bono.get(req, [])]
+        pendientes[node] = len(req_nodos)
+        for rn in req_nodos:
+            dependientes[rn].append(node)
 
-    heap = [(_prioridad_programado(r), key) for key, r in by_key.items() if pendientes[key] == 0]
+    heap = [(_prioridad_programado(r), node) for node, r in by_node.items() if pendientes[node] == 0]
     heapq.heapify(heap)
 
-    computed = {}
-    while heap:
-        _, key = heapq.heappop(heap)
-        r = by_key[key]
+    def _planificar_nodo(node, r):
+        bono_key = (r['idorden'], r['idbono'])
         rk = r['recurso_key']
         start = next_start[rk]
-        for req in deps.get(key, []):
+        for req in deps.get(bono_key, []):
             req_fin = bono_fin.get(req)
             if req_fin and req_fin > start:
                 start = req_fin
         end = add_work_minutes(start, r['min_est'])
-        computed[key] = (start, end)
-        bono_fin[key] = end
         next_start[rk] = end
-        for dep_key in dependientes.get(key, []):
-            pendientes[dep_key] -= 1
-            if pendientes[dep_key] == 0:
-                heapq.heappush(heap, (_prioridad_programado(by_key[dep_key]), dep_key))
+        if bono_fin.get(bono_key) is None or end > bono_fin[bono_key]:
+            bono_fin[bono_key] = end
+        return start, end
+
+    computed = {}
+    while heap:
+        _, node = heapq.heappop(heap)
+        r = by_node[node]
+        computed[node] = _planificar_nodo(node, r)
+        for dep_node in dependientes.get(node, []):
+            pendientes[dep_node] -= 1
+            if pendientes[dep_node] == 0:
+                heapq.heappush(heap, (_prioridad_programado(by_node[dep_node]), dep_node))
 
     # Ciclo en los datos (no debería pasar: core.dependencias_bono es un DAG real
     # sobre órdenes activas) — planifica lo que falte sin más restricciones para
     # no perder bonos del Gantt.
-    for key, r in by_key.items():
-        if key not in computed:
-            rk = r['recurso_key']
-            start = next_start[rk]
-            end = add_work_minutes(start, r['min_est'])
-            computed[key] = (start, end)
-            bono_fin[key] = end
-            next_start[rk] = end
+    for node, r in by_node.items():
+        if node not in computed:
+            computed[node] = _planificar_nodo(node, r)
 
     return computed
 
@@ -326,7 +342,9 @@ def get_items(
             min_est  = float(r["min_estimados"] or 0)
             min_real = float(r["minutos_reales"] or 0)
             fin      = _estimar_fin(inicio, min(min_est, min_real + MAX_MAQ_MIN), min_real, ahora)
-            bono_fin[(r["idorden"], r["idbono"])] = fin
+            bk = (r["idorden"], r["idbono"])
+            if bono_fin.get(bk) is None or fin > bono_fin[bk]:
+                bono_fin[bk] = fin
             rk = f"maq:{r['matricula']}"
             if fin > next_start[rk]:
                 next_start[rk] = fin
@@ -474,7 +492,9 @@ def get_items(
             min_est  = float(r["min_estimados"] or 0)
             min_real = float(r["minutos_reales"] or 0)
             fin      = _estimar_fin(inicio, min_est, min_real, ahora)
-            bono_fin[(r["idorden"], r["idbono"])] = fin
+            bk = (r["idorden"], r["idbono"])
+            if bono_fin.get(bk) is None or fin > bono_fin[bk]:
+                bono_fin[bk] = fin
             rk = f"emp:{r['idempleado']}"
             if fin > next_start[rk]:
                 next_start[rk] = fin
@@ -575,7 +595,7 @@ def get_items(
     if vista == 'maquina':
         result = list(maquina_items)
         for r in prog_maq:
-            key = (r['idorden'], r['idbono'])
+            key = (r['idorden'], r['idbono'], f"maq:{r['recurso']}")
             if key in computed:
                 start, end = computed[key]
                 result.append(_render_programado(r, str(r['recurso']), 'maq_prog', start, end))
@@ -583,7 +603,7 @@ def get_items(
 
     result = list(empleado_items)
     for r in prog_emp:
-        key = (r['idorden'], r['idbono'])
+        key = (r['idorden'], r['idbono'], f"emp:{r['idempleado']}")
         if key in computed:
             start, end = computed[key]
             result.append(_render_programado(r, str(r['idempleado']), 'emp_prog', start, end))
