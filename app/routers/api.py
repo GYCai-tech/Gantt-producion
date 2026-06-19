@@ -537,11 +537,15 @@ def get_items(
                 continue
             min_real = float(r["minutos_reales"] or 0)
             if r["fecha_fin_real"] is not None:
+                # Fin real y ya acotado por definición: NO aplicar el tope de
+                # seguridad encima, o un bono que abarcó una pausa larga (turno,
+                # fin de semana) se recortaría hacia atrás y "desaparecería"
+                # cerca de la hora real de cierre del fichaje.
                 fin = r["fecha_fin_real"]
+            elif min_real > 0:
+                fin = add_work_minutes(inicio, min(min_real, MAX_TRAB_MIN))
             else:
-                fin = add_work_minutes(inicio, min_real) if min_real > 0 else inicio + timedelta(minutes=30)
-            fin_cap = add_work_minutes(inicio, min(min_real, MAX_TRAB_MIN)) if min_real > 0 else fin
-            fin = min(fin, fin_cap)
+                fin = inicio + timedelta(minutes=30)
             if fin <= desde or inicio >= hasta:
                 continue
             empleado_items.append({
