@@ -227,6 +227,93 @@ def _render_programado(r, recurso_id, id_prefix, start, end):
     }
 
 
+def _cargar_sesiones_fichaje(conn, recurso_col, desde, hasta, ahora):
+    """Sesiones reales de fichaje (core.fact_fichajes), una fila por sesión
+    (idempleado/máquina + idorden + idbono + idlinea + idnum).
+
+    hinicial/hfinal son timestamptz con la hora local del ERP guardada
+    deliberadamente "disfrazada" de UTC (ver memoria gotcha-fact-fichajes-tz);
+    hay que recuperarla con AT TIME ZONE 'UTC' o todo sale desplazado +2h.
+    """
+    col = {'idempleado': 'f.idempleado', 'matricula_maquina': 'f.matricula_maquina'}[recurso_col]
+    return conn.execute(text(f"""
+        SELECT
+            {col} AS recurso, f.idorden, f.idbono, f.idlinea, f.idnum,
+            f.hinicial AT TIME ZONE 'UTC' AS inicio,
+            f.hfinal   AT TIME ZONE 'UTC' AS fin,
+            f.operacion, f.minutos_trabajados,
+            fb.estado_bono, fb.cantidad_pedida, da.descrip AS articulo
+        FROM core.fact_fichajes f
+        LEFT JOIN core.fact_bonos fb  ON fb.idorden = f.idorden AND fb.idbono = f.idbono
+        LEFT JOIN core.dim_articulo da ON da.idarticulo = fb.idarticulo
+        WHERE {col} IS NOT NULL
+          AND COALESCE(f.hfinal AT TIME ZONE 'UTC', :ahora) > :desde
+          AND f.hinicial AT TIME ZONE 'UTC' < :hasta
+        ORDER BY {col}, f.idorden, f.idbono, f.hinicial
+    """), {"ahora": ahora, "desde": desde, "hasta": hasta}).mappings().all()
+
+
+def _fusionar_sesiones(rows):
+    """Funde sesiones de fichaje consecutivas del mismo bono (sin hueco real
+    entre ellas: el fin de una coincide con el inicio de la siguiente) en un
+    solo tramo visual, para no llenar el Gantt de astillas de 1 minuto.
+    Devuelve un tramo por grupo contiguo, con la sesión todavía abierta (si la
+    hay) excluida — esa la cubre ya la barra "real"."""
+    grupos = defaultdict(list)
+    for r in rows:
+        grupos[(r['recurso'], r['idorden'], r['idbono'])].append(r)
+
+    segmentos = []
+    for ses in grupos.values():
+        ses = sorted(ses, key=lambda r: r['inicio'])
+        actual = None
+        for r in ses:
+            if actual is not None and not actual['abierto'] and r['inicio'] <= actual['fin']:
+                actual['fin'] = r['fin']
+                actual['abierto'] = r['fin'] is None
+                actual['min_total'] += float(r['minutos_trabajados'] or 0)
+            else:
+                if actual is not None:
+                    segmentos.append(actual)
+                actual = {
+                    'recurso': r['recurso'], 'idorden': r['idorden'], 'idbono': r['idbono'],
+                    'idlinea': r['idlinea'], 'idnum': r['idnum'],
+                    'inicio': r['inicio'], 'fin': r['fin'], 'abierto': r['fin'] is None,
+                    'operacion': r['operacion'], 'articulo': r['articulo'],
+                    'cantidad_pedida': r['cantidad_pedida'], 'estado_bono': r['estado_bono'],
+                    'min_total': float(r['minutos_trabajados'] or 0),
+                }
+        if actual is not None:
+            segmentos.append(actual)
+    return segmentos
+
+
+def _render_sesion(seg, id_prefix):
+    tipo = "trabajado" if seg['estado_bono'] == 2 else "parcial"
+    return {
+        "id":           f"{id_prefix}_{seg['recurso']}_{seg['idorden']}_{seg['idbono']}_{seg['idlinea']}_{seg['idnum']}",
+        "idorden":      str(seg['idorden']),
+        "idbono":       seg['idbono'],
+        "recurso_id":   str(seg['recurso']),
+        "tipo":         tipo,
+        "en_curso":     False,
+        "estado":       "completado" if tipo == "trabajado" else "parcial",
+        "estado_label": "Completado" if tipo == "trabajado" else "Pausado",
+        "situacion":    "COMPLETADO" if tipo == "trabajado" else "ACTIVADO",
+        "art":          seg['articulo'],
+        "operacion":    seg['operacion'],
+        "cantidad":     seg['cantidad_pedida'],
+        "prev":         None,
+        "start":        seg['inicio'].isoformat(),
+        "end":          seg['fin'].isoformat(),
+        "estimado":     False,
+        "progreso":     None,
+        "operarios":    None,
+        "notas":        None,
+        "min_real":     round(seg['min_total'], 1),
+    }
+
+
 def _cargar_dependencias(conn):
     """deps: (idorden, idbono_dependiente) -> [(idorden, idbono_requerido), ...]"""
     rows = conn.execute(text("""
@@ -316,7 +403,6 @@ def get_items(
     bono_fin = {}
     next_start = defaultdict(lambda: base_prog)
     MAX_MAQ_MIN = 10 * 9 * 60   # 10 días laborables → tope visual del Gantt
-    MAX_TRAB_MIN = 10 * 9 * 60
 
     engine = get_engine()
     with engine.connect() as conn:
@@ -550,56 +636,21 @@ def get_items(
                 "notas":        None,
             })
 
-        # ── Empleados: bonos trabajados (completados en la ventana) ────
-        trabajados = conn.execute(text("""
-            SELECT
-                idempleado, idorden, idbono, operacion, articulo,
-                cantidad_pedida, fecha_prevista_fin, fecha_orden, minutos_reales,
-                piezas_producidas, fecha_inicio_real, fecha_fin_real, fecha_asignacion
-            FROM analytics.v_asignaciones_empleado
-            WHERE fase = 'TRABAJADO'
-              AND (fecha_inicio_real IS NOT NULL OR fecha_asignacion IS NOT NULL)
-        """)).mappings().all()
-
-        for r in trabajados:
-            inicio = r["fecha_inicio_real"] or r["fecha_asignacion"]
-            if inicio is None:
+        # ── Empleados: sesiones reales de fichaje (trabajado/parcial) ──────
+        # Una barra por sesión real (hinicial→hfinal de core.fact_fichajes,
+        # fusionando tramos contiguos), no un agregado: así se ve exactamente
+        # cuándo abrió y cerró cada fichaje, incluso si el bono sigue abierto
+        # (esas quedan como "parcial", igual que antes, pero ahora con la
+        # granularidad real en vez de un único tramo inicio→fin agregado).
+        sesiones_emp = _fusionar_sesiones(
+            _cargar_sesiones_fichaje(conn, 'idempleado', desde, hasta, ahora)
+        )
+        for seg in sesiones_emp:
+            if seg['abierto']:
+                continue  # la sesión todavía abierta ya la cubre la barra "real"
+            if seg['fin'] <= desde or seg['inicio'] >= hasta:
                 continue
-            min_real = float(r["minutos_reales"] or 0)
-            if r["fecha_fin_real"] is not None:
-                # Fin real y ya acotado por definición: NO aplicar el tope de
-                # seguridad encima, o un bono que abarcó una pausa larga (turno,
-                # fin de semana) se recortaría hacia atrás y "desaparecería"
-                # cerca de la hora real de cierre del fichaje.
-                fin = r["fecha_fin_real"]
-            elif min_real > 0:
-                fin = add_work_minutes(inicio, min(min_real, MAX_TRAB_MIN))
-            else:
-                fin = inicio + timedelta(minutes=30)
-            if fin <= desde or inicio >= hasta:
-                continue
-            empleado_items.append({
-                "id":           f"trab_{r['idempleado']}_{r['idorden']}_{r['idbono']}",
-                "idorden":      str(r["idorden"]),
-                "idbono":       r["idbono"],
-                "recurso_id":   str(r["idempleado"]),
-                "tipo":         "trabajado",
-                "estado":       "completado",
-                "estado_label": "Completado",
-                "situacion":    "COMPLETADO",
-                "art":          r["articulo"],
-                "operacion":    r["operacion"],
-                "cantidad":     r["cantidad_pedida"],
-                "prev":         r["fecha_prevista_fin"].isoformat() if _prev_fiable(r["fecha_prevista_fin"], r["fecha_orden"]) else None,
-                "start":        inicio.isoformat(),
-                "end":          fin.isoformat(),
-                "estimado":     r["fecha_fin_real"] is None,
-                "progreso":     None,
-                "operarios":    None,
-                "notas":        None,
-                "min_real":     float(r["minutos_reales"]) if r["minutos_reales"] is not None else None,
-                "piezas":       float(r["piezas_producidas"]) if r["piezas_producidas"] is not None else None,
-            })
+            empleado_items.append(_render_sesion(seg, 'emp_ses'))
 
         # ── Empleados programados: candidatas a la cola del scheduler ──
         prog_emp = conn.execute(text("""
@@ -647,8 +698,6 @@ def get_items(
         if key in computed:
             start, end = computed[key]
             result.append(_render_programado(r, str(r['idempleado']), 'emp_prog', start, end))
-        if r.get('estado_bono') == 1 and r.get('fecha_inicio_real') and r.get('fecha_fin_real'):
-            result.append(_render_parcial(r, str(r['idempleado']), 'emp_parcial', r['fecha_inicio_real'], r['fecha_fin_real']))
     return result
 
 
