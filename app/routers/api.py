@@ -72,29 +72,58 @@ def _estado_programado(fecha_prevista_fin, fecha_orden=None) -> str:
     return 'retrasada' if fecha_prevista_fin < datetime.now() else 'plazo'
 
 
-def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, cap_min=None):
-    """Encadena órdenes programadas por recurso, una tras otra, desde next_start_map."""
+def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, cap_min=None,
+                            deps=None, bono_fin=None):
+    """Encadena órdenes programadas por recurso, una tras otra, desde next_start_map.
+
+    Si se pasan `deps` (idorden, idbono) -> [(idorden, idbono_requerido), ...] y
+    `bono_fin` (dict mutable (idorden, idbono) -> fin estimado), el inicio de cada
+    bono respeta también el fin de sus bonos requeridos (montajes que esperan
+    sub-piezas, ver core.dependencias_bono). Se resuelve en varias pasadas porque
+    una dependencia puede estar en otro recurso procesado más adelante."""
+    deps = deps or {}
+    bono_fin = bono_fin if bono_fin is not None else {}
+
     by_recurso = defaultdict(list)
     for r in rows:
         by_recurso[str(r[recurso_key])].append(r)
 
-    items = []
-    for rid, orders in by_recurso.items():
-        orders.sort(key=lambda x: (
+    for rid in by_recurso:
+        by_recurso[rid].sort(key=lambda x: (
             x['fecha_prevista_fin']
             if _prev_fiable(x['fecha_prevista_fin'], x.get('fecha_orden'))
             else datetime.max
         ))
-        t = next_start_map.get(rid, ahora)
+
+    computed = {}  # (idorden, idbono) -> (start, end), se refina en cada pasada
+    for _ in range(4):
+        for rid, orders in by_recurso.items():
+            t = next_start_map.get(rid, ahora)
+            for r in orders:
+                key = (r['idorden'], r['idbono'])
+                min_est = float(r.get('min_estimados') or 0) - float(r.get('minutos_reales') or 0)
+                if min_est <= 0:
+                    continue
+                if cap_min:
+                    min_est = min(min_est, cap_min)
+                start = t
+                for req in deps.get(key, []):
+                    req_fin = bono_fin.get(req)
+                    if req_fin and req_fin > start:
+                        start = req_fin
+                end = add_work_minutes(start, min_est)
+                t = end
+                computed[key] = (start, end)
+        for key, (_, fin) in computed.items():
+            bono_fin[key] = fin
+
+    items = []
+    for rid, orders in by_recurso.items():
         for r in orders:
-            min_est = float(r.get('min_estimados') or 0) - float(r.get('minutos_reales') or 0)
-            if min_est <= 0:
+            key = (r['idorden'], r['idbono'])
+            if key not in computed:
                 continue
-            if cap_min:
-                min_est = min(min_est, cap_min)
-            start = t
-            end   = add_work_minutes(start, min_est)
-            t     = end
+            start, end = computed[key]
             prev     = r['fecha_prevista_fin']
             fiable   = _prev_fiable(prev, r.get('fecha_orden'))
             if r.get('estado_bono') == 3:
@@ -124,6 +153,17 @@ def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, 
                 "notas":        None,
             })
     return items
+
+
+def _cargar_dependencias(conn):
+    """deps: (idorden, idbono_dependiente) -> [(idorden, idbono_requerido), ...]"""
+    rows = conn.execute(text("""
+        SELECT idorden, idbono_dependiente, idbono_requerido FROM core.dependencias_bono
+    """)).mappings().all()
+    deps = defaultdict(list)
+    for r in rows:
+        deps[(r['idorden'], r['idbono_dependiente'])].append((r['idorden'], r['idbono_requerido']))
+    return deps
 
 
 def _estimar_fin(inicio: datetime, min_est: float, min_real: float, ahora: datetime) -> datetime:
@@ -198,6 +238,7 @@ def get_items(
 
     engine = get_engine()
     with engine.connect() as conn:
+        deps = _cargar_dependencias(conn)
 
         if vista == 'maquina':
             # ── Máquinas en curso ──────────────────────────────────────
@@ -244,11 +285,13 @@ def get_items(
             """)).mappings().all()
 
             MAX_MAQ_MIN = 10 * 9 * 60  # 10 días laborables → tope visual del Gantt
+            bono_fin_maq = {}
             for r in activos:
                 inicio   = r["inicio"] or ahora
                 min_est  = float(r["min_estimados"] or 0)
                 min_real = float(r["minutos_reales"] or 0)
                 fin      = _estimar_fin(inicio, min(min_est, min_real + MAX_MAQ_MIN), min_real, ahora)
+                bono_fin_maq[(r["idorden"], r["idbono"])] = fin
                 result.append({
                     "id":           f"maq_real_{r['matricula']}_{r['idorden']}_{r['idbono']}",
                     "idorden":      str(r["idorden"]),
@@ -379,7 +422,8 @@ def get_items(
             for r in prog_maq_rows:
                 r['matricula'] = r['recurso']
             result += _encadenar_programadas(
-                prog_maq_rows, 'matricula', 'maq_prog', next_start, ahora, cap_min=MAX_MAQ_MIN
+                prog_maq_rows, 'matricula', 'maq_prog', next_start, ahora, cap_min=MAX_MAQ_MIN,
+                deps=deps, bono_fin=bono_fin_maq
             )
 
             return result
@@ -398,11 +442,13 @@ def get_items(
               AND e.fichaje_activo_desde IS NOT NULL
         """)).mappings().all()
 
+        bono_fin_emp = {}
         for r in activos:
             inicio   = r["inicio"] or ahora
             min_est  = float(r["min_estimados"] or 0)
             min_real = float(r["minutos_reales"] or 0)
             fin      = _estimar_fin(inicio, min_est, min_real, ahora)
+            bono_fin_emp[(r["idorden"], r["idbono"])] = fin
             result.append({
                 "id":           f"real_{r['idempleado']}_{r['idorden']}_{r['idbono']}",
                 "idorden":      str(r["idorden"]),
@@ -499,7 +545,8 @@ def get_items(
         """)).mappings().all()
 
         result += _encadenar_programadas(
-            [dict(r) for r in prog_emp], 'idempleado', 'emp_prog', next_start, ahora
+            [dict(r) for r in prog_emp], 'idempleado', 'emp_prog', next_start, ahora,
+            deps=deps, bono_fin=bono_fin_emp
         )
 
     return result
