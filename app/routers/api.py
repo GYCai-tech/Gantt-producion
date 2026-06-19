@@ -166,6 +166,36 @@ def _planificar_programados(rows, deps, bono_fin, next_start, ahora):
     return computed
 
 
+def _render_parcial(r, recurso_id, id_prefix, inicio, fin):
+    """Sesión de trabajo ya realizada (fichaje cerrado) en un bono que SIGUE
+    abierto (estado_bono=1, sin fichaje activo ahora) — ej. el operario fichó
+    salida para el descanso/cambio de turno pero el bono no está terminado.
+    Se pinta además de, no en vez de, la barra 'programado' que continúa la
+    cola; sin esto esas horas ya trabajadas se volvían invisibles."""
+    return {
+        "id":           f"{id_prefix}_{recurso_id}_{r['idorden']}_{r['idbono']}",
+        "idorden":      str(r['idorden']),
+        "idbono":       r['idbono'],
+        "recurso_id":   recurso_id,
+        "tipo":         "parcial",
+        "en_curso":     False,
+        "estado":       "parcial",
+        "estado_label": "Pausado",
+        "situacion":    str(r.get('situacion', 'ACTIVADO')),
+        "art":          r['articulo'],
+        "operacion":    r['operacion'],
+        "cantidad":     r.get('cantidad_pedida') or r.get('cantidad'),
+        "prev":         None,
+        "start":        inicio.isoformat(),
+        "end":          fin.isoformat(),
+        "estimado":     False,
+        "progreso":     None,
+        "operarios":    r.get('operarios'),
+        "notas":        None,
+        "min_real":     float(r['minutos_reales']) if r.get('minutos_reales') is not None else None,
+    }
+
+
 def _render_programado(r, recurso_id, id_prefix, start, end):
     prev   = r['fecha_prevista_fin']
     fiable = _prev_fiable(prev, r.get('fecha_orden'))
@@ -449,7 +479,7 @@ def get_items(
             SELECT
                 m.matricula AS recurso, m.idorden, m.idbono, m.operacion, m.articulo,
                 m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden, m.situacion, m.estado_bono,
-                m.minutos_reales,
+                m.minutos_reales, m.fecha_asignacion,
                 ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
                 op_bono.operarios
             FROM core.fact_asignaciones_maquina m
@@ -576,7 +606,7 @@ def get_items(
             SELECT
                 e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
                 e.cantidad_pedida, e.fecha_prevista_fin, e.fecha_orden, e.min_estimados, e.situacion, e.estado_bono,
-                e.minutos_reales
+                e.minutos_reales, e.fecha_inicio_real, e.fecha_fin_real
             FROM analytics.v_asignaciones_empleado e
             WHERE (
                     e.estado_bono IN (0, 3)
@@ -603,6 +633,12 @@ def get_items(
             if key in computed:
                 start, end = computed[key]
                 result.append(_render_programado(r, str(r['recurso']), 'maq_prog', start, end))
+            if r.get('estado_bono') == 1 and r.get('fecha_asignacion') and float(r.get('minutos_reales') or 0) > 0:
+                # No hay fecha_inicio_real/fin_real en máquina: se aproxima con
+                # fecha_asignacion + minutos_reales, igual que el bloque "trabajado".
+                inicio = r['fecha_asignacion']
+                fin = add_work_minutes(inicio, float(r['minutos_reales']))
+                result.append(_render_parcial(r, str(r['recurso']), 'maq_parcial', inicio, fin))
         return result
 
     result = list(empleado_items)
@@ -611,6 +647,8 @@ def get_items(
         if key in computed:
             start, end = computed[key]
             result.append(_render_programado(r, str(r['idempleado']), 'emp_prog', start, end))
+        if r.get('estado_bono') == 1 and r.get('fecha_inicio_real') and r.get('fecha_fin_real'):
+            result.append(_render_parcial(r, str(r['idempleado']), 'emp_parcial', r['fecha_inicio_real'], r['fecha_fin_real']))
     return result
 
 

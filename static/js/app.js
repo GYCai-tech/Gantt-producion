@@ -24,12 +24,12 @@ const App = (() => {
   const ST_LABEL = {
     plazo: 'En curso', completado: 'Completado',
     retrasada: 'Retrasada', riesgo: 'En riesgo', 'sin-estimar': 'Sin estimar',
-    parada: 'Parada', pausada: 'Pausada',
+    parada: 'Parada', pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
   };
   const ST_COLOR = {
     plazo: '#1f9254', completado: '#6b7689',
     retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#79859a',
-    parada: '#9a4b52', pausada: '#5b6b8a',
+    parada: '#9a4b52', pausada: '#5b6b8a', parcial: '#c77b1f',
   };
 
   // ── Estado ─────────────────────────────────────────────────────────
@@ -328,6 +328,7 @@ const App = (() => {
     const sub = it.operacion || it.art || '';
     const bonoLabel = it.idbono != null ? `·${it.idbono}` : '';
     bar.innerHTML = (it.tipo === 'real' && it.en_curso ? '<span class="bar__live"></span>' : '') +
+                    (it.tipo === 'parcial' ? '<span class="bar__pause" title="Sesión cerrada; el bono sigue abierto">⏸</span>' : '') +
                     `<span class="bar__id">${esc(it.idorden)}<span class="bar__bono">${esc(bonoLabel)}</span></span>` +
                     (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '');
     if (it.tipo === 'real' && it.progreso != null) {
@@ -353,14 +354,14 @@ const App = (() => {
       if (it.progreso != null) rows.push(`<div class="tip__row">Progreso <span>${it.progreso}%</span></div>`);
       if (it.operarios) rows.push(`<div class="tip__row">Operarios <span>${it.operarios}</span></div>`);
     }
-    if (it.tipo === 'trabajado') {
+    if (it.tipo === 'trabajado' || it.tipo === 'parcial') {
       if (it.min_real != null) rows.push(`<div class="tip__row">Tiempo real <span>${Math.round(it.min_real)} min</span></div>`);
       if (it.piezas)           rows.push(`<div class="tip__row">Piezas <span>${it.piezas}</span></div>`);
     }
     rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}</span></div>`);
     rows.push(`<div class="tip__row">Fin <span>${fmtDt(it.end)}${it.estimado ? ' ~' : ''}</span></div>`);
     if (it.prev) rows.push(`<div class="tip__row">Prevista <span>${fmtDate(it.prev)}</span></div>`);
-    const MARK = { real: '▶ ', trabajado: '✓ ' };
+    const MARK = { real: '▶ ', trabajado: '✓ ', parcial: '⏸ ' };
     const badge = `<span style="color:${ST_COLOR[it.estado] || '#79859a'}">●</span> ${ST_LABEL[it.estado] || it.estado_label}`;
     tip.innerHTML = `<b>${MARK[it.tipo] || ''}${esc(it.idorden)}</b> — ${esc(it.art || '')}<hr>${rows.join('')}` +
                     `<div class="tip__row" style="margin-top:6px">Estado <span>${badge}</span></div>`;
@@ -390,6 +391,7 @@ const App = (() => {
     const AVISO = {
       real:      `▶ En curso · fin estimado`,
       trabajado: `✓ Completado`,
+      parcial:   `⏸ Sesión cerrada · el bono sigue abierto, continúa en la cola`,
     };
     $('d-body').innerHTML =
       `<div class="notice">${AVISO[it.tipo] || ''}</div>` +

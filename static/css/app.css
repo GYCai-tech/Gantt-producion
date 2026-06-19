@@ -349,6 +349,17 @@ button { font-family: inherit; }
 .bar--trabajado:hover { opacity: 1; }
 .bar.st-completado { background: #eef1f5; border-color: #cdd5e0; color: #59657a; }
 
+/* Parcial: sesión ya trabajada de un bono que sigue abierto (pausado por
+   descanso/cambio de turno) — mismo aspecto que "trabajado" + icono ⏸ */
+.bar--parcial { opacity: .68; }
+.bar--parcial:hover { opacity: 1; }
+.bar__pause {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 10px; line-height: 1;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: #c77b1f; color: #fff;
+}
+
 /* Programado: futuro estimado → borde discontinuo + trama diagonal */
 .bar--programado { border-style: dashed; }
 .bar--programado::after {
@@ -365,6 +376,7 @@ button { font-family: inherit; }
 .bar.st-parada  { background: #f4e9ea; border-color: #dcb9bd; color: #7e3a40; }
 .bar.st-pausada { background: #eaeef5; border-color: #bcc8dc; color: #45526e; }
 .bar.st-programado { background: #d3d8f7; border-color: #8a93d8; color: #2f3470; }
+.bar.st-parcial { background: #eef1f5; border-color: #cdd5e0; color: #59657a; }
 
 /* Mini barra de progreso dentro de la barra real */
 .bar__prog { position: absolute; left: 0; bottom: 0; height: 3px; background: currentColor; opacity: .45; border-radius: 0 2px 2px 0; }
