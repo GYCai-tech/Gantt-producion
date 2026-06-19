@@ -266,11 +266,18 @@ const App = (() => {
     }
 
     lista.forEach(grp => {
+      // Orden cronológico por inicio: el algoritmo de carriles de abajo es un
+      // *greedy interval scheduling* y solo es correcto si los intervalos se
+      // procesan en ese orden. Antes se ordenaba primero por tipo (real antes
+      // que trabajado/programado/parcial) — eso hacía que la barra "real" de
+      // ahora reservara el carril 0 antes de procesar sesiones pasadas del
+      // mismo bono que no se solapan con ella, empujándolas a otro carril sin
+      // motivo (el bono "saltaba" de fila en vez de seguir contiguo).
       const TIPO_PRIO = { real: 0, trabajado: 1, programado: 2 };
       const its = (byRes.get(String(grp.id)) || []).slice()
         .sort((a, b) => {
-          const p = (TIPO_PRIO[a.tipo] ?? 3) - (TIPO_PRIO[b.tipo] ?? 3);
-          return p !== 0 ? p : new Date(a.start) - new Date(b.start);
+          const d = new Date(a.start) - new Date(b.start);
+          return d !== 0 ? d : (TIPO_PRIO[a.tipo] ?? 3) - (TIPO_PRIO[b.tipo] ?? 3);
         });
 
       // Asignación de carriles (bonos solapados → carriles distintos)
