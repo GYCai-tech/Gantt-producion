@@ -1,4 +1,5 @@
 import os
+import heapq
 import httpx
 from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Query
@@ -72,87 +73,112 @@ def _estado_programado(fecha_prevista_fin, fecha_orden=None) -> str:
     return 'retrasada' if fecha_prevista_fin < datetime.now() else 'plazo'
 
 
-def _encadenar_programadas(rows, recurso_key, id_prefix, next_start_map, ahora, cap_min=None,
-                            deps=None, bono_fin=None):
-    """Encadena órdenes programadas por recurso, una tras otra, desde next_start_map.
+def _min_est_neto(r, cap_min=None):
+    """Duración neta restante de un bono programado (estimado - ya trabajado)."""
+    min_est = float(r.get('min_estimados') or 0) - float(r.get('minutos_reales') or 0)
+    if cap_min:
+        min_est = min(min_est, cap_min)
+    return min_est
 
-    Si se pasan `deps` (idorden, idbono) -> [(idorden, idbono_requerido), ...] y
-    `bono_fin` (dict mutable (idorden, idbono) -> fin estimado), el inicio de cada
-    bono respeta también el fin de sus bonos requeridos (montajes que esperan
-    sub-piezas, ver core.dependencias_bono). Se resuelve en varias pasadas porque
-    una dependencia puede estar en otro recurso procesado más adelante."""
-    deps = deps or {}
-    bono_fin = bono_fin if bono_fin is not None else {}
 
-    by_recurso = defaultdict(list)
-    for r in rows:
-        by_recurso[str(r[recurso_key])].append(r)
+def _prioridad_programado(r):
+    fp = r.get('fecha_prevista_fin')
+    return fp if _prev_fiable(fp, r.get('fecha_orden')) else datetime.max
 
-    for rid in by_recurso:
-        by_recurso[rid].sort(key=lambda x: (
-            x['fecha_prevista_fin']
-            if _prev_fiable(x['fecha_prevista_fin'], x.get('fecha_orden'))
-            else datetime.max
-        ))
 
-    computed = {}  # (idorden, idbono) -> (start, end), se refina en cada pasada
-    for _ in range(4):
-        for rid, orders in by_recurso.items():
-            t = next_start_map.get(rid, ahora)
-            for r in orders:
-                key = (r['idorden'], r['idbono'])
-                min_est = float(r.get('min_estimados') or 0) - float(r.get('minutos_reales') or 0)
-                if min_est <= 0:
-                    continue
-                if cap_min:
-                    min_est = min(min_est, cap_min)
-                start = t
-                for req in deps.get(key, []):
-                    req_fin = bono_fin.get(req)
-                    if req_fin and req_fin > start:
-                        start = req_fin
-                end = add_work_minutes(start, min_est)
-                t = end
-                computed[key] = (start, end)
-        for key, (_, fin) in computed.items():
-            bono_fin[key] = fin
+def _planificar_programados(rows, deps, bono_fin, next_start, ahora):
+    """Calcula inicio/fin de cada bono programado respetando a la vez la cola de
+    su recurso y sus dependencias bono->bono (core.dependencias_bono).
 
-    items = []
-    for rid, orders in by_recurso.items():
-        for r in orders:
-            key = (r['idorden'], r['idbono'])
-            if key not in computed:
-                continue
-            start, end = computed[key]
-            prev     = r['fecha_prevista_fin']
-            fiable   = _prev_fiable(prev, r.get('fecha_orden'))
-            if r.get('estado_bono') == 3:
-                estado, estado_label = "parada", "Bloqueado"
-            else:
-                estado = _estado_programado(prev, r.get('fecha_orden'))
-                estado_label = "Programado" if fiable else "Sin fecha"
-            items.append({
-                "id":           f"{id_prefix}_{r[recurso_key]}_{r['idorden']}_{r['idbono']}",
-                "idorden":      str(r['idorden']),
-                "idbono":       r['idbono'],
-                "recurso_id":   rid,
-                "tipo":         "programado",
-                "en_curso":     False,
-                "estado":       estado,
-                "estado_label": estado_label,
-                "situacion":    str(r.get('situacion', 'PENDIENTE')),
-                "art":          r['articulo'],
-                "operacion":    r['operacion'],
-                "cantidad":     r.get('cantidad_pedida') or r.get('cantidad'),
-                "prev":         prev.isoformat() if fiable else None,
-                "start":        start.isoformat(),
-                "end":          end.isoformat(),
-                "estimado":     True,
-                "progreso":     None,
-                "operarios":    r.get('operarios'),
-                "notas":        None,
-            })
-    return items
+    Es *list scheduling* con cola de prioridad: un bono solo se considera "listo"
+    cuando todos sus bonos requeridos (los que también están en `rows`) ya se han
+    planificado; entre los listos se elige primero el de fecha_prevista_fin más
+    temprana. A diferencia de iterar un número fijo de pasadas, esto converge
+    siempre en una sola pasada sea cual sea la profundidad de la cadena, y como
+    `bono_fin`/`next_start` los pasa quien llama, funciona igual si el bono
+    requerido vive en otro recurso o en otra vista (máquina/empleado) por
+    completo — basta con que quien llama meta ahí TODOS los recursos a la vez.
+
+    `rows`: dicts con idorden, idbono, recurso_key (string namespaced para no
+    chocar máquinas con empleados) y min_est (duración neta en minutos) ya
+    calculados. Devuelve {(idorden, idbono): (start, end)}.
+    """
+    by_key = {(r['idorden'], r['idbono']): r for r in rows if r['min_est'] > 0}
+
+    dependientes = defaultdict(list)   # requerido -> [dependiente, ...] (sólo si ambos están en `rows`)
+    pendientes = {}
+    for key in by_key:
+        reqs = [req for req in deps.get(key, []) if req in by_key]
+        pendientes[key] = len(reqs)
+        for req in reqs:
+            dependientes[req].append(key)
+
+    heap = [(_prioridad_programado(r), key) for key, r in by_key.items() if pendientes[key] == 0]
+    heapq.heapify(heap)
+
+    computed = {}
+    while heap:
+        _, key = heapq.heappop(heap)
+        r = by_key[key]
+        rk = r['recurso_key']
+        start = next_start[rk]
+        for req in deps.get(key, []):
+            req_fin = bono_fin.get(req)
+            if req_fin and req_fin > start:
+                start = req_fin
+        end = add_work_minutes(start, r['min_est'])
+        computed[key] = (start, end)
+        bono_fin[key] = end
+        next_start[rk] = end
+        for dep_key in dependientes.get(key, []):
+            pendientes[dep_key] -= 1
+            if pendientes[dep_key] == 0:
+                heapq.heappush(heap, (_prioridad_programado(by_key[dep_key]), dep_key))
+
+    # Ciclo en los datos (no debería pasar: core.dependencias_bono es un DAG real
+    # sobre órdenes activas) — planifica lo que falte sin más restricciones para
+    # no perder bonos del Gantt.
+    for key, r in by_key.items():
+        if key not in computed:
+            rk = r['recurso_key']
+            start = next_start[rk]
+            end = add_work_minutes(start, r['min_est'])
+            computed[key] = (start, end)
+            bono_fin[key] = end
+            next_start[rk] = end
+
+    return computed
+
+
+def _render_programado(r, recurso_id, id_prefix, start, end):
+    prev   = r['fecha_prevista_fin']
+    fiable = _prev_fiable(prev, r.get('fecha_orden'))
+    if r.get('estado_bono') == 3:
+        estado, estado_label = "parada", "Bloqueado"
+    else:
+        estado = _estado_programado(prev, r.get('fecha_orden'))
+        estado_label = "Programado" if fiable else "Sin fecha"
+    return {
+        "id":           f"{id_prefix}_{recurso_id}_{r['idorden']}_{r['idbono']}",
+        "idorden":      str(r['idorden']),
+        "idbono":       r['idbono'],
+        "recurso_id":   recurso_id,
+        "tipo":         "programado",
+        "en_curso":     False,
+        "estado":       estado,
+        "estado_label": estado_label,
+        "situacion":    str(r.get('situacion', 'PENDIENTE')),
+        "art":          r['articulo'],
+        "operacion":    r['operacion'],
+        "cantidad":     r.get('cantidad_pedida') or r.get('cantidad'),
+        "prev":         prev.isoformat() if fiable else None,
+        "start":        start.isoformat(),
+        "end":          end.isoformat(),
+        "estimado":     True,
+        "progreso":     None,
+        "operarios":    r.get('operarios'),
+        "notas":        None,
+    }
 
 
 def _cargar_dependencias(conn):
@@ -234,200 +260,200 @@ def get_items(
         hasta = datetime.now() + timedelta(hours=1)
     desde, hasta = desde.replace(tzinfo=None), hasta.replace(tzinfo=None)
     ahora = datetime.now()
-    result = []
+    base_prog = _base_programadas(ahora)
+
+    # `bono_fin`/`next_start` se comparten entre máquina Y empleado, namespaced
+    # por prefijo ("maq:"/"emp:"), para que una dependencia entre vistas (un
+    # montaje de operario que espera una pieza de máquina, o al revés) se
+    # resuelva aunque el Gantt sólo pinte una vista a la vez. Por eso ambos
+    # bloques de queries se ejecutan siempre, no sólo el de `vista`.
+    bono_fin = {}
+    next_start = defaultdict(lambda: base_prog)
+    MAX_MAQ_MIN = 10 * 9 * 60   # 10 días laborables → tope visual del Gantt
+    MAX_TRAB_MIN = 10 * 9 * 60
 
     engine = get_engine()
     with engine.connect() as conn:
         deps = _cargar_dependencias(conn)
 
-        if vista == 'maquina':
-            # ── Máquinas en curso ──────────────────────────────────────
-            activos = conn.execute(text("""
-                WITH hist_art_op AS (
-                    SELECT idarticulo::text, LOWER(operacion) AS operacion,
-                           AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
-                    FROM core.fact_bonos
-                    WHERE estado_orden = 2
-                      AND cantidad_objetivo > 0 AND min_reales > 0
-                    GROUP BY idarticulo, LOWER(operacion)
-                ),
-                hist_op AS (
-                    SELECT LOWER(operacion) AS operacion,
-                           AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
-                    FROM core.fact_bonos
-                    WHERE estado_orden = 2
-                      AND cantidad_objetivo > 0 AND min_reales > 0
-                    GROUP BY LOWER(operacion)
-                ),
-                op_bono AS (   -- operario(s) fichados ahora mismo en cada bono
-                    SELECT idorden, idbono,
-                           string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
-                    FROM analytics.v_asignaciones_empleado
-                    WHERE fase = 'EN_CURSO'
-                    GROUP BY idorden, idbono
-                )
-                SELECT
-                    m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
-                    m.situacion, m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden,
-                    m.minutos_reales,
-                    COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) AS inicio,
-                    ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
-                    op_bono.operarios
-                FROM core.fact_asignaciones_maquina m
-                LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = LOWER(m.operacion)
-                LEFT JOIN hist_op     ho  ON ho.operacion = LOWER(m.operacion)
-                LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
-                JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
-                WHERE fb.estado_bono = 1
-                  AND m.situacion NOT IN ('COMPLETADO', 'ANULADO')
-                  AND m.fichaje_activo_desde IS NOT NULL
-                ORDER BY m.matricula, m.fichaje_activo_desde DESC
-            """)).mappings().all()
-
-            MAX_MAQ_MIN = 10 * 9 * 60  # 10 días laborables → tope visual del Gantt
-            bono_fin_maq = {}
-            for r in activos:
-                inicio   = r["inicio"] or ahora
-                min_est  = float(r["min_estimados"] or 0)
-                min_real = float(r["minutos_reales"] or 0)
-                fin      = _estimar_fin(inicio, min(min_est, min_real + MAX_MAQ_MIN), min_real, ahora)
-                bono_fin_maq[(r["idorden"], r["idbono"])] = fin
-                result.append({
-                    "id":           f"maq_real_{r['matricula']}_{r['idorden']}_{r['idbono']}",
-                    "idorden":      str(r["idorden"]),
-                    "idbono":       r["idbono"],
-                    "recurso_id":   str(r["matricula"]),
-                    "tipo":         "real",
-                    "en_curso":     True,
-                    "estado":       "plazo",
-                    "estado_label": "En curso",
-                    "situacion":    "EN_CURSO",
-                    "art":          r["articulo"],
-                    "operacion":    r["operacion"],
-                    "cantidad":     r["cantidad_pedida"],
-                    "prev":         r["fecha_prevista_fin"].isoformat() if _prev_fiable(r["fecha_prevista_fin"], r["fecha_orden"]) else None,
-                    "start":        inicio.isoformat(),
-                    "end":          fin.isoformat(),
-                    "estimado":     True,
-                    "progreso":     round(min(min_real / min_est * 100, 100)) if min_est > 0 else None,
-                    "operarios":    r["operarios"],
-                    "notas":        None,
-                })
-
-            # ── Máquinas completadas (dentro de la ventana) ────────────
-            completados = conn.execute(text("""
-                WITH op_bono AS (   -- operario(s) que trabajaron cada bono ya finalizado
-                    SELECT idorden, idbono,
-                           string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
-                    FROM analytics.v_asignaciones_empleado
-                    WHERE fase = 'TRABAJADO'
-                    GROUP BY idorden, idbono
-                )
-                SELECT
-                    m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
-                    m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden, m.minutos_reales,
-                    m.piezas_producidas, m.fecha_asignacion,
-                    op_bono.operarios
-                FROM core.fact_asignaciones_maquina m
-                LEFT JOIN op_bono ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
-                WHERE m.situacion = 'COMPLETADO'
-                  AND m.fecha_asignacion IS NOT NULL
-                  AND m.fecha_asignacion < :hasta
-                  AND m.fecha_asignacion > :desde_aprox
-            """), {"hasta": hasta, "desde_aprox": desde - timedelta(days=1)}).mappings().all()
-
-            for r in completados:
-                inicio   = r["fecha_asignacion"]
-                min_real = float(r["minutos_reales"] or 0)
-                fin      = add_work_minutes(inicio, min_real) if min_real > 0 else inicio + timedelta(minutes=15)
-                if fin <= desde:
-                    continue
-                result.append({
-                    "id":           f"maq_trab_{r['matricula']}_{r['idorden']}_{r['idbono']}",
-                    "idorden":      str(r["idorden"]),
-                    "idbono":       r["idbono"],
-                    "recurso_id":   str(r["matricula"]),
-                    "tipo":         "trabajado",
-                    "estado":       "completado",
-                    "estado_label": "Completado",
-                    "situacion":    "COMPLETADO",
-                    "art":          r["articulo"],
-                    "operacion":    r["operacion"],
-                    "cantidad":     r["cantidad_pedida"],
-                    "prev":         r["fecha_prevista_fin"].isoformat() if _prev_fiable(r["fecha_prevista_fin"], r["fecha_orden"]) else None,
-                    "start":        inicio.isoformat(),
-                    "end":          fin.isoformat(),
-                    "estimado":     False,
-                    "progreso":     None,
-                    "operarios":    r["operarios"],
-                    "notas":        None,
-                    "min_real":     float(r["minutos_reales"]) if r["minutos_reales"] is not None else None,
-                    "piezas":       float(r["piezas_producidas"]) if r["piezas_producidas"] is not None else None,
-                })
-
-            # ── Máquinas programadas (encadenadas tras EN_CURSO) ──────────
-            base_prog = _base_programadas(ahora)
-            next_start = defaultdict(lambda: base_prog)
-            for it in result:
-                if it.get('en_curso'):
-                    rid = it['recurso_id']
-                    end_dt = datetime.fromisoformat(it['end'])
-                    if end_dt > next_start[rid]:
-                        next_start[rid] = end_dt
-
-            prog_maq = conn.execute(text("""
-                WITH hist_art_op AS (
-                    SELECT idarticulo::text, LOWER(operacion) AS operacion,
-                           AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
-                    FROM core.fact_bonos
-                    WHERE estado_orden = 2
-                      AND cantidad_objetivo > 0 AND min_reales > 0
-                    GROUP BY idarticulo, LOWER(operacion)
-                ),
-                hist_op AS (
-                    SELECT LOWER(operacion) AS operacion,
-                           AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
-                    FROM core.fact_bonos
-                    WHERE estado_orden = 2
-                      AND cantidad_objetivo > 0 AND min_reales > 0
-                    GROUP BY LOWER(operacion)
-                ),
-                op_bono AS (   -- operario(s) preasignado(s) o que dejaron pausado el bono en cola
-                    SELECT idorden, idbono,
-                           string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
-                    FROM analytics.v_asignaciones_empleado
-                    WHERE fase IN ('PROGRAMADO', 'EN_CURSO')
-                    GROUP BY idorden, idbono
-                )
-                SELECT
-                    m.matricula AS recurso, m.idorden, m.idbono, m.operacion, m.articulo,
-                    m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden, m.situacion, m.estado_bono,
-                    m.minutos_reales,
-                    ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
-                    op_bono.operarios
-                FROM core.fact_asignaciones_maquina m
-                LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = LOWER(m.operacion)
-                LEFT JOIN hist_op     ho  ON ho.operacion = LOWER(m.operacion)
-                LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
-                WHERE (
-                        m.estado_bono IN (0, 3)
-                        OR (m.estado_bono = 1 AND m.fichaje_activo_desde IS NULL)  -- pausado: abierto pero sin nadie fichado
-                      )
-                  AND m.estado_orden <> 2
-                ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
-            """)).mappings().all()
-
-            # Adaptar clave para _encadenar_programadas
-            prog_maq_rows = [dict(r) | {'recurso_key_val': str(r['recurso'])} for r in prog_maq]
-            for r in prog_maq_rows:
-                r['matricula'] = r['recurso']
-            result += _encadenar_programadas(
-                prog_maq_rows, 'matricula', 'maq_prog', next_start, ahora, cap_min=MAX_MAQ_MIN,
-                deps=deps, bono_fin=bono_fin_maq
+        # ════════════════════════════ MÁQUINA ════════════════════════════
+        # ── Máquinas en curso ──────────────────────────────────────
+        activos = conn.execute(text("""
+            WITH hist_art_op AS (
+                SELECT idarticulo::text, LOWER(operacion) AS operacion,
+                       AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
+                FROM core.fact_bonos
+                WHERE estado_orden = 2
+                  AND cantidad_objetivo > 0 AND min_reales > 0
+                GROUP BY idarticulo, LOWER(operacion)
+            ),
+            hist_op AS (
+                SELECT LOWER(operacion) AS operacion,
+                       AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
+                FROM core.fact_bonos
+                WHERE estado_orden = 2
+                  AND cantidad_objetivo > 0 AND min_reales > 0
+                GROUP BY LOWER(operacion)
+            ),
+            op_bono AS (   -- operario(s) fichados ahora mismo en cada bono
+                SELECT idorden, idbono,
+                       string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
+                FROM analytics.v_asignaciones_empleado
+                WHERE fase = 'EN_CURSO'
+                GROUP BY idorden, idbono
             )
+            SELECT
+                m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
+                m.situacion, m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden,
+                m.minutos_reales,
+                COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) AS inicio,
+                ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
+                op_bono.operarios
+            FROM core.fact_asignaciones_maquina m
+            LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = LOWER(m.operacion)
+            LEFT JOIN hist_op     ho  ON ho.operacion = LOWER(m.operacion)
+            LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
+            JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
+            WHERE fb.estado_bono = 1
+              AND m.situacion NOT IN ('COMPLETADO', 'ANULADO')
+              AND m.fichaje_activo_desde IS NOT NULL
+            ORDER BY m.matricula, m.fichaje_activo_desde DESC
+        """)).mappings().all()
 
-            return result
+        maquina_items = []
+        for r in activos:
+            inicio   = r["inicio"] or ahora
+            min_est  = float(r["min_estimados"] or 0)
+            min_real = float(r["minutos_reales"] or 0)
+            fin      = _estimar_fin(inicio, min(min_est, min_real + MAX_MAQ_MIN), min_real, ahora)
+            bono_fin[(r["idorden"], r["idbono"])] = fin
+            rk = f"maq:{r['matricula']}"
+            if fin > next_start[rk]:
+                next_start[rk] = fin
+            maquina_items.append({
+                "id":           f"maq_real_{r['matricula']}_{r['idorden']}_{r['idbono']}",
+                "idorden":      str(r["idorden"]),
+                "idbono":       r["idbono"],
+                "recurso_id":   str(r["matricula"]),
+                "tipo":         "real",
+                "en_curso":     True,
+                "estado":       "plazo",
+                "estado_label": "En curso",
+                "situacion":    "EN_CURSO",
+                "art":          r["articulo"],
+                "operacion":    r["operacion"],
+                "cantidad":     r["cantidad_pedida"],
+                "prev":         r["fecha_prevista_fin"].isoformat() if _prev_fiable(r["fecha_prevista_fin"], r["fecha_orden"]) else None,
+                "start":        inicio.isoformat(),
+                "end":          fin.isoformat(),
+                "estimado":     True,
+                "progreso":     round(min(min_real / min_est * 100, 100)) if min_est > 0 else None,
+                "operarios":    r["operarios"],
+                "notas":        None,
+            })
 
+        # ── Máquinas completadas (dentro de la ventana) ────────────
+        completados = conn.execute(text("""
+            WITH op_bono AS (   -- operario(s) que trabajaron cada bono ya finalizado
+                SELECT idorden, idbono,
+                       string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
+                FROM analytics.v_asignaciones_empleado
+                WHERE fase = 'TRABAJADO'
+                GROUP BY idorden, idbono
+            )
+            SELECT
+                m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
+                m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden, m.minutos_reales,
+                m.piezas_producidas, m.fecha_asignacion,
+                op_bono.operarios
+            FROM core.fact_asignaciones_maquina m
+            LEFT JOIN op_bono ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
+            WHERE m.situacion = 'COMPLETADO'
+              AND m.fecha_asignacion IS NOT NULL
+              AND m.fecha_asignacion < :hasta
+              AND m.fecha_asignacion > :desde_aprox
+        """), {"hasta": hasta, "desde_aprox": desde - timedelta(days=1)}).mappings().all()
+
+        for r in completados:
+            inicio   = r["fecha_asignacion"]
+            min_real = float(r["minutos_reales"] or 0)
+            fin      = add_work_minutes(inicio, min_real) if min_real > 0 else inicio + timedelta(minutes=15)
+            if fin <= desde:
+                continue
+            maquina_items.append({
+                "id":           f"maq_trab_{r['matricula']}_{r['idorden']}_{r['idbono']}",
+                "idorden":      str(r["idorden"]),
+                "idbono":       r["idbono"],
+                "recurso_id":   str(r["matricula"]),
+                "tipo":         "trabajado",
+                "estado":       "completado",
+                "estado_label": "Completado",
+                "situacion":    "COMPLETADO",
+                "art":          r["articulo"],
+                "operacion":    r["operacion"],
+                "cantidad":     r["cantidad_pedida"],
+                "prev":         r["fecha_prevista_fin"].isoformat() if _prev_fiable(r["fecha_prevista_fin"], r["fecha_orden"]) else None,
+                "start":        inicio.isoformat(),
+                "end":          fin.isoformat(),
+                "estimado":     False,
+                "progreso":     None,
+                "operarios":    r["operarios"],
+                "notas":        None,
+                "min_real":     float(r["minutos_reales"]) if r["minutos_reales"] is not None else None,
+                "piezas":       float(r["piezas_producidas"]) if r["piezas_producidas"] is not None else None,
+            })
+
+        # ── Máquinas programadas: candidatas a la cola del scheduler ──
+        prog_maq = conn.execute(text("""
+            WITH hist_art_op AS (
+                SELECT idarticulo::text, LOWER(operacion) AS operacion,
+                       AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
+                FROM core.fact_bonos
+                WHERE estado_orden = 2
+                  AND cantidad_objetivo > 0 AND min_reales > 0
+                GROUP BY idarticulo, LOWER(operacion)
+            ),
+            hist_op AS (
+                SELECT LOWER(operacion) AS operacion,
+                       AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
+                FROM core.fact_bonos
+                WHERE estado_orden = 2
+                  AND cantidad_objetivo > 0 AND min_reales > 0
+                GROUP BY LOWER(operacion)
+            ),
+            op_bono AS (   -- operario(s) preasignado(s) o que dejaron pausado el bono en cola
+                SELECT idorden, idbono,
+                       string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
+                FROM analytics.v_asignaciones_empleado
+                WHERE fase IN ('PROGRAMADO', 'EN_CURSO')
+                GROUP BY idorden, idbono
+            )
+            SELECT
+                m.matricula AS recurso, m.idorden, m.idbono, m.operacion, m.articulo,
+                m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden, m.situacion, m.estado_bono,
+                m.minutos_reales,
+                ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
+                op_bono.operarios
+            FROM core.fact_asignaciones_maquina m
+            LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = LOWER(m.operacion)
+            LEFT JOIN hist_op     ho  ON ho.operacion = LOWER(m.operacion)
+            LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
+            WHERE (
+                    m.estado_bono IN (0, 3)
+                    OR (m.estado_bono = 1 AND m.fichaje_activo_desde IS NULL)  -- pausado: abierto pero sin nadie fichado
+                  )
+              AND m.estado_orden <> 2
+            ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
+        """)).mappings().all()
+
+        sched_rows = []
+        for r in prog_maq:
+            d = dict(r)
+            d['recurso_key'] = f"maq:{r['recurso']}"
+            d['min_est'] = _min_est_neto(d, cap_min=MAX_MAQ_MIN)
+            sched_rows.append(d)
+
+        # ════════════════════════════ EMPLEADO ════════════════════════════
         # ── Empleados: bonos en curso ──────────────────────────────────
         activos = conn.execute(text("""
             SELECT
@@ -442,14 +468,17 @@ def get_items(
               AND e.fichaje_activo_desde IS NOT NULL
         """)).mappings().all()
 
-        bono_fin_emp = {}
+        empleado_items = []
         for r in activos:
             inicio   = r["inicio"] or ahora
             min_est  = float(r["min_estimados"] or 0)
             min_real = float(r["minutos_reales"] or 0)
             fin      = _estimar_fin(inicio, min_est, min_real, ahora)
-            bono_fin_emp[(r["idorden"], r["idbono"])] = fin
-            result.append({
+            bono_fin[(r["idorden"], r["idbono"])] = fin
+            rk = f"emp:{r['idempleado']}"
+            if fin > next_start[rk]:
+                next_start[rk] = fin
+            empleado_items.append({
                 "id":           f"real_{r['idempleado']}_{r['idorden']}_{r['idbono']}",
                 "idorden":      str(r["idorden"]),
                 "idbono":       r["idbono"],
@@ -482,7 +511,6 @@ def get_items(
               AND (fecha_inicio_real IS NOT NULL OR fecha_asignacion IS NOT NULL)
         """)).mappings().all()
 
-        MAX_TRAB_MIN = 10 * 9 * 60
         for r in trabajados:
             inicio = r["fecha_inicio_real"] or r["fecha_asignacion"]
             if inicio is None:
@@ -496,7 +524,7 @@ def get_items(
             fin = min(fin, fin_cap)
             if fin <= desde or inicio >= hasta:
                 continue
-            result.append({
+            empleado_items.append({
                 "id":           f"trab_{r['idempleado']}_{r['idorden']}_{r['idbono']}",
                 "idorden":      str(r["idorden"]),
                 "idbono":       r["idbono"],
@@ -519,16 +547,7 @@ def get_items(
                 "piezas":       float(r["piezas_producidas"]) if r["piezas_producidas"] is not None else None,
             })
 
-        # ── Empleados: programados (encadenados tras EN_CURSO) ─────────
-        base_prog = _base_programadas(ahora)
-        next_start = defaultdict(lambda: base_prog)
-        for it in result:
-            if it.get('en_curso'):
-                rid = it['recurso_id']
-                end_dt = datetime.fromisoformat(it['end'])
-                if end_dt > next_start[rid]:
-                    next_start[rid] = end_dt
-
+        # ── Empleados programados: candidatas a la cola del scheduler ──
         prog_emp = conn.execute(text("""
             SELECT
                 e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
@@ -544,11 +563,30 @@ def get_items(
             ORDER BY e.idempleado, e.fecha_prevista_fin NULLS LAST
         """)).mappings().all()
 
-        result += _encadenar_programadas(
-            [dict(r) for r in prog_emp], 'idempleado', 'emp_prog', next_start, ahora,
-            deps=deps, bono_fin=bono_fin_emp
-        )
+        for r in prog_emp:
+            d = dict(r)
+            d['recurso_key'] = f"emp:{r['idempleado']}"
+            d['min_est'] = _min_est_neto(d)
+            sched_rows.append(d)
 
+        # ── Una sola pasada del scheduler para TODOS los recursos a la vez ──
+        computed = _planificar_programados(sched_rows, deps, bono_fin, next_start, ahora)
+
+    if vista == 'maquina':
+        result = list(maquina_items)
+        for r in prog_maq:
+            key = (r['idorden'], r['idbono'])
+            if key in computed:
+                start, end = computed[key]
+                result.append(_render_programado(r, str(r['recurso']), 'maq_prog', start, end))
+        return result
+
+    result = list(empleado_items)
+    for r in prog_emp:
+        key = (r['idorden'], r['idbono'])
+        if key in computed:
+            start, end = computed[key]
+            result.append(_render_programado(r, str(r['idempleado']), 'emp_prog', start, end))
     return result
 
 
