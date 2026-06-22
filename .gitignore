@@ -1,3 +1,13 @@
 .env
 /fotos
 .claude/settings.local.json
+
+# Entorno virtual
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Carpeta de pruebas/depuración local (no forma parte de la app)
+scratch/
