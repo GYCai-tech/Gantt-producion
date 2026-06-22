@@ -12,6 +12,17 @@ jobs:
       - name: Clonar el repositorio
         uses: actions/checkout@v4
 
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias de test
+        run: pip install -r requirements-dev.txt
+
+      - name: Ejecutar tests (pytest)
+        run: python -m pytest -q
+
       - name: Crear archivo .env temporal para pruebas
         run: |
           echo "DATABASE_URL=mock_value" >> .env

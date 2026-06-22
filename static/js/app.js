@@ -25,11 +25,13 @@ const App = (() => {
     plazo: 'En curso', completado: 'Completado',
     retrasada: 'Retrasada', riesgo: 'En riesgo', 'sin-estimar': 'Sin estimar',
     parada: 'Parada', pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
+    programado: 'Programado',
   };
   const ST_COLOR = {
     plazo: '#1f9254', completado: '#6b7689',
     retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#79859a',
     parada: '#9a4b52', pausada: '#5b6b8a', parcial: '#c77b1f',
+    programado: '#5b63b0',
   };
 
   // ── Estado ─────────────────────────────────────────────────────────
@@ -284,9 +286,17 @@ const App = (() => {
       // e_vis coincide con el ancho visual de buildBar: en_curso se extiende a now+10min
       const laneEnd = [];
       its.forEach(it => {
-        const s = +new Date(it.start);
+        let s = +new Date(it.start);
         let e = +new Date(it.end);
         if (it.en_curso) e = Math.max(e, Date.now() + 10 * 60000);
+        // Un "programado" es una proyección de cola que se recalcula en cada
+        // refresco del servidor; entre refrescos puede quedar con un inicio
+        // ya "pasado" frente al reloj del navegador. Sin este suelo, ese
+        // desfase lo manda a un carril paralelo al del bono activo de su
+        // mismo recurso, dando la falsa impresión de que los dos se trabajan
+        // a la vez. Nunca puede aparecer antes de lo que puede aparecer un
+        // "real" (mismo suelo de +10min) -- así siempre queda detrás, nunca al lado.
+        if (it.tipo === 'programado') s = Math.max(s, Date.now() + 10 * 60000);
         let lane = laneEnd.findIndex(end => end <= s);
         if (lane === -1) { lane = laneEnd.length; laneEnd.push(e); }
         else laneEnd[lane] = e;
@@ -321,6 +331,9 @@ const App = (() => {
   function buildBar(it, W, top) {
     let lx = workX(it.start), rx = workX(it.end);
     if (it.en_curso) rx = Math.max(rx, workX(new Date(Date.now() + 10 * 60000)));
+    // Mismo suelo que en la asignación de carriles (ver renderRows): evita que
+    // el píxel de inicio quede por delante del bono activo de su recurso.
+    if (it.tipo === 'programado') lx = Math.max(lx, workX(new Date(Date.now() + 10 * 60000)));
     if (rx <= 0 || lx >= W) return null;
     lx = clamp(lx, 0, W); rx = clamp(rx, 0, W);
     const w = Math.max(rx - lx, 6);

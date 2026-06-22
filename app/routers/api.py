@@ -197,13 +197,17 @@ def _render_parcial(r, recurso_id, id_prefix, inicio, fin):
 
 
 def _render_programado(r, recurso_id, id_prefix, start, end):
+    """Bono en cola, sin fichaje real todavia. La etiqueta es siempre
+    'Programado' -- no se distingue por fiabilidad de fecha_prevista_fin
+    (ver _prev_fiable: casi todas vienen rellenadas/vacias del ERP, asi que
+    matizar "sin fecha"/"retrasada" aqui solo confundia, dando la impresion
+    de que el bono ya estaba en marcha cuando es pura proyeccion de cola)."""
     prev   = r['fecha_prevista_fin']
     fiable = _prev_fiable(prev, r.get('fecha_orden'))
     if r.get('estado_bono') == 3:
         estado, estado_label = "parada", "Bloqueado"
     else:
-        estado = _estado_programado(prev, r.get('fecha_orden'))
-        estado_label = "Programado" if fiable else "Sin fecha"
+        estado, estado_label = "programado", "Programado"
     return {
         "id":           f"{id_prefix}_{recurso_id}_{r['idorden']}_{r['idbono']}",
         "idorden":      str(r['idorden']),
