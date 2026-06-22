@@ -752,6 +752,73 @@ def get_items(
 
 
 # ─────────────────────────────────────────────────────────────────────
+#  HISTÓRICO DE PRODUCCIÓN  (página /historico-produccion)
+# ─────────────────────────────────────────────────────────────────────
+
+@router.get("/recursos")
+def get_recursos(tipo: str = Query("empleado", pattern="^empleado$")):
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                de.idempleado::text                    AS id,
+                de.nombre_completo                     AS nombre,
+                COALESCE(de.departamento, 'Sin depto') AS grupo
+            FROM core.dim_empleados de
+            ORDER BY de.nombre_completo
+        """)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.get("/historico/bonos")
+def get_historico_bonos(idempleado: int, desde: str, hasta: str):
+    hasta_excl = datetime.strptime(hasta, "%Y-%m-%d") + timedelta(days=1)
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                f.idorden, f.idbono, fb.idarticulo,
+                da.descrip AS articulo,
+                (array_agg(f.operacion ORDER BY f.hinicial DESC))[1]         AS operacion,
+                (array_agg(f.matricula_maquina ORDER BY f.hinicial DESC))[1] AS matricula_maquina,
+                SUM(f.minutos_trabajados)                  AS minutos_trabajados,
+                MIN(f.hinicial AT TIME ZONE 'UTC')::date   AS primera_fecha,
+                fb.cantidad_pedida, fo.fecha_prevista_fin
+            FROM core.fact_fichajes f
+            LEFT JOIN core.fact_bonos fb   ON fb.idorden = f.idorden AND fb.idbono = f.idbono
+            LEFT JOIN core.dim_articulo da ON da.idarticulo = fb.idarticulo
+            LEFT JOIN core.fact_ordenes fo ON fo.idorden = f.idorden
+            WHERE f.idempleado = :idempleado
+              AND f.hinicial AT TIME ZONE 'UTC' >= :desde
+              AND f.hinicial AT TIME ZONE 'UTC' < :hasta_excl
+            GROUP BY f.idorden, f.idbono, fb.idarticulo, da.descrip, fb.cantidad_pedida, fo.fecha_prevista_fin
+            ORDER BY primera_fecha DESC
+        """), {"idempleado": idempleado, "desde": desde, "hasta_excl": hasta_excl}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.get("/historico/actividad-diaria")
+def get_historico_actividad_diaria(idempleado: int, desde: str, hasta: str):
+    hasta_excl = datetime.strptime(hasta, "%Y-%m-%d") + timedelta(days=1)
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                (f.hinicial AT TIME ZONE 'UTC')::date AS fecha,
+                SUM(f.minutos_trabajados)             AS minutos_trabajados,
+                COUNT(DISTINCT f.idorden)              AS num_ordenes,
+                COUNT(DISTINCT (f.idorden, f.idbono))  AS num_bonos
+            FROM core.fact_fichajes f
+            WHERE f.idempleado = :idempleado
+              AND f.hinicial AT TIME ZONE 'UTC' >= :desde
+              AND f.hinicial AT TIME ZONE 'UTC' < :hasta_excl
+            GROUP BY 1
+            ORDER BY 1
+        """), {"idempleado": idempleado, "desde": desde, "hasta_excl": hasta_excl}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+# ─────────────────────────────────────────────────────────────────────
 #  REFRESCO ETL  (dispara el flujo Prefect bajo demanda)
 # ─────────────────────────────────────────────────────────────────────
 
