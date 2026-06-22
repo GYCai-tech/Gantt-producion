@@ -13,6 +13,7 @@ router = APIRouter(prefix="/api")
 JORNADA_INICIO = 7
 JORNADA_FIN    = 16
 _SEGMENTOS = [(7 * 60, 11 * 60), (11 * 60 + 15, 16 * 60)]
+TOLERANCIA_PAUSA_MIN = 10  # los fichajes nunca calzan al minuto exacto con el descanso oficial
 
 
 def _next_workday_start(dt: datetime) -> datetime:
@@ -56,6 +57,32 @@ def add_work_minutes(start: datetime, minutes: float) -> datetime:
             remaining -= avail
         day = _next_workday_start(day)
     return day
+
+
+def _minutos_laborables_entre(a: datetime, b: datetime) -> float:
+    """Minutos de jornada laboral que caen estrictamente dentro de [a, b).
+    0 si el hueco completo es descanso/fuera de jornada/fin de semana -- en
+    ese caso no hubo una pausa "real", solo el calendario laboral."""
+    if b <= a:
+        return 0.0
+    total = 0.0
+    day = a
+    for _ in range(400):
+        if day >= b:
+            break
+        if day.weekday() >= 5:
+            day = _next_workday_start(day)
+            continue
+        midnight = day.replace(hour=0, minute=0, second=0, microsecond=0)
+        cm = (day - midnight).total_seconds() / 60
+        fin_dia = min(b, midnight + timedelta(days=1))
+        cm_fin = (fin_dia - midnight).total_seconds() / 60
+        for seg_a, seg_b in _SEGMENTOS:
+            lo, hi = max(cm, seg_a), min(cm_fin, seg_b)
+            if hi > lo:
+                total += hi - lo
+        day = midnight + timedelta(days=1)
+    return total
 
 
 def _prev_fiable(fecha_prevista, fecha_orden) -> bool:
@@ -266,9 +293,16 @@ def _cargar_sesiones_fichaje(conn, recurso_col, desde, hasta, ahora):
 
 
 def _fusionar_sesiones(rows):
-    """Funde sesiones de fichaje consecutivas del mismo bono (sin hueco real
-    entre ellas: el fin de una coincide con el inicio de la siguiente) en un
-    solo tramo visual, para no llenar el Gantt de astillas de 1 minuto.
+    """Funde sesiones de fichaje del mismo bono en un solo tramo visual
+    cuando no hay una pausa "real" entre ellas, para no llenar el Gantt de
+    astillas de 1 minuto ni de huecos que parecen una parada cuando en
+    realidad es solo el descanso, el fin de jornada o el fin de semana.
+    "Sin pausa real" = el hueco entre el fin de una sesión y el inicio de la
+    siguiente contiene como mucho `TOLERANCIA_PAUSA_MIN` minutos de jornada
+    laboral (ver `_minutos_laborables_entre`) -- si el operario fichó salida
+    a las 11:02 y entrada a las 11:17, ese hueco es justo el descanso
+    (11:00-11:15) más un par de minutos de margen real de fichaje, no una
+    pausa del bono.
     Devuelve un tramo por grupo contiguo, con la sesión todavía abierta (si la
     hay) excluida — esa la cubre ya la barra "real"."""
     grupos = defaultdict(list)
@@ -280,7 +314,11 @@ def _fusionar_sesiones(rows):
         ses = sorted(ses, key=lambda r: r['inicio'])
         actual = None
         for r in ses:
-            if actual is not None and not actual['abierto'] and r['inicio'] <= actual['fin']:
+            sin_pausa_real = (
+                actual is not None and not actual['abierto']
+                and _minutos_laborables_entre(actual['fin'], r['inicio']) <= TOLERANCIA_PAUSA_MIN
+            )
+            if sin_pausa_real:
                 actual['fin'] = r['fin']
                 actual['abierto'] = r['fin'] is None
                 actual['min_total'] += float(r['minutos_trabajados'] or 0)
@@ -638,6 +676,19 @@ def get_items(
             sched_rows.append(d)
 
         # ════════════════════════════ EMPLEADO ════════════════════════════
+        # Sesiones de fichaje fusionadas (ver _fusionar_sesiones): un bono
+        # cuya sesión sigue abierta puede haber absorbido sesiones cerradas
+        # previas sin pausa real (descanso, fin de jornada) -- esa fusión
+        # debe alargar hacia atrás el inicio de la barra "real" de abajo,
+        # o el tramo absorbido desaparecería del Gantt sin dejar rastro.
+        sesiones_emp = _fusionar_sesiones(
+            _cargar_sesiones_fichaje(conn, 'idempleado', desde, hasta, ahora)
+        )
+        inicio_real_fusionado = {
+            (seg['recurso'], seg['idorden'], seg['idbono']): seg['inicio']
+            for seg in sesiones_emp if seg['abierto']
+        }
+
         # ── Empleados: bonos en curso ──────────────────────────────────
         activos = conn.execute(text("""
             SELECT
@@ -654,7 +705,9 @@ def get_items(
 
         empleado_items = []
         for r in activos:
-            inicio   = r["inicio"] or ahora
+            inicio = inicio_real_fusionado.get(
+                (r["idempleado"], r["idorden"], r["idbono"]), r["inicio"]
+            ) or ahora
             min_est  = float(r["min_estimados"] or 0)
             min_real = float(r["minutos_reales"] or 0)
             fin      = _estimar_fin(inicio, min_est, min_real, ahora)
@@ -692,9 +745,6 @@ def get_items(
         # cuándo abrió y cerró cada fichaje, incluso si el bono sigue abierto
         # (esas quedan como "parcial", igual que antes, pero ahora con la
         # granularidad real en vez de un único tramo inicio→fin agregado).
-        sesiones_emp = _fusionar_sesiones(
-            _cargar_sesiones_fichaje(conn, 'idempleado', desde, hasta, ahora)
-        )
         for seg in sesiones_emp:
             if seg['abierto']:
                 continue  # la sesión todavía abierta ya la cubre la barra "real"

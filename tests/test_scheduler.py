@@ -13,6 +13,7 @@ from app.routers.api import (
     _estado_programado,
     _min_est_neto,
     _fusionar_sesiones,
+    _minutos_laborables_entre,
     _planificar_programados,
     _estimar_fin,
 )
@@ -132,6 +133,68 @@ class TestFusionarSesiones:
         rows = [self._sesion(datetime(2024, 1, 2, 10, 0), None)]
         segmentos = _fusionar_sesiones(rows)
         assert segmentos[0]["abierto"] is True
+
+    def test_funde_a_traves_del_descanso(self):
+        # Fichó salida a las 11:02 (2min tras empezar el descanso oficial) y
+        # entrada a las 11:17 (2min tras terminarlo) -- es el mismo bono
+        # continuando, no una pausa real.
+        rows = [
+            self._sesion(datetime(2024, 1, 2, 7, 0), datetime(2024, 1, 2, 11, 2), minutos=242),
+            self._sesion(datetime(2024, 1, 2, 11, 17), None, minutos=None),
+        ]
+        segmentos = _fusionar_sesiones(rows)
+        assert len(segmentos) == 1
+        assert segmentos[0]["inicio"] == datetime(2024, 1, 2, 7, 0)
+        assert segmentos[0]["abierto"] is True
+
+    def test_no_funde_hueco_real_que_cruza_el_descanso(self):
+        # Salida a las 10:00, entrada a las 12:00: el hueco incluye los 60min
+        # laborables de 10:00-11:00, una pausa real (no solo el descanso).
+        rows = [
+            self._sesion(datetime(2024, 1, 2, 7, 0), datetime(2024, 1, 2, 10, 0)),
+            self._sesion(datetime(2024, 1, 2, 12, 0), datetime(2024, 1, 2, 13, 0)),
+        ]
+        segmentos = _fusionar_sesiones(rows)
+        assert len(segmentos) == 2
+
+    def test_no_funde_hueco_real_de_fin_de_semana(self):
+        # Viernes 15:00 (dentro de jornada) a lunes 7:02: queda 1h del
+        # viernes (15:00-16:00) sin fichar -- pausa real, aunque el resto del
+        # hueco sea fin de semana.
+        rows = [
+            self._sesion(datetime(2024, 1, 5, 14, 0), datetime(2024, 1, 5, 15, 0)),  # viernes
+            self._sesion(datetime(2024, 1, 8, 7, 2), datetime(2024, 1, 8, 7, 30)),   # lunes
+        ]
+        segmentos = _fusionar_sesiones(rows)
+        assert len(segmentos) == 2
+
+    def test_funde_a_traves_de_la_noche_y_el_fin_de_semana(self):
+        # Viernes 15:58 (justo al filo del fin de jornada) a lunes 7:02: no
+        # queda tiempo laborable real sin fichar de por medio.
+        rows = [
+            self._sesion(datetime(2024, 1, 5, 14, 0), datetime(2024, 1, 5, 15, 58)),  # viernes
+            self._sesion(datetime(2024, 1, 8, 7, 2), None, minutos=None),             # lunes
+        ]
+        segmentos = _fusionar_sesiones(rows)
+        assert len(segmentos) == 1
+        assert segmentos[0]["abierto"] is True
+
+
+class TestMinutosLaborablesEntre:
+    def test_hueco_dentro_del_descanso_es_cero(self):
+        assert _minutos_laborables_entre(
+            datetime(2024, 1, 2, 11, 0), datetime(2024, 1, 2, 11, 15)
+        ) == 0
+
+    def test_hueco_dentro_de_jornada_cuenta_completo(self):
+        assert _minutos_laborables_entre(
+            datetime(2024, 1, 2, 9, 0), datetime(2024, 1, 2, 9, 30)
+        ) == 30
+
+    def test_fin_anterior_o_igual_al_inicio_es_cero(self):
+        igual = datetime(2024, 1, 2, 9, 0)
+        assert _minutos_laborables_entre(igual, igual) == 0
+        assert _minutos_laborables_entre(igual, igual - timedelta(minutes=5)) == 0
 
 
 class TestEstimarFin:
