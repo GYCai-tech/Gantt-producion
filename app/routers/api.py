@@ -140,6 +140,14 @@ def _planificar_programados(rows, deps, bono_fin, next_start, ahora):
             req_fin = bono_fin.get(req)
             if req_fin and req_fin > start:
                 start = req_fin
+        # Colchón de seguridad: un "programado" nunca puede arrancar en
+        # "ahora" mismo o antes -- si el recurso está libre, start cae
+        # exactamente en `ahora`/`base_prog` sin margen, así que en cuanto el
+        # navegador tarda unos minutos en cargar/refrescar el Gantt, ese
+        # inicio ya quedó "en el pasado" y la barra parece estar ya
+        # trabajándose (o haberlo sido) cuando es pura cola sin empezar.
+        # Mismo colchón que usa _estimar_fin para los bonos activos.
+        start = max(start, ahora + timedelta(minutes=10))
         end = add_work_minutes(start, r['min_est'])
         next_start[rk] = end
         if bono_fin.get(bono_key) is None or end > bono_fin[bono_key]:
@@ -361,13 +369,51 @@ def get_grupos(vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
                 ORDER BY dm.descrip
             """)).mappings().all()
         else:
+            # Se agrupa por el área de la(s) máquina(s) en las que trabaja el
+            # operario, no por su departamento del ERP. "En las que trabaja":
+            # las de sus fichajes activos ahora mismo (puede tener varios a la
+            # vez, ej. atendiendo 2-3 máquinas en paralelo); si no tiene ninguno
+            # activo, la de su fichaje más reciente. El filtro de "activo" exige
+            # además que el fichaje sea de las últimas 24h: fichajes abiertos
+            # de hace meses/años son fichajes fantasma del ERP (ver memoria de
+            # gotchas), no actividad real -- sin ese corte, ensucian el área.
             rows = conn.execute(text("""
                 SELECT
-                    de.idempleado::text                    AS id,
-                    de.nombre_completo                     AS nombre,
-                    COALESCE(de.departamento, 'Sin depto') AS sub,
-                    COALESCE(de.departamento, 'Sin depto') AS area
+                    de.idempleado::text                       AS id,
+                    de.nombre_completo                        AS nombre,
+                    COALESCE(maq.sub, 'Sin máquina')          AS sub,
+                    COALESCE(maq.areas, ARRAY['Sin máquina']) AS areas
                 FROM core.dim_empleados de
+                LEFT JOIN LATERAL (
+                    SELECT
+                        array_to_string(array_agg(DISTINCT dm.area ORDER BY dm.area), ', ') AS sub,
+                        array_agg(DISTINCT dm.area) AS areas
+                    FROM core.dim_maquinas dm
+                    WHERE dm.area IS NOT NULL
+                      AND dm.matricula IN (
+                          SELECT f.matricula_maquina
+                          FROM core.fact_fichajes f
+                          WHERE f.idempleado = de.idempleado
+                            AND f.hfinal IS NULL
+                            AND f.hinicial > NOW() - INTERVAL '1 day'
+
+                          UNION
+
+                          SELECT ultimo.matricula_maquina FROM (
+                              SELECT f.matricula_maquina
+                              FROM core.fact_fichajes f
+                              WHERE f.idempleado = de.idempleado
+                                AND NOT EXISTS (
+                                    SELECT 1 FROM core.fact_fichajes fa
+                                    WHERE fa.idempleado = de.idempleado
+                                      AND fa.hfinal IS NULL
+                                      AND fa.hinicial > NOW() - INTERVAL '1 day'
+                                )
+                              ORDER BY f.hinicial DESC
+                              LIMIT 1
+                          ) ultimo
+                      )
+                ) maq ON true
                 WHERE (de.fechabaja IS NULL OR de.fechabaja > CURRENT_DATE)
                   AND (
                       LOWER(de.departamento) IN ('producción','produccion','logística','logistica')

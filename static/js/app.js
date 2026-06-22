@@ -144,15 +144,19 @@ const App = (() => {
   }
 
   // ── Áreas ──────────────────────────────────────────────────────────
+  // Un grupo puede pertenecer a varias áreas a la vez (ej. operario que
+  // atiende máquinas de dos áreas en paralelo); vista=maquina sigue
+  // mandando un único `area`, por eso se admiten ambas formas.
+  const gruposAreas = g => (g.areas && g.areas.length) ? g.areas : [g.area || 'Sin área'];
   function renderAreas() {
-    const areas = ['todos', ...new Set(allGrupos.map(g => g.area || 'Sin área'))];
+    const areas = ['todos', ...new Set(allGrupos.flatMap(gruposAreas))];
     $('areas').innerHTML = areas.map(a =>
       `<button class="area-pill ${a === areaActive ? 'is-active' : ''}" onclick="App.setArea('${a.replace(/'/g,"\\'")}')">${a === 'todos' ? 'Todas las áreas' : a}</button>`
     ).join('');
   }
   function setArea(a) { areaActive = a; renderAreas(); applyArea(); render(); }
   function applyArea() {
-    grupos = areaActive === 'todos' ? allGrupos : allGrupos.filter(g => (g.area || 'Sin área') === areaActive);
+    grupos = areaActive === 'todos' ? allGrupos : allGrupos.filter(g => gruposAreas(g).includes(areaActive));
   }
 
   // ── Render principal ───────────────────────────────────────────────

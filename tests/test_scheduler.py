@@ -167,11 +167,26 @@ class TestPlanificarProgramados:
 
         start10, end10 = computed[(1, 10, "emp:1")]
         start20, end20 = computed[(1, 20, "emp:1")]
-        assert start10 == MARTES_9
-        assert end10 == datetime(2024, 1, 2, 10, 0)
+        # El colchón de seguridad (ver test_nunca_arranca_en_ahora_mismo)
+        # desplaza el inicio del primero +10min sobre "ahora".
+        assert start10 == MARTES_9 + timedelta(minutes=10)
+        assert end10 == add_work_minutes(start10, 60)
         # El dependiente no puede empezar antes de que termine su requisito.
         assert start20 >= end10
         assert end20 == add_work_minutes(start20, 30)
+
+    def test_nunca_arranca_en_ahora_mismo(self):
+        # Si el recurso está libre, next_start cae justo en "ahora" sin
+        # margen -- sin colchón, la barra parecería ya en marcha en cuanto
+        # el navegador tarda unos minutos en pintarla.
+        rows = [
+            {"idorden": 1, "idbono": 10, "recurso_key": "emp:1", "min_est": 30,
+             "fecha_prevista_fin": None, "fecha_orden": None},
+        ]
+        computed = _planificar_programados(rows, {}, {}, defaultdict(lambda: MARTES_9), MARTES_9)
+        start, end = computed[(1, 10, "emp:1")]
+        assert start > MARTES_9
+        assert start == MARTES_9 + timedelta(minutes=10)
 
     def test_bono_sin_dependencias_ni_minutos_se_omite(self):
         rows = [
