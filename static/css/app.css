@@ -478,52 +478,20 @@ button { font-family: inherit; }
 .toast.is-error { background: var(--rojo); }
 
 
-/* Estilos para la barra de navegación superior */
+/* Barra de navegación superior, compartida por las 3 páginas (ver base.html) */
 .app-navbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background-color: #1e293b; /* Color pizarra oscuro elegante */
-  padding: 0 24px;
-  height: 56px;
-  color: #ffffff;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; height: 52px;
+  background: var(--surface); border-bottom: 1px solid var(--line);
 }
-
-.navbar-brand {
-  font-size: 1.1rem;
-  color: #f8fafc;
+.app-navbar__brand { font-size: 15px; font-weight: 700; color: var(--ink); letter-spacing: -.01em; }
+.app-navbar__links { display: flex; gap: 4px; }
+.app-nav-link {
+  padding: 6px 14px; font-size: 13.5px; font-weight: 500; color: var(--ink-2);
+  text-decoration: none; border-radius: 7px; transition: background .12s, color .12s;
 }
-
-.navbar-links {
-  display: flex;
-  gap: 8px;
-  height: 100%;
-}
-
-.nav-link {
-  display: flex;
-  align-items: center;
-  color: #94a3b8; /* Gris suave por defecto */
-  text-decoration: none;
-  padding: 0 16px;
-  font-weight: 500;
-  font-size: 0.95rem;
-  border-bottom: 3px solid transparent;
-  transition: all 0.2s ease;
-}
-
-.nav-link:hover {
-  color: #ffffff;
-  background-color: #334155;
-}
-
-/* Resalta automáticamente la pestaña en la que se encuentra el usuario */
-.nav-link.active {
-  color: #ffffff;
-  border-bottom-color: #3b82f6; /* Línea azul debajo de la pestaña activa */
-  background-color: #1e293b;
-}
+.app-nav-link:hover { background: var(--accent-2); color: var(--accent); }
+.app-nav-link.active { background: var(--accent); color: #fff; }
 
 /* Contenedor principal para que el contenido no quede pegado al menú */
 .app-container {

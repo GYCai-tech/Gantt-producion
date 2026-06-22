@@ -191,32 +191,10 @@
     .order-card__meta { display: none; }
   }
 
-  /* ── Navbar propia de esta página ── */
-  .hp-navbar {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0 24px; height: 52px;
-    background: var(--surface); border-bottom: 1px solid var(--line);
-  }
-  .hp-navbar__brand { font-size: 15px; font-weight: 700; color: var(--ink); letter-spacing: -.01em; }
-  .hp-navbar__links { display: flex; gap: 4px; }
-  .hp-nav-link {
-    padding: 6px 14px; font-size: 13.5px; font-weight: 500; color: var(--ink-2);
-    text-decoration: none; border-radius: 7px; transition: background .12s, color .12s;
-  }
-  .hp-nav-link:hover { background: var(--accent-2); color: var(--accent); }
-  .hp-nav-link.active { background: var(--accent); color: #fff; }
 </style>
 {% endblock %}
 
 {% block body %}
-<header class="hp-navbar">
-  <span class="hp-navbar__brand"><strong>GYC</strong> · Planificador</span>
-  <nav class="hp-navbar__links">
-    <a href="/" class="hp-nav-link">Planificador</a>
-    <a href="/historico-produccion" class="hp-nav-link active">Histórico Producción</a>
-    <a href="/consultor-bonos" class="hp-nav-link">Consultor de Bonos</a>
-  </nav>
-</header>
 
 <div class="hp-page">
 

@@ -8,14 +8,14 @@ templates = Jinja2Templates(directory="templates")
 
 @router.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index.html", {"request": request, "current_page": "planificador"})
 
 
 @router.get("/historico-produccion", response_class=HTMLResponse)
 def historico_produccion(request: Request):
-    return templates.TemplateResponse("historico_prod.html", {"request": request})
+    return templates.TemplateResponse("historico_prod.html", {"request": request, "current_page": "historico"})
 
 
 @router.get("/consultor-bonos", response_class=HTMLResponse)
 def consultor_bonos(request: Request):
-    return templates.TemplateResponse("consultor_bonos.html", {"request": request})
+    return templates.TemplateResponse("consultor_bonos.html", {"request": request, "current_page": "consultor"})

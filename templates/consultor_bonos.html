@@ -4,21 +4,6 @@
 
 {% block head %}
 <style>
-  /* ── Navbar propia de esta página (mismo patrón que Histórico) ── */
-  .cb-navbar {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0 24px; height: 52px;
-    background: var(--surface); border-bottom: 1px solid var(--line);
-  }
-  .cb-navbar__brand { font-size: 15px; font-weight: 700; color: var(--ink); letter-spacing: -.01em; }
-  .cb-navbar__links { display: flex; gap: 4px; }
-  .cb-nav-link {
-    padding: 6px 14px; font-size: 13.5px; font-weight: 500; color: var(--ink-2);
-    text-decoration: none; border-radius: 7px; transition: background .12s, color .12s;
-  }
-  .cb-nav-link:hover { background: var(--accent-2); color: var(--accent); }
-  .cb-nav-link.active { background: var(--accent); color: #fff; }
-
   /* ── Consultor de Bonos (paleta adaptada al estilo del Planificador) ── */
   *, *::before, *::after { box-sizing: border-box; }
 
@@ -238,15 +223,6 @@
 {% endblock %}
 
 {% block body %}
-<header class="cb-navbar">
-  <span class="cb-navbar__brand"><strong>GYC</strong> · Planificador</span>
-  <nav class="cb-navbar__links">
-    <a href="/" class="cb-nav-link">Planificador</a>
-    <a href="/historico-produccion" class="cb-nav-link">Histórico Producción</a>
-    <a href="/consultor-bonos" class="cb-nav-link active">Consultor de Bonos</a>
-  </nav>
-</header>
-
 <div id="loading-bar"></div>
 <div id="cb-app">
 
