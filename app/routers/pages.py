@@ -14,3 +14,8 @@ def index(request: Request):
 @router.get("/historico-produccion", response_class=HTMLResponse)
 def historico_produccion(request: Request):
     return templates.TemplateResponse("historico_prod.html", {"request": request})
+
+
+@router.get("/consultor-bonos", response_class=HTMLResponse)
+def consultor_bonos(request: Request):
+    return templates.TemplateResponse("consultor_bonos.html", {"request": request})

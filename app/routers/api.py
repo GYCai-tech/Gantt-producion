@@ -819,6 +819,62 @@ def get_historico_actividad_diaria(idempleado: int, desde: str, hasta: str):
 
 
 # ─────────────────────────────────────────────────────────────────────
+#  CONSULTOR DE BONOS  (página /consultor-bonos)
+#
+#  core.fact_salidas_produccion ya viene pre-unida con exactamente las
+#  mismas columnas que la app original armaba a mano contra SQL Server
+#  (Ordenes + Ordenes_Bonos + Ordenes_Bonos_Salidas + Articulos x2), asi
+#  que no hace falta tocar el ERP directamente.
+# ─────────────────────────────────────────────────────────────────────
+
+@router.get("/bonos")
+def get_consultor_bonos(
+    matricula: Optional[str] = Query(None, description="Matrícula de máquina (opcional)"),
+    estado_bono: Optional[int] = Query(None, description="Estado del bono (0=Espera, 1=Activo, 2=Finalizado, 3=Bloqueado). Omitir para todos."),
+    estado_orden: int = Query(1, description="Estado de la orden (1=Activa, 3=Bloqueada)"),
+):
+    filtros = ["estado_orden = :estado_orden"]
+    params = {"estado_orden": estado_orden}
+    if estado_bono is not None:
+        filtros.append("estado_bono = :estado_bono")
+        params["estado_bono"] = estado_bono
+    if matricula:
+        filtros.append("matricula = :matricula")
+        params["matricula"] = matricula
+    where = " AND ".join(filtros)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(text(f"""
+            SELECT
+                idorden, idbono, matricula, descrip_matricula, estado_bono,
+                idcliente,
+                idarticulo_producido               AS idarticulo_orden,
+                descrip_articulo_salida            AS descrip_articulo,
+                area, usuario_orden                AS usuario
+            FROM core.fact_salidas_produccion
+            WHERE {where}
+            ORDER BY idorden DESC
+        """), params).mappings().all()
+    bonos = [dict(r) for r in rows]
+    return {"total": len(bonos), "bonos": bonos}
+
+
+@router.get("/matriculas")
+def get_consultor_matriculas():
+    """Matrículas distintas que tienen bonos en órdenes activas o bloqueadas."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT DISTINCT matricula, descrip_matricula AS descrip
+            FROM core.fact_salidas_produccion
+            WHERE estado_orden IN (1, 3) AND matricula IS NOT NULL
+            ORDER BY matricula
+        """)).mappings().all()
+    return {"matriculas": [dict(r) for r in rows]}
+
+
+# ─────────────────────────────────────────────────────────────────────
 #  REFRESCO ETL  (dispara el flujo Prefect bajo demanda)
 # ─────────────────────────────────────────────────────────────────────
 

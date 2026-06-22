@@ -8,11 +8,14 @@ def test_la_app_importa_y_registra_las_rutas_esperadas():
     esperadas = {
         "/",
         "/historico-produccion",
+        "/consultor-bonos",
         "/api/grupos",
         "/api/items",
         "/api/recursos",
         "/api/historico/bonos",
         "/api/historico/actividad-diaria",
+        "/api/bonos",
+        "/api/matriculas",
         "/api/refrescar",
         "/api/refrescar/{flow_run_id}",
     }
