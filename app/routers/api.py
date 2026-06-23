@@ -868,6 +868,45 @@ def get_historico_actividad_diaria(idempleado: int, desde: str, hasta: str):
     return [dict(r) for r in rows]
 
 
+@router.get("/historico/ordenes")
+def get_historico_ordenes(
+    desde: str,
+    hasta: str,
+    q: Optional[str] = Query(None, description="Número de orden o artículo (texto libre, opcional)"),
+):
+    """Órdenes FINALIZADAS (idestado=2) dentro de un horizonte temporal,
+    filtrables por número de orden o artículo trabajado."""
+    hasta_excl = datetime.strptime(hasta, "%Y-%m-%d") + timedelta(days=1)
+    filtros = ["fo.idestado = 2", "fo.fecha_fin_real >= :desde", "fo.fecha_fin_real < :hasta_excl"]
+    params = {"desde": desde, "hasta_excl": hasta_excl}
+    if q:
+        filtros.append("(fo.idorden::text ILIKE :q OR fo.idarticulo ILIKE :q OR da.descrip ILIKE :q)")
+        params["q"] = f"%{q.strip()}%"
+    where = " AND ".join(filtros)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(text(f"""
+            SELECT
+                fo.idorden, fo.idarticulo, da.descrip AS articulo, fo.lote, fo.idcliente,
+                fo.fecha_orden, fo.fecha_prevista_fin, fo.fecha_fin_real,
+                fo.cantidad_pedida, fo.dias_desviacion, fo.en_plazo,
+                COUNT(fb.idbono)            AS num_bonos,
+                SUM(fb.min_reales)          AS minutos_reales,
+                SUM(fb.piezas_producidas)   AS piezas_producidas
+            FROM core.fact_ordenes fo
+            LEFT JOIN core.dim_articulo da ON da.idarticulo = fo.idarticulo
+            LEFT JOIN core.fact_bonos fb   ON fb.idorden = fo.idorden
+            WHERE {where}
+            GROUP BY fo.idorden, fo.idarticulo, da.descrip, fo.lote, fo.idcliente,
+                     fo.fecha_orden, fo.fecha_prevista_fin, fo.fecha_fin_real,
+                     fo.cantidad_pedida, fo.dias_desviacion, fo.en_plazo
+            ORDER BY fo.fecha_fin_real DESC
+            LIMIT 300
+        """), params).mappings().all()
+    return [dict(r) for r in rows]
+
+
 # ─────────────────────────────────────────────────────────────────────
 #  CONSULTOR DE BONOS  (página /consultor-bonos)
 #

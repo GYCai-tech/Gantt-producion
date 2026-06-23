@@ -180,15 +180,49 @@
   .hp-loading { display: none; align-items: center; gap: 10px; color: var(--ink-3); font-size: 13px; }
   .hp-loading.visible { display: flex; }
 
+  /* ── Tabs ── */
+  .hp-tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+  .hp-tab {
+    padding: 9px 16px; font-size: 13.5px; font-weight: 600; color: var(--ink-3);
+    background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; transition: color .15s, border-color .15s; font-family: inherit;
+  }
+  .hp-tab:hover { color: var(--ink-2); }
+  .hp-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Search input (órdenes) */
+  .search-input {
+    padding: 8px 12px; font-size: 14px; font-family: inherit; width: 260px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2);
+    color: var(--ink); outline: none; transition: border-color .15s;
+  }
+  .search-input:focus { border-color: var(--accent); background: var(--surface); }
+
+  /* Cards de orden finalizada */
+  .orden-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px 16px; display: flex; align-items: center; gap: 14px; margin-bottom: 6px;
+  }
+  .orden-card__info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .orden-card__art  { font-size: 13.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .orden-card__sub  { font-size: 12px; color: var(--ink-2); }
+  .orden-card__right { display: flex; align-items: center; gap: 18px; flex-shrink: 0; }
+  .orden-card__stat  { text-align: right; font-size: 12px; color: var(--ink-3); }
+  .orden-card__stat strong { display: block; font-size: 13.5px; color: var(--ink); font-weight: 600; }
+  .pill-ok    { background: var(--verde-bg); color: var(--verde); }
+  .pill-tarde { background: var(--rojo-bg);  color: var(--rojo); }
+
   /* ── Responsive ── */
   @media (max-width: 900px) {
     .hp-stats { grid-template-columns: repeat(2, 1fr); }
     .emp-picker { width: 100%; }
     .hp-filters { flex-direction: column; }
+    .search-input { width: 100%; }
   }
   @media (max-width: 600px) {
     .hp-stats { grid-template-columns: 1fr 1fr; }
     .order-card__meta { display: none; }
+    .orden-card { flex-wrap: wrap; }
   }
 
 </style>
@@ -198,10 +232,16 @@
 
 <div class="hp-page">
 
-  <h1 class="hp-title">Histórico de Producción <span>por empleado</span></h1>
+  <h1 class="hp-title">Histórico de Producción <span id="hp-subtitle">por empleado</span></h1>
 
-  <!-- ── Filtros ── -->
-  <div class="hp-filters">
+  <!-- ── Tabs ── -->
+  <div class="hp-tabs">
+    <button class="hp-tab active" data-tab="empleado">Por empleado</button>
+    <button class="hp-tab" data-tab="ordenes">Órdenes finalizadas</button>
+  </div>
+
+  <!-- ── Filtros: por empleado ── -->
+  <div class="hp-filters" id="filters-empleado">
 
     <!-- Empleado (searchable) -->
     <div class="hp-field" style="flex:1; min-width:220px;">
@@ -241,6 +281,42 @@
 
   </div>
 
+  <!-- ── Filtros: órdenes finalizadas ── -->
+  <div class="hp-filters" id="filters-ordenes" style="display:none;">
+
+    <!-- Buscar -->
+    <div class="hp-field" style="flex:1; min-width:220px;">
+      <label class="hp-label">Orden o artículo</label>
+      <input type="text" id="ord-q" class="search-input" style="width:100%;" placeholder="Nº de orden o texto del artículo…" autocomplete="off">
+    </div>
+
+    <!-- Desde -->
+    <div class="hp-field">
+      <label class="hp-label">Desde</label>
+      <input type="date" id="ord-desde" class="date-input">
+    </div>
+
+    <!-- Hasta -->
+    <div class="hp-field">
+      <label class="hp-label">Hasta</label>
+      <input type="date" id="ord-hasta" class="date-input">
+    </div>
+
+    <!-- Botón -->
+    <div class="hp-field">
+      <label class="hp-label">&nbsp;</label>
+      <button class="btn-consultar" id="btn-consultar-ord">
+        <span>&#128269;</span> Buscar
+      </button>
+    </div>
+
+    <!-- Spinner -->
+    <div class="hp-loading" id="ord-loading">
+      <span class="hp-spinner"></span> Cargando…
+    </div>
+
+  </div>
+
   <!-- ── Resultados (inicialmente vacíos) ── -->
   <div id="hp-results">
     <div class="hp-empty">
@@ -248,6 +324,15 @@
         <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z"/>
       </svg>
       Selecciona un empleado y un periodo para ver su historial de producción.
+    </div>
+  </div>
+
+  <div id="ord-results" style="display:none;">
+    <div class="hp-empty">
+      <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776"/>
+      </svg>
+      Elige un horizonte temporal (y opcionalmente busca por orden o artículo) para ver las órdenes finalizadas.
     </div>
   </div>
 
@@ -277,11 +362,113 @@
   const hpLoading   = document.getElementById('hp-loading');
   const hmTooltip   = document.getElementById('hm-tooltip');
 
+  const tabs            = document.querySelectorAll('.hp-tab');
+  const hpSubtitle       = document.getElementById('hp-subtitle');
+  const filtersEmpleado  = document.getElementById('filters-empleado');
+  const filtersOrdenes   = document.getElementById('filters-ordenes');
+  const ordResults       = document.getElementById('ord-results');
+  const ordQ             = document.getElementById('ord-q');
+  const ordDesde         = document.getElementById('ord-desde');
+  const ordHasta         = document.getElementById('ord-hasta');
+  const btnConsultarOrd  = document.getElementById('btn-consultar-ord');
+  const ordLoading       = document.getElementById('ord-loading');
+
   // ── Fechas por defecto: último mes ──────────────────────────────────
   const hoy = new Date();
   const hace30 = new Date(hoy); hace30.setDate(hoy.getDate() - 30);
   fDesde.value = hace30.toISOString().slice(0, 10);
   fHasta.value = hoy.toISOString().slice(0, 10);
+  ordDesde.value = hace30.toISOString().slice(0, 10);
+  ordHasta.value = hoy.toISOString().slice(0, 10);
+
+  // ── Tabs ─────────────────────────────────────────────────────────────
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.toggle('active', t === tab));
+      const isOrdenes = tab.dataset.tab === 'ordenes';
+      filtersEmpleado.style.display = isOrdenes ? 'none' : '';
+      filtersOrdenes.style.display  = isOrdenes ? '' : 'none';
+      hpResults.style.display  = isOrdenes ? 'none' : '';
+      ordResults.style.display = isOrdenes ? '' : 'none';
+      hpSubtitle.textContent = isOrdenes ? 'órdenes finalizadas' : 'por empleado';
+    });
+  });
+
+  // ── Consulta de órdenes finalizadas ─────────────────────────────────
+  btnConsultarOrd.addEventListener('click', consultarOrdenes);
+
+  async function consultarOrdenes() {
+    const desde = ordDesde.value;
+    const hasta = ordHasta.value;
+    if (!desde || !hasta || desde > hasta) {
+      alert('El rango de fechas no es válido.');
+      return;
+    }
+
+    ordLoading.classList.add('visible');
+    btnConsultarOrd.disabled = true;
+    ordResults.innerHTML = '';
+
+    try {
+      const q = ordQ.value.trim();
+      const params = new URLSearchParams({ desde, hasta });
+      if (q) params.set('q', q);
+      const ordenes = await fetch(`/api/historico/ordenes?${params}`).then(r => r.json());
+      renderOrdenes(ordenes);
+    } catch (err) {
+      ordResults.innerHTML = `<div class="hp-empty" style="color:var(--rojo)">Error al cargar datos: ${escHtml(String(err))}</div>`;
+    } finally {
+      ordLoading.classList.remove('visible');
+      btnConsultarOrd.disabled = false;
+    }
+  }
+
+  function renderOrdenes(ordenes) {
+    if (!ordenes.length) {
+      ordResults.innerHTML = `<div class="hp-empty">
+        <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 9.75 14.25 14.25M14.25 9.75 9.75 14.25M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+        </svg>
+        No hay órdenes finalizadas que coincidan con la búsqueda en este periodo.
+      </div>`;
+      return;
+    }
+
+    const cards = ordenes.map(o => {
+      const horas = o.minutos_reales ? (o.minutos_reales / 60).toFixed(2) + ' h' : '—';
+      const piezas = o.piezas_producidas != null ? Math.round(o.piezas_producidas) : '—';
+      const plazoPill = o.en_plazo === true
+        ? `<span class="pill pill-ok">En plazo</span>`
+        : o.en_plazo === false
+          ? `<span class="pill pill-tarde">${o.dias_desviacion != null ? o.dias_desviacion + ' días tarde' : 'Fuera de plazo'}</span>`
+          : '';
+      return `
+        <div class="orden-card">
+          <span class="order-badge">#${o.idorden}</span>
+          <div class="orden-card__info">
+            <div class="orden-card__art">${escHtml(o.articulo || o.idarticulo || '')}</div>
+            <div class="orden-card__sub">
+              ${escHtml(o.idarticulo || '')}${o.lote ? ' · Lote ' + escHtml(o.lote) : ''} · Finalizada el ${formatDate(o.fecha_fin_real)}
+              ${plazoPill}
+            </div>
+          </div>
+          <div class="orden-card__right">
+            <div class="orden-card__stat">Bonos<strong>${o.num_bonos}</strong></div>
+            <div class="orden-card__stat">Piezas<strong>${piezas}</strong></div>
+            <div class="orden-card__stat">Horas<strong>${horas}</strong></div>
+          </div>
+        </div>`;
+    }).join('');
+
+    const cappedNote = ordenes.length === 300
+      ? `<p style="font-size:12px;color:var(--ink-3);margin-top:8px;">Mostrando las 300 más recientes — acota el periodo o la búsqueda para ver el resto.</p>`
+      : '';
+
+    ordResults.innerHTML = `
+      <p class="hp-section-title">Órdenes finalizadas (${ordenes.length})</p>
+      ${cards}
+      ${cappedNote}`;
+  }
 
   // ── Cargar empleados ─────────────────────────────────────────────────
   fetch('/api/recursos?tipo=empleado')
