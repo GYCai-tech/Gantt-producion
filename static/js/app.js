@@ -24,8 +24,8 @@ const App = (() => {
   const ST_LABEL = {
     plazo: 'En curso', completado: 'Completado',
     retrasada: 'Retrasada', riesgo: 'En riesgo', 'sin-estimar': 'Sin estimar',
-    parada: 'Parada', pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
-    programado: 'Programado',
+    parada: 'Bloqueada', pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
+    programado: 'En espera',
   };
   const ST_COLOR = {
     plazo: '#1f9254', completado: '#6b7689',
@@ -494,7 +494,7 @@ const App = (() => {
     $('summary').innerHTML =
       `<span><span class="dot" style="background:var(--verde)"></span><b>${en_curso}</b> en curso</span>` +
       `<span><span class="dot" style="background:#6b7689"></span><b>${trabajado}</b> completadas</span>` +
-      `<span><span class="dot" style="background:#8a93d8"></span><b>${programado}</b> programadas</span>`;
+      `<span><span class="dot" style="background:#8a93d8"></span><b>${programado}</b> en espera</span>`;
   }
 
   function setCarga(v) {
