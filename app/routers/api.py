@@ -375,6 +375,27 @@ def _cargar_dependencias(conn):
     return deps
 
 
+def _encadenar_orden_manual(rows, deps):
+    """Conf_OrdenesBonos.ordenar (ERP): posición manual de un bono DENTRO de
+    su propia orden, fijada a mano por el responsable de planta (no es un
+    índice global -- se repite entre órdenes distintas, ver memoria). Se
+    añade como dependencia sintética al mismo `deps` que ya usa
+    _planificar_programados: dentro de cada orden, un bono con `ordenar`
+    no puede planificarse antes que el bono de esa misma orden con el
+    `ordenar` inmediatamente menor."""
+    por_orden = defaultdict(list)
+    for r in rows:
+        if r.get('ordenar'):
+            por_orden[r['idorden']].append((r['ordenar'], r['idbono']))
+    for idorden, bonos in por_orden.items():
+        bonos.sort()
+        for (_, anterior), (_, actual) in zip(bonos, bonos[1:]):
+            if anterior == actual:
+                continue
+            deps[(idorden, actual)].append((idorden, anterior))
+    return deps
+
+
 def _estimar_fin(inicio: datetime, min_est: float, min_real: float, ahora: datetime) -> datetime:
     """Proyecta el fin de un bono en curso. Sin estimación histórica (min_est<=0) no
     inventamos un final de jornada: la barra simplemente avanza con el reloj mientras
@@ -653,7 +674,7 @@ def get_items(
             SELECT
                 m.matricula AS recurso, m.idorden, m.idbono, m.operacion, m.articulo,
                 m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden, m.situacion, m.estado_bono,
-                m.minutos_reales, m.fecha_asignacion,
+                m.minutos_reales, m.fecha_asignacion, m.ordenar,
                 ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
                 op_bono.operarios
             FROM core.fact_asignaciones_maquina m
@@ -757,7 +778,7 @@ def get_items(
             SELECT
                 e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
                 e.cantidad_pedida, e.fecha_prevista_fin, e.fecha_orden, e.min_estimados, e.situacion, e.estado_bono,
-                e.minutos_reales, e.fecha_inicio_real, e.fecha_fin_real
+                e.minutos_reales, e.fecha_inicio_real, e.fecha_fin_real, e.ordenar
             FROM analytics.v_asignaciones_empleado e
             WHERE (
                     e.estado_bono IN (0, 3)
@@ -775,6 +796,7 @@ def get_items(
             sched_rows.append(d)
 
         # ── Una sola pasada del scheduler para TODOS los recursos a la vez ──
+        deps = _encadenar_orden_manual(sched_rows, deps)
         computed = _planificar_programados(sched_rows, deps, bono_fin, next_start, ahora)
 
     if vista == 'maquina':
