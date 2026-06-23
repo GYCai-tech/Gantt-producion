@@ -871,16 +871,17 @@ def get_historico_actividad_diaria(idempleado: int, desde: str, hasta: str):
 # ─────────────────────────────────────────────────────────────────────
 #  CONSULTOR DE BONOS  (página /consultor-bonos)
 #
-#  core.fact_salidas_produccion da los campos descriptivos (máquina,
-#  artículo, área, usuario) con las mismas columnas que la app original
-#  armaba a mano contra SQL Server, pero su estado_bono/estado_orden son
-#  una FOTO CONGELADA del momento en que se generó el movimiento de salida
-#  de material (fecha_insert_update) -- si el bono cambia de estado después
-#  sin un nuevo movimiento de salida, esa copia queda obsoleta (ej. una
-#  orden activada hoy puede seguir apareciendo "Bloqueada" si su salida de
-#  material es de hace días). Por eso el estado para filtrar/mostrar sale
-#  de core.fact_bonos/core.fact_ordenes, que el resto del Planificador ya
-#  trata como la fuente en vivo.
+#  core.fact_bonos solo contiene bonos que ya tuvieron al menos un fichaje
+#  (la extracción exige Hinicial IS NOT NULL) -- un bono BLOQUEADO típicamente
+#  nunca llegó a ficharse, así que filtrar por fb.estado_bono pierde casi
+#  todos los bloqueados (medido: de ~330 bonos bloqueados reales solo 3
+#  sobreviven al JOIN con fact_bonos). Por eso la fuente principal vuelve a
+#  ser core.fact_salidas_produccion (que sí registra el bono aunque no se
+#  haya fichado), y solo se usa fb.estado_bono como override cuando existe,
+#  para corregir el caso contrario: una orden activada hoy que sigue
+#  apareciendo "Bloqueada" porque su última salida de material es vieja
+#  (ej. orden 6090). fo.idestado (siempre presente vía INNER JOIN) sigue
+#  siendo la fuente del estado de la orden.
 # ─────────────────────────────────────────────────────────────────────
 
 @router.get("/bonos")
@@ -892,7 +893,7 @@ def get_consultor_bonos(
     filtros = ["fo.idestado = :estado_orden"]
     params = {"estado_orden": estado_orden}
     if estado_bono is not None:
-        filtros.append("fb.estado_bono = :estado_bono")
+        filtros.append("COALESCE(fb.estado_bono, fsp.estado_bono) = :estado_bono")
         params["estado_bono"] = estado_bono
     if matricula:
         filtros.append("fsp.matricula = :matricula")
@@ -902,19 +903,22 @@ def get_consultor_bonos(
     engine = get_engine()
     with engine.connect() as conn:
         rows = conn.execute(text(f"""
-            SELECT
-                fb.idorden, fb.idbono, fsp.matricula, fsp.descrip_matricula,
-                fb.estado_bono,
-                fsp.idcliente,
-                fsp.idarticulo_producido            AS idarticulo_orden,
-                fsp.descrip_articulo_salida         AS descrip_articulo,
-                fsp.area, fsp.usuario_orden         AS usuario
-            FROM core.fact_bonos fb
-            JOIN core.fact_ordenes fo            ON fo.idorden = fb.idorden
-            LEFT JOIN core.fact_salidas_produccion fsp
-                   ON fsp.idorden = fb.idorden AND fsp.idbono = fb.idbono
-            WHERE {where}
-            ORDER BY fb.idorden DESC
+            SELECT * FROM (
+                SELECT DISTINCT ON (fsp.idorden, fsp.idbono)
+                    fsp.idorden, fsp.idbono, fsp.matricula, fsp.descrip_matricula,
+                    COALESCE(fb.estado_bono, fsp.estado_bono) AS estado_bono,
+                    fsp.idcliente,
+                    fsp.idarticulo_producido            AS idarticulo_orden,
+                    fsp.descrip_articulo_salida         AS descrip_articulo,
+                    fsp.area, fsp.usuario_orden         AS usuario
+                FROM core.fact_salidas_produccion fsp
+                JOIN core.fact_ordenes fo            ON fo.idorden = fsp.idorden
+                LEFT JOIN core.fact_bonos fb
+                       ON fb.idorden = fsp.idorden AND fb.idbono = fsp.idbono
+                WHERE {where}
+                ORDER BY fsp.idorden, fsp.idbono, fsp.fecha_insert_update DESC
+            ) x
+            ORDER BY x.idorden DESC
         """), params).mappings().all()
     bonos = [dict(r) for r in rows]
     return {"total": len(bonos), "bonos": bonos}
