@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 # Logs sin buffer y sin .pyc
 ENV PYTHONUNBUFFERED=1 \
