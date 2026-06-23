@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 from datetime import datetime, timedelta
 from typing import Optional
-from app.db import get_engine
+from app.db import get_engine, get_sqlserver_engine
 
 router = APIRouter(prefix="/api")
 
@@ -871,18 +871,40 @@ def get_historico_actividad_diaria(idempleado: int, desde: str, hasta: str):
 # ─────────────────────────────────────────────────────────────────────
 #  CONSULTOR DE BONOS  (página /consultor-bonos)
 #
-#  core.fact_bonos solo contiene bonos que ya tuvieron al menos un fichaje
-#  (la extracción exige Hinicial IS NOT NULL) -- un bono BLOQUEADO típicamente
-#  nunca llegó a ficharse, así que filtrar por fb.estado_bono pierde casi
-#  todos los bloqueados (medido: de ~330 bonos bloqueados reales solo 3
-#  sobreviven al JOIN con fact_bonos). Por eso la fuente principal vuelve a
-#  ser core.fact_salidas_produccion (que sí registra el bono aunque no se
-#  haya fichado), y solo se usa fb.estado_bono como override cuando existe,
-#  para corregir el caso contrario: una orden activada hoy que sigue
-#  apareciendo "Bloqueada" porque su última salida de material es vieja
-#  (ej. orden 6090). fo.idestado (siempre presente vía INNER JOIN) sigue
-#  siendo la fuente del estado de la orden.
+#  Consulta directa al ERP origen (SQL Server GOMEZYCRESPO), no a la
+#  réplica gyc_analytics. core.fact_ordenes/fact_bonos van detrás de un
+#  ETL incremental que puede dejar órdenes "zombi" (idestado desincronizado
+#  si el ERP cambia el estado sin tocar FechaInsertUpdate -- medido: 821
+#  órdenes "activas" en Postgres vs 175 reales en el ERP) y fact_bonos
+#  excluye bonos sin fichaje (pierde casi todos los bloqueados). El ERP en
+#  vivo no tiene ninguno de los dos problemas y esta pantalla necesita
+#  números exactos ahora, no los del último refresco del ETL.
 # ─────────────────────────────────────────────────────────────────────
+
+_BONOS_QUERY = """
+SELECT
+    o.IdOrden                AS idorden,
+    ob.IdBono                AS idbono,
+    ob.Matricula              AS matricula,
+    a_matricula.Descrip      AS descrip_matricula,
+    ob.IdEstado               AS estado_bono,
+    o.IdCliente                AS idcliente,
+    o.IdArticulo              AS idarticulo_orden,
+    a_salida.Descrip          AS descrip_articulo,
+    ob.Area                    AS area,
+    o.Usuario                 AS usuario
+FROM Ordenes_Bonos_Salidas obs
+    JOIN Ordenes o              ON obs.IdOrden  = o.IdOrden
+    JOIN Ordenes_Bonos ob       ON obs.IdOrden  = ob.IdOrden
+                               AND obs.IdBono   = ob.IdBono
+    JOIN Articulos a_salida     ON obs.IdArticulo  = a_salida.IdArticulo
+    JOIN Articulos a_matricula  ON ob.Matricula    = a_matricula.IdArticulo
+WHERE o.IdEstado  = :estado_orden
+  {filtro_bono}
+  {filtro_matricula}
+ORDER BY o.IdOrden DESC
+"""
+
 
 @router.get("/bonos")
 def get_consultor_bonos(
@@ -890,36 +912,18 @@ def get_consultor_bonos(
     estado_bono: Optional[int] = Query(None, description="Estado del bono (0=Espera, 1=Activo, 2=Finalizado, 3=Bloqueado). Omitir para todos."),
     estado_orden: int = Query(1, description="Estado de la orden (1=Activa, 3=Bloqueada)"),
 ):
-    filtros = ["fo.idestado = :estado_orden"]
+    filtro_bono      = "AND ob.IdEstado = :estado_bono" if estado_bono is not None else ""
+    filtro_matricula = "AND ob.Matricula = :matricula" if matricula else ""
+    query = _BONOS_QUERY.format(filtro_bono=filtro_bono, filtro_matricula=filtro_matricula)
     params = {"estado_orden": estado_orden}
     if estado_bono is not None:
-        filtros.append("COALESCE(fb.estado_bono, fsp.estado_bono) = :estado_bono")
         params["estado_bono"] = estado_bono
     if matricula:
-        filtros.append("fsp.matricula = :matricula")
         params["matricula"] = matricula
-    where = " AND ".join(filtros)
 
-    engine = get_engine()
+    engine = get_sqlserver_engine()
     with engine.connect() as conn:
-        rows = conn.execute(text(f"""
-            SELECT * FROM (
-                SELECT DISTINCT ON (fsp.idorden, fsp.idbono)
-                    fsp.idorden, fsp.idbono, fsp.matricula, fsp.descrip_matricula,
-                    COALESCE(fb.estado_bono, fsp.estado_bono) AS estado_bono,
-                    fsp.idcliente,
-                    fsp.idarticulo_producido            AS idarticulo_orden,
-                    fsp.descrip_articulo_salida         AS descrip_articulo,
-                    fsp.area, fsp.usuario_orden         AS usuario
-                FROM core.fact_salidas_produccion fsp
-                JOIN core.fact_ordenes fo            ON fo.idorden = fsp.idorden
-                LEFT JOIN core.fact_bonos fb
-                       ON fb.idorden = fsp.idorden AND fb.idbono = fsp.idbono
-                WHERE {where}
-                ORDER BY fsp.idorden, fsp.idbono, fsp.fecha_insert_update DESC
-            ) x
-            ORDER BY x.idorden DESC
-        """), params).mappings().all()
+        rows = conn.execute(text(query), params).mappings().all()
     bonos = [dict(r) for r in rows]
     return {"total": len(bonos), "bonos": bonos}
 
@@ -927,14 +931,15 @@ def get_consultor_bonos(
 @router.get("/matriculas")
 def get_consultor_matriculas():
     """Matrículas distintas que tienen bonos en órdenes activas o bloqueadas."""
-    engine = get_engine()
+    engine = get_sqlserver_engine()
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT DISTINCT fsp.matricula, fsp.descrip_matricula AS descrip
-            FROM core.fact_salidas_produccion fsp
-            JOIN core.fact_ordenes fo ON fo.idorden = fsp.idorden
-            WHERE fo.idestado IN (1, 3) AND fsp.matricula IS NOT NULL
-            ORDER BY fsp.matricula
+            SELECT DISTINCT ob.Matricula AS matricula, a.Descrip AS descrip
+            FROM Ordenes_Bonos ob
+                JOIN Ordenes o   ON ob.IdOrden   = o.IdOrden
+                JOIN Articulos a ON ob.Matricula = a.IdArticulo
+            WHERE o.IdEstado IN (1, 3)
+            ORDER BY ob.Matricula
         """)).mappings().all()
     return {"matriculas": [dict(r) for r in rows]}
 
