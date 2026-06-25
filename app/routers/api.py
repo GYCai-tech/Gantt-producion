@@ -232,15 +232,25 @@ def _render_parcial(r, recurso_id, id_prefix, inicio, fin):
 
 
 def _render_programado(r, recurso_id, id_prefix, start, end):
-    """Bono en cola, sin fichaje real todavia. La etiqueta es siempre
-    'En espera' -- no se distingue por fiabilidad de fecha_prevista_fin
-    (ver _prev_fiable: casi todas vienen rellenadas/vacias del ERP, asi que
+    """Bono en cola, sin fichaje real todavia.
+
+    El color/etiqueta unifica dos fuentes que antes se mostraban por separado
+    (barra morada genérica + punto de color del ERP): el semáforo per-operario
+    del ERP (`estado_color`, ver [[semaforo-erp-operarios]]) manda cuando hay
+    dato -- rojo se funde con "Bloqueada" (mismo resultado práctico que el
+    bloqueo a nivel de bono, idestado=3: el operario no puede trabajarla
+    ahora), verde se muestra como "Disponible". Sin dato de ERP (p.ej. vista
+    máquina, que no tiene este campo) se cae al "En espera" genérico de
+    siempre. No se distingue por fiabilidad de fecha_prevista_fin (ver
+    _prev_fiable: casi todas vienen rellenadas/vacias del ERP, asi que
     matizar "sin fecha"/"retrasada" aqui solo confundia, dando la impresion
     de que el bono ya estaba en marcha cuando es pura proyeccion de cola)."""
     prev   = r['fecha_prevista_fin']
     fiable = _prev_fiable(prev, r.get('fecha_orden'))
-    if r.get('estado_bono') == 3:
+    if r.get('estado_bono') == 3 or r.get('estado_color') == 'rojo':
         estado, estado_label = "parada", "Bloqueada"
+    elif r.get('estado_color') == 'verde':
+        estado, estado_label = "disponible", "Disponible"
     else:
         estado, estado_label = "programado", "En espera"
     return {
@@ -263,7 +273,6 @@ def _render_programado(r, recurso_id, id_prefix, start, end):
         "progreso":     None,
         "operarios":    r.get('operarios'),
         "notas":        None,
-        "estado_color": r.get('estado_color'),
     }
 
 

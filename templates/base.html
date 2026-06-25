@@ -20,6 +20,7 @@
       <a href="/historico-produccion" class="app-nav-link {{ 'active' if current_page == 'historico' else '' }}">Histórico Producción</a>
       <a href="/consultor-bonos" class="app-nav-link {{ 'active' if current_page == 'consultor' else '' }}">Consultor de Bonos</a>
     </nav>
+    <div class="app-navbar__extra">{% block navbar_extra %}{% endblock %}</div>
   </header>
   {% block body %}{% endblock %}
   {% block scripts %}{% endblock %}
