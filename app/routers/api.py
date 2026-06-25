@@ -263,6 +263,7 @@ def _render_programado(r, recurso_id, id_prefix, start, end):
         "progreso":     None,
         "operarios":    r.get('operarios'),
         "notas":        None,
+        "estado_color": r.get('estado_color'),
     }
 
 
@@ -778,7 +779,7 @@ def get_items(
             SELECT
                 e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
                 e.cantidad_pedida, e.fecha_prevista_fin, e.fecha_orden, e.min_estimados, e.situacion, e.estado_bono,
-                e.minutos_reales, e.fecha_inicio_real, e.fecha_fin_real, e.ordenar
+                e.minutos_reales, e.fecha_inicio_real, e.fecha_fin_real, e.ordenar, e.estado_color
             FROM analytics.v_asignaciones_empleado e
             WHERE (
                     e.estado_bono IN (0, 3)

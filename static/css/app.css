@@ -381,6 +381,12 @@ button { font-family: inherit; }
 /* Mini barra de progreso dentro de la barra real */
 .bar__prog { position: absolute; left: 0; bottom: 0; height: 3px; background: currentColor; opacity: .45; border-radius: 0 2px 2px 0; }
 
+/* Punto del semáforo del ERP (verde/azul/rojo) en bonos "en espera" */
+.bar__ec {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.6);
+}
+
 /* Punto "live" en bonos en curso ahora mismo */
 .bar__live {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;

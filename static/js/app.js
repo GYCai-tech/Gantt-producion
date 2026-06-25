@@ -33,6 +33,11 @@ const App = (() => {
     parada: '#9a4b52', pausada: '#5b6b8a', parcial: '#c77b1f',
     programado: '#5b63b0',
   };
+  // Semáforo del ERP (PersVTrazaordenesOperarios): por operario+bono, no por
+  // estado del bono -- distingue "en espera" entre quien ya tiene trabajo
+  // hecho en ese bono (verde) y quien no lo ha tocado todavía (rojo).
+  const EC_LABEL = { verde: 'Con avance previo', azul: 'Fichado ahora', rojo: 'Sin empezar' };
+  const EC_COLOR = { verde: '#1f9254', azul: '#2f8fd1', rojo: '#d83b46' };
 
   // ── Estado ─────────────────────────────────────────────────────────
   let vista = 'empleado';
@@ -353,6 +358,7 @@ const App = (() => {
     const bonoLabel = it.idbono != null ? `·${it.idbono}` : '';
     bar.innerHTML = (it.tipo === 'real' && it.en_curso ? '<span class="bar__live"></span>' : '') +
                     (it.tipo === 'parcial' ? '<span class="bar__pause" title="Sesión cerrada; el bono sigue abierto">⏸</span>' : '') +
+                    (it.estado_color ? `<span class="bar__ec" style="background:${EC_COLOR[it.estado_color] || '#999'}" title="Semáforo ERP: ${EC_LABEL[it.estado_color] || it.estado_color}"></span>` : '') +
                     `<span class="bar__id">${esc(it.idorden)}<span class="bar__bono">${esc(bonoLabel)}</span></span>` +
                     (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '');
     if (it.tipo === 'real' && it.progreso != null) {
@@ -385,6 +391,10 @@ const App = (() => {
     rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}</span></div>`);
     rows.push(`<div class="tip__row">Fin <span>${fmtDt(it.end)}${it.estimado ? ' ~' : ''}</span></div>`);
     if (it.prev) rows.push(`<div class="tip__row">Prevista <span>${fmtDate(it.prev)}</span></div>`);
+    if (it.estado_color) {
+      const ecBadge = `<span style="color:${EC_COLOR[it.estado_color] || '#999'}">●</span> ${EC_LABEL[it.estado_color] || it.estado_color}`;
+      rows.push(`<div class="tip__row">Semáforo ERP <span>${ecBadge}</span></div>`);
+    }
     const MARK = { real: '▶ ', trabajado: '✓ ', parcial: '⏸ ' };
     const badge = `<span style="color:${ST_COLOR[it.estado] || '#79859a'}">●</span> ${ST_LABEL[it.estado] || it.estado_label}`;
     tip.innerHTML = `<b>${MARK[it.tipo] || ''}${esc(it.idorden)}</b> — ${esc(it.art || '')}<hr>${rows.join('')}` +
