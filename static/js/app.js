@@ -34,9 +34,10 @@ const App = (() => {
     programado: '#5b63b0',
   };
   // Semáforo del ERP (PersVTrazaordenesOperarios): por operario+bono, no por
-  // estado del bono -- distingue "en espera" entre quien ya tiene trabajo
-  // hecho en ese bono (verde) y quien no lo ha tocado todavía (rojo).
-  const EC_LABEL = { verde: 'Con avance previo', azul: 'Fichado ahora', rojo: 'Sin empezar' };
+  // estado del bono -- verde = disponible para ese operario ahora mismo,
+  // azul = lo está trabajando en este instante, rojo = en espera/bloqueada
+  // para él (p.ej. otro operario ya la tiene, o falta una dependencia).
+  const EC_LABEL = { verde: 'Disponible para trabajar', azul: 'Trabajando ahora', rojo: 'En espera / bloqueada' };
   const EC_COLOR = { verde: '#1f9254', azul: '#2f8fd1', rojo: '#d83b46' };
 
   // ── Estado ─────────────────────────────────────────────────────────
