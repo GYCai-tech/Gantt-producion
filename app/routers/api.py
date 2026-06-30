@@ -997,6 +997,22 @@ def get_consultor_bonos(
     with engine.connect() as conn:
         rows = conn.execute(text(query), params).mappings().all()
     bonos = [dict(r) for r in rows]
+
+    # Marcar qué bonos tienen un fichaje activo ahora mismo en PostgreSQL.
+    # Un bono activo (estado_bono=1) sin fichaje activo es un bono "en pausa"
+    # que hay que destacar visualmente.
+    if bonos:
+        pg_engine = get_engine()
+        with pg_engine.connect() as pg_conn:
+            en_curso = pg_conn.execute(text("""
+                SELECT DISTINCT idorden, idbono
+                FROM analytics.v_asignaciones_empleado
+                WHERE fase = 'EN_CURSO'
+            """)).mappings().all()
+        con_fichaje = {(r['idorden'], r['idbono']) for r in en_curso}
+        for b in bonos:
+            b['tiene_fichaje_activo'] = (b['idorden'], b['idbono']) in con_fichaje
+
     return {"total": len(bonos), "bonos": bonos}
 
 

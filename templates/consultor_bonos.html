@@ -181,6 +181,10 @@
   .chip-icon { font-size: 11px; flex-shrink: 0; }
   .chip-text { font-size: 11px; color: var(--ink-2); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+  /* ── Bono activo sin fichaje (pausado) ── */
+  .card-sin-fichar { border-color: #fbbf24; background: #fffbeb; }
+  .card-sin-fichar .divider-h { background: #fde68a; }
+
   /* ── States ── */
   .state-view { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 40px; text-align: center; min-height: 300px; }
   .state-icon  { font-size: 48px; margin-bottom: 16px; }
@@ -505,9 +509,12 @@ function renderContent({ state, bonos }) {
 }
 
 function buildCard(b) {
-  const estado = ESTADO[b.estado_bono] ?? ESTADO[0];
+  const sinFichar = b.estado_bono === 1 && !b.tiene_fichaje_activo;
+  const estado = sinFichar
+    ? { label: 'Sin fichar', color: '#b45309', bg: '#fef3c7', dot: '#d97706' }
+    : (ESTADO[b.estado_bono] ?? ESTADO[0]);
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = sinFichar ? 'card card-sin-fichar' : 'card';
   const hasSub = b.matricula && b.descrip_matricula;
   card.innerHTML = `
     <div class="card-top">
