@@ -566,6 +566,7 @@ def get_items(
             LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
             JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
             WHERE fb.estado_bono = 1
+              AND fb.estado_orden <> 2
               AND m.situacion NOT IN ('COMPLETADO', 'ANULADO')
               AND m.fichaje_activo_desde IS NOT NULL
             ORDER BY m.matricula, m.fichaje_activo_desde DESC
@@ -621,7 +622,7 @@ def get_items(
                 op_bono.operarios
             FROM core.fact_asignaciones_maquina m
             LEFT JOIN op_bono ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
-            WHERE m.situacion = 'COMPLETADO'
+            WHERE (m.situacion = 'COMPLETADO' OR m.estado_orden = 2)
               AND m.fecha_asignacion IS NOT NULL
               AND m.fecha_asignacion < :hasta
               AND m.fecha_asignacion > :desde_aprox
