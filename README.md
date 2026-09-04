@@ -109,26 +109,56 @@ de verdad en planta.
 No hay `programado`: el ERP no dice nada de trabajo futuro y no se inventa,
 así que el contador "en espera" del resumen marca siempre 0.
 
-### Cuánto se estima que dura un bono
+### Cuánto le queda a un bono
 
-Una barra abierta ya no se corta en "ahora": se estira hasta su **fin
-estimado**, con la parte transcurrida en relleno sólido y lo que queda tenue.
-El número sale de esta cadena, en este orden:
+Una barra abierta no se corta en "ahora": se estira hasta su **fin estimado**,
+con la parte transcurrida en relleno sólido y lo que queda tenue.
 
-1. **Tiempo teórico** — el escandallo del ERP: `SUM(Trabajos_ManoObra.Duracion)`
-   (viene en días, x1440 → min/pieza) más `TiempoMontaje + TiempoDesMontaje`
-   del bono como preparación.
+Lo que falta se calcula **en piezas, no en minutos**:
+
+```
+(cantidad objetivo − piezas declaradas) × min/pieza
+```
+
+Restar minutos —"presupuesto del bono menos lo ya gastado"— era el primer
+intento y estaba mal: un bono puede **cambiar de manos**, y entonces la barra
+de quien lo tiene ahora heredaba el tiempo que gastó otro. Medido en 6372/30:
+de sus 3.400 minutos, 1.434 eran de un compañero que lo dejó cuatro días
+antes. En piezas eso no pasa: da igual quién hizo las anteriores.
+
+El `min/pieza` sale de esta cadena, en este orden:
+
+1. **Tiempo teórico** — escandallo del ERP: `SUM(Trabajos_ManoObra.Duracion)`
+   (viene en días, ×1440) más `TiempoMontaje + TiempoDesMontaje` como
+   preparación, que solo se cobra si el bono aún no ha gastado ni un minuto.
 2. **Media de los registros** — calculada aquí desde los bonos ya cerrados de
-   los últimos 18 meses, con al menos 3 bonos por clave:
-   **artículo → trabajo → máquina**.
-3. **Nada** — la barra se marca en ámbar con `⚠`, se queda acabando en "ahora"
-   y suma al contador *"N sin tiempo"* de la cabecera, que filtra al pincharlo.
+   los últimos 18 meses, mínimo 3 bonos por clave: **artículo → trabajo →
+   máquina**.
+3. **Nada** — barra ámbar con `⚠`, acaba en "ahora", y suma al contador
+   *"N sin tiempo"* de la cabecera, que filtra al pincharlo.
 
-Si lo consumido ya supera lo estimado, la barra **no se alarga** (sería fingir
-que le queda trabajo): se pinta en ámbar como *En riesgo*, y el tooltip dice
-"se ha pasado".
+**Retraso.** Se compara el ritmo real (`minutos gastados / piezas hechas`) con
+el esperado. Por encima de un **15 %** la barra pasa a ámbar como *En riesgo*,
+pero **se sigue dibujando lo que falta**: ir tarde no borra el trabajo
+pendiente.
 
-**Cobertura medida el 2026-09-04** sobre los 570 bonos abiertos:
+### El gran pero: casi nadie declara piezas
+
+**Solo 11 de 565 bonos abiertos tienen piezas declaradas** (2 %). Sin ese dato
+no hay forma de saber lo avanzado, así que el cálculo cae al criterio de
+minutos y cada barra dice en `base_estimacion` cuál se usó:
+
+| `base_estimacion` | cuándo | qué hace |
+|---|---|---|
+| `piezas` | el bono declara piezas | `pendientes × min/pieza`, y compara ritmos |
+| `minutos` | no las declara | `presupuesto − gastado`, como respaldo |
+
+Mientras producción no declare piezas al cerrar cada línea, esto no puede ser
+mejor. Y ojo: en el bono que sí las declara, las 360 piezas están en 3 de sus
+26 líneas — la declaración es esporádica, así que "pendientes" es un techo.
+
+**Cobertura del `min/pieza`**, medida el 2026-09-04 sobre los 570 bonos
+abiertos:
 
 | fuente | cobertura |
 |---|---|
@@ -136,22 +166,24 @@ que le queda trabajo): se pinta en ámbar como *En riesgo*, y el tooltip dice
 | Campos `MediaCon`/`MediaBonoCon`… de `Ordenes_Bonos` | **0–1,8 %** (vacíos) |
 | Media calculada del histórico de líneas | los 13 bonos del día |
 
-Los campos de media que ya trae el ERP **están vacíos**, por eso la media no se
-lee: se calcula. Tres cosas que conviene tener presentes:
+Los campos de media que ya trae el ERP están vacíos, por eso la media no se
+lee: se calcula. Dos cosas más que conviene saber:
 
 - La **media por máquina** es gruesa (una máquina hace piezas muy distintas),
-  pero es el último escalón antes del aviso y hoy cubre 7 de 13 bonos.
-- Es **min/pieza pura, sin término de preparación**. En bonos de pocas piezas el
-  setup es la mayor parte del tiempo, así que ahí la estimación se queda corta.
-- Con la cadena llegando hasta máquina, **el aviso casi nunca salta**: no hubo
-  ningún caso en los últimos 25 días laborables.
+  pero es el último escalón antes del aviso.
+- Con la cadena llegando hasta máquina **el aviso casi nunca salta**: ningún
+  caso en los últimos 25 días laborables.
 
-Lo estimado y lo consumido son **minutos-hombre**. Para llevarlos al eje de
-tiempo, lo que queda se reparte entre los operarios que tienen el bono abierto
-ahora mismo. Y ojo con las **líneas fantasma**: el ERP tiene líneas abiertas que
-nadie cerró hace meses; contarlas hasta hoy disparaba el consumo (medido: 3.383
-min en un bono de unas horas) e inflaba ese divisor, así que una línea abierta
-solo cuenta si empezó en las últimas 24 h.
+**Líneas fantasma.** El ERP tiene líneas abiertas que nadie cerró hace meses.
+Contarlas hasta hoy disparaba el consumo (medido: 3.383 min en un bono de unas
+horas) e inflaba el recuento de operarios activos. Una línea abierta solo
+cuenta si empezó en las últimas 24 h.
+
+**Un dato que el ERP no tiene.** `Ordenes_Bonos.IdEmpleado` —el operario al que
+está asignado el bono— está a `NULL` en los 565 bonos abiertos, y
+`VOrdenes_Bonos_Lineas_Emp.PorcentajeTrabajo` a 0. La asignación existe de
+hecho (cada bono lo ficha un solo operario, y `Operarios` = 1) pero no como
+dato, así que la cantidad del bono **es** la cantidad de su operario.
 
 **`POST /api/refrescar`** (+ `GET /api/refrescar/{id}`) — ya no hay ETL que
 lanzar, los datos son del ERP en vivo. Responden `COMPLETED` al momento para

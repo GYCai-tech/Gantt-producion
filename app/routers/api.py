@@ -46,7 +46,7 @@ SELECT
     ob.IdTrabajo      AS idtrabajo,
     a_maq.Descrip     AS descrip_maquina,
     am.Area           AS area,
-    obs.Cantidad      AS piezas_a_fabricar,
+    COALESCE(NULLIF(obs.Cantidad, 0), ob.CantidadTotal) AS piezas_a_fabricar,
     obs.IdArticulo    AS idarticulo_salida,
     a_sal.Descrip     AS descrip_salida
 FROM Ordenes_Bonos_Lineas obl
@@ -332,30 +332,32 @@ def _cargar_estimaciones():
 
 
 def _estimar(linea: dict, teoricos: dict, medias: dict):
-    """(minutos estimados, origen) para el bono de esta línea, o (None, None)."""
-    cantidad = float(linea["piezas_a_fabricar"] or 0)
+    """(min/pieza, setup en minutos, origen) para el bono, o (None, 0, None).
 
+    Devuelve el RITMO, no el total: quien llama multiplica por las piezas que
+    de verdad quedan por hacer. Es la diferencia entre "cuánto cuesta el bono
+    entero" y "cuánto falta", que es lo que hay que pintar."""
     teorico = teoricos.get((linea["idorden"], linea["idbono"]))
     if teorico:
         setup, min_pieza = teorico
-        return setup + min_pieza * cantidad, "teorico"
+        return min_pieza, setup, "teorico"
 
-    if cantidad > 0:
-        matricula = (linea["matricula"] or "").strip()
-        for origen, nivel, clave in (
-            ("media_articulo", "articulo", linea["idarticulo_salida"]),
-            ("media_trabajo",  "trabajo",  linea["idtrabajo"]),
-            ("media_maquina",  "maquina",  matricula),
-        ):
-            acc = medias[nivel].get(clave)
-            if acc and acc["n"] >= _MIN_BONOS_MEDIA and acc["piezas"] > 0:
-                return acc["minutos"] / acc["piezas"] * cantidad, origen
+    matricula = (linea["matricula"] or "").strip()
+    for origen, nivel, clave in (
+        ("media_articulo", "articulo", linea["idarticulo_salida"]),
+        ("media_trabajo",  "trabajo",  linea["idtrabajo"]),
+        ("media_maquina",  "maquina",  matricula),
+    ):
+        acc = medias[nivel].get(clave)
+        if acc and acc["n"] >= _MIN_BONOS_MEDIA and acc["piezas"] > 0:
+            return acc["minutos"] / acc["piezas"], 0.0, origen
 
-    return None, None
+    return None, 0.0, None
 
 
-def _consumo_por_bono(lineas: list[dict], ahora: datetime) -> dict:
-    """Minutos ya gastados en cada bono y cuántos operarios lo tienen abierto.
+def _avance_por_bono(lineas: list[dict], ahora: datetime) -> dict:
+    """Lo que lleva cada bono: minutos gastados, piezas declaradas y cuántos
+    operarios lo tienen abierto ahora.
 
     Se cuentan TODAS las líneas del bono, no solo las de la ventana visible:
     un bono que empezó ayer ya lleva tiempo consumido y lo que queda por hacer
@@ -381,7 +383,8 @@ def _consumo_por_bono(lineas: list[dict], ahora: datetime) -> dict:
                COUNT(DISTINCT CASE
                      WHEN Hfinal IS NULL
                       AND Hinicial > DATEADD(hour, -{_HORAS_LINEA_VIVA}, GETDATE())
-                     THEN IdEmpleado END) AS operarios_activos
+                     THEN IdEmpleado END) AS operarios_activos,
+               SUM(ISNULL(TotalPiezas, 0)) AS piezas
         FROM Ordenes_Bonos_Lineas
         WHERE Hinicial IS NOT NULL
           AND IdOrden IN :ordenes
@@ -396,8 +399,9 @@ def _consumo_por_bono(lineas: list[dict], ahora: datetime) -> dict:
 
     return {
         (r["idorden"], r["idbono"]): {
-            "minutos":  float(r["minutos"] or 0),
+            "minutos":   float(r["minutos"] or 0),
             "operarios": max(1, int(r["operarios_activos"] or 0)),
+            "piezas":    float(r["piezas"] or 0),
         }
         for r in filas
     }
@@ -420,7 +424,7 @@ def get_items(
     ahora = datetime.now()
     lineas = _leer_lineas(d0, d1, estado)
     teoricos, medias = _cargar_estimaciones()
-    consumo = _consumo_por_bono([l for l in lineas if l["abierta"]], ahora)
+    avance = _avance_por_bono([l for l in lineas if l["abierta"]], ahora)
 
     items = []
     for l in lineas:
@@ -456,51 +460,91 @@ def get_items(
         # Solo se estima lo que sigue abierto: una línea cerrada ya tiene su
         # tiempo real medido y no hay nada que predecir.
         if abierta:
-            _proyectar(item, l, ahora, teoricos, medias, consumo)
+            _proyectar(item, l, ahora, teoricos, medias, avance)
 
         items.append(item)
     return items
 
 
-def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, consumo) -> None:
+#  Margen antes de dar un bono por retrasado. El ritmo real contra el esperado
+#  baila solo con que la preparación caiga dentro o fuera de lo ya declarado;
+#  sin margen, el ámbar sería ruido.
+_TOLERANCIA_RITMO = 0.15
+
+
+def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avance) -> None:
     """Estira la barra abierta hasta su fin estimado, o la marca sin tiempo.
 
-    Modifica `item` en el sitio. Lo que se dibuja:
-      · `end` pasa de "ahora" a la hora de fin estimada;
-      · `progreso` es qué parte de esa barra ya ha transcurrido, así que el
-        relleno sólido acaba justo en la línea de ahora y el resto queda tenue;
-      · sin estimación, la barra se queda como estaba (acaba en ahora) y va
-        marcada `sin_tiempo` para que salte el aviso."""
-    min_est, origen = _estimar(linea, teoricos, medias)
+    Lo que queda por delante se calcula **en piezas**, no en minutos:
+
+        (objetivo − declaradas) × min/pieza
+
+    Restar minutos era lo anterior y estaba mal: un bono puede cambiar de
+    manos, y entonces la barra de quien lo tiene ahora heredaba el tiempo
+    que gastó otro (medido en 6372/30: 1.434 de los 3.400 minutos eran de un
+    compañero que lo dejó hace días). En piezas eso no pasa — da igual quién
+    hizo las anteriores, lo que falta es lo que falta.
+
+    El problema es que **solo 11 de 565 bonos abiertos declaran piezas**. Sin
+    ese dato no hay forma de saber lo avanzado, así que se cae al criterio
+    viejo (presupuesto de minutos menos lo gastado) y el item lo dice en
+    `base_estimacion` para que no haya que adivinarlo."""
+    min_pieza, setup, origen = _estimar(linea, teoricos, medias)
     item["origen_estimado"] = origen
 
-    if min_est is None or min_est <= 0:
+    if not min_pieza or min_pieza <= 0:
         item["sin_tiempo"] = True
         item["estado"] = "sin-estimar"
         return
 
-    gasto = consumo.get((linea["idorden"], linea["idbono"]), {"minutos": 0.0, "operarios": 1})
-    item["min_estimados"]  = round(min_est)
-    item["min_consumidos"] = round(gasto["minutos"])
+    gasto     = avance.get((linea["idorden"], linea["idbono"]), {"minutos": 0.0, "operarios": 1, "piezas": 0.0})
+    objetivo  = float(linea["piezas_a_fabricar"] or 0)
+    hechas    = min(gasto["piezas"], objetivo) if objetivo else gasto["piezas"]
+    consumido = gasto["minutos"]
 
-    # Lo estimado y lo consumido son minutos-HOMBRE. Para llevarlos al eje de
-    # tiempo hay que repartir lo que queda entre los operarios que están ahora
-    # mismo en el bono: dos a la vez lo terminan en la mitad de reloj.
-    restante = max(0.0, min_est - gasto["minutos"]) / gasto["operarios"]
+    item["min_pieza"]       = round(min_pieza, 3)
+    item["min_consumidos"]  = round(consumido)
+    item["piezas_objetivo"] = objetivo or None
+    item["piezas_hechas"]   = hechas
+    # La preparación solo cuenta si el bono aún no ha arrancado; si ya hay
+    # minutos gastados, esa preparación ya está pagada.
+    item["min_estimados"]   = round(objetivo * min_pieza + (setup if consumido == 0 else 0))
 
-    if restante <= 0:
-        # Ya se ha pasado de lo estimado. La barra no se alarga (sería fingir
-        # que aún le queda) pero se marca en ámbar: el bono ha reventado su
-        # tiempo y eso es justo lo que hay que ver.
-        item["estado"]    = "riesgo"
-        item["excedido"]  = True
+    if hechas > 0 and objetivo > 0:
+        pendientes = max(0.0, objetivo - hechas)
+        restante   = pendientes * min_pieza
+        ritmo_real = consumido / hechas
+        item["base_estimacion"] = "piezas"
+        item["piezas_pendientes"] = pendientes
+        item["min_pieza_real"]    = round(ritmo_real, 3)
+        item["progreso_piezas"]   = round(hechas / objetivo * 100)
+        item["excedido"]          = ritmo_real > min_pieza * (1 + _TOLERANCIA_RITMO)
+    else:
+        # Sin piezas declaradas no se puede medir el avance real.
+        restante = max(0.0, item["min_estimados"] - consumido)
+        item["base_estimacion"] = "minutos"
+        item["excedido"] = consumido > item["min_estimados"]
+
+    if item["excedido"]:
+        # Va por encima del ritmo esperado. Se sigue dibujando lo que queda
+        # (el trabajo pendiente no desaparece por ir tarde), pero en ámbar.
+        item["estado"] = "riesgo"
+
+    # Los minutos son minutos-HOMBRE. Para llevarlos al eje de tiempo se
+    # reparten entre los operarios que tienen el bono abierto ahora mismo;
+    # en la práctica casi siempre es uno (Ordenes_Bonos.Operarios = 1).
+    restante_reloj = restante / gasto["operarios"]
+    item["min_restantes"] = round(restante_reloj)
+    if restante_reloj <= 0:
         return
 
-    fin_estimado = ahora + timedelta(minutes=restante)
-    item["end"]           = fin_estimado
-    item["fin_estimado"]  = fin_estimado
-    item["excedido"]      = False
+    fin_estimado = ahora + timedelta(minutes=restante_reloj)
+    item["end"]          = fin_estimado
+    item["fin_estimado"] = fin_estimado
 
+    # `progreso` es el relleno visual de la barra: qué parte de ella ya ha
+    # transcurrido, para que lo sólido acabe justo en la línea de ahora.
+    # El avance en piezas va aparte, en `progreso_piezas`.
     total = (fin_estimado - item["start"]).total_seconds()
     if total > 0:
         transcurrido = (ahora - item["start"]).total_seconds()

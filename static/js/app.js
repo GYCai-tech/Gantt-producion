@@ -64,6 +64,9 @@ const App = (() => {
   const fmtDt = s => s ? new Date(s).toLocaleString('es-ES',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
   const fmtDate = s => s ? new Date(s).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
   const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
+  const fmtMin = m => m < 60 ? `${Math.round(m)} min`
+                             : `${Math.floor(m / 60)} h ${pad(Math.round(m % 60))} min`;
+  const fmtNum = n => Number(n).toLocaleString('es-ES', { maximumFractionDigits: 2 });
 
   const cfg = () => ZOOM[zi];
   const pph = () => _pph;
@@ -390,20 +393,27 @@ const App = (() => {
     if (it.operacion) rows.push(`<div class="tip__row">Operación <span>${esc(it.operacion)}</span></div>`);
     rows.push(`<div class="tip__row">Bono <span>${it.idbono || '—'}</span></div>`);
     if (it.tipo === 'real') {
-      if (it.progreso != null) rows.push(`<div class="tip__row">Progreso <span>${it.progreso}%</span></div>`);
+      if (it.progreso_piezas != null) rows.push(`<div class="tip__row">Progreso <span>${it.progreso_piezas}% de las piezas</span></div>`);
       if (it.operarios) rows.push(`<div class="tip__row">Operarios <span>${it.operarios}</span></div>`);
     }
     if (it.tipo === 'trabajado' || it.tipo === 'parcial') {
       if (it.min_real != null) rows.push(`<div class="tip__row">Tiempo real <span>${Math.round(it.min_real)} min</span></div>`);
       if (it.piezas)           rows.push(`<div class="tip__row">Piezas <span>${it.piezas}</span></div>`);
     }
+    const fuente = ORIGEN[it.origen_estimado] || it.origen_estimado;
     if (it.sin_tiempo) {
       rows.push(`<div class="tip__row">Estimado <span>sin tiempo teorico ni media</span></div>`);
-    } else if (it.min_estimados != null) {
-      rows.push(`<div class="tip__row">Estimado <span>${it.min_estimados} min · ${ORIGEN[it.origen_estimado] || it.origen_estimado}</span></div>`);
-      if (it.min_consumidos != null) {
+    } else if (it.min_pieza != null) {
+      if (it.base_estimacion === 'piezas') {
+        rows.push(`<div class="tip__row">Piezas <span>${fmtNum(it.piezas_hechas)} de ${fmtNum(it.piezas_objetivo)} · quedan ${fmtNum(it.piezas_pendientes)}</span></div>`);
+        rows.push(`<div class="tip__row">Ritmo <span>${fmtNum(it.min_pieza_real)} min/pieza · esperado ${fmtNum(it.min_pieza)}${it.excedido ? ' (va lento)' : ''}</span></div>`);
+      } else {
+        rows.push(`<div class="tip__row">Piezas <span>${it.piezas_objetivo ? fmtNum(it.piezas_objetivo) : '—'} · ninguna declarada</span></div>`);
+        rows.push(`<div class="tip__row">Estimado <span>${it.min_estimados} min en total</span></div>`);
         rows.push(`<div class="tip__row">Consumido <span>${it.min_consumidos} min${it.excedido ? ' · se ha pasado' : ''}</span></div>`);
       }
+      if (it.min_restantes != null) rows.push(`<div class="tip__row">Le queda <span>${fmtMin(it.min_restantes)}</span></div>`);
+      rows.push(`<div class="tip__row">Segun <span>${fuente}</span></div>`);
     }
     rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}</span></div>`);
     rows.push(`<div class="tip__row">Fin <span>${fmtDt(it.end)}${it.estimado ? ' ~' : ''}</span></div>`);
