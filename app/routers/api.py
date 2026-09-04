@@ -108,6 +108,143 @@ def _min_est_neto(r, cap_min=None):
     return min_est
 
 
+# ─────────────────────────────────────────────────────────────────────
+#  TIEMPO TEÓRICO DEL ESCANDALLO  (ERP en vivo)
+# ─────────────────────────────────────────────────────────────────────
+# La duración de un bono es siempre `setup + min/pieza × cantidad`. Lo único
+# que cambia es de dónde salen los dos coeficientes, por orden de preferencia:
+#   1. escandallo del ERP (este módulo), si el trabajo tiene tiempo declarado
+#   2. ajuste sobre el histórico de bonos (analytics.v_tiempos_referencia)
+#
+# El teórico se lee EN VIVO del ERP, no del ETL: el Gantt se usa a la par que
+# el programa de producción, así que un tiempo que producción acaba de meter en
+# el ERP tiene que verse sin esperar al refresco del warehouse. La consulta es
+# minúscula (~600 bonos abiertos) y se cachea _ESTANDAR_TTL_S segundos.
+#
+# Unidad: Duracion/TiempoMO vienen en DÍAS (IdUnidadDuracion = 'D'), de ahí el
+# x1440 para pasarlas a minutos POR PIEZA. Verificado contra la realidad: el
+# trabajo 101 "Remachar y grapar" declara 6,00 min/pieza y sus 14 bonos dan
+# 6,90 min/pieza reales. Mismo criterio que Coste-MP (desglose.py:145-170).
+#
+# Se prefiere Trabajos_ManoObra (las líneas de detalle que rellena producción)
+# sobre Trabajos_Fases.TiempoMO (la copia desnormalizada de esa suma): donde
+# discrepan, TiempoMO es el que está sin recalcular -- hay 3 trabajos con
+# TiempoMO a 0 y mano de obra declarada, y el 6308 tiene TiempoMO x4.
+#
+# OJO con la cobertura: hoy el escandallo está casi vacío (8 de 618 bonos
+# abiertos). Esto no es un fallo del código -- es el dato que hay en el ERP.
+# Según producción rellene tiempos, más barras dejarán de ser una media.
+_ESTANDAR_TTL_S = 300
+_estandar_cache = {"ts": None, "datos": {}}
+
+_SQL_ESTANDAR = """
+    WITH mano_obra AS (
+        SELECT IdTrabajo, SUM(Duracion) * 1440.0 AS MinPieza
+        FROM dbo.Trabajos_ManoObra
+        WHERE Duracion > 0          -- 0 no es una medición, es la casilla sin rellenar
+        GROUP BY IdTrabajo
+    )
+    SELECT ob.IdOrden, ob.IdBono,
+           COALESCE(mo.MinPieza, NULLIF(tf.TiempoMO, 0) * 1440.0) AS MinPieza,
+           -- Preparación declarada en el propio bono, ya en minutos. Es el
+           -- término fijo del escandallo, el equivalente al `setup_min` que
+           -- v_tiempos_referencia ajusta desde el histórico.
+           COALESCE(NULLIF(ob.TiempoMontaje, 0), 0)
+             + COALESCE(NULLIF(ob.TiempoDesMontaje, 0), 0) AS SetupMin
+    FROM dbo.Ordenes_Bonos ob
+    LEFT JOIN mano_obra mo          ON mo.IdTrabajo = ob.IdTrabajo
+    LEFT JOIN dbo.Trabajos_Fases tf ON tf.IdTrabajo = ob.IdTrabajo
+    WHERE ob.IdEstado IN (0, 1, 3)  -- sólo bonos abiertos: los cerrados van con minutos reales
+      AND COALESCE(mo.MinPieza, NULLIF(tf.TiempoMO, 0) * 1440.0) > 0
+"""
+
+
+def _tiempos_estandar_bono():
+    """Tiempo teórico del escandallo por bono: {(idorden, idbono): (setup, min_pieza)}.
+
+    Nunca propaga un fallo del ERP: si la consulta cae, el Gantt sigue
+    pintándose con los tiempos de referencia del histórico (que viven en
+    Postgres) en vez de quedarse en blanco. Se reutiliza la última caché aunque
+    esté caducada."""
+    ahora = datetime.now()
+    ts = _estandar_cache["ts"]
+    if ts is not None and (ahora - ts).total_seconds() < _ESTANDAR_TTL_S:
+        return _estandar_cache["datos"]
+    try:
+        with get_sqlserver_engine().connect() as erp:
+            datos = {
+                (int(r["IdOrden"]), int(r["IdBono"])):
+                    (float(r["SetupMin"] or 0), float(r["MinPieza"]))
+                for r in erp.execute(text(_SQL_ESTANDAR)).mappings()
+            }
+    except Exception as e:
+        print(f"[items] escandallo no disponible, se usan tiempos del histórico: {e}")
+        return _estandar_cache["datos"]
+    _estandar_cache.update(ts=ahora, datos=datos)
+    return datos
+
+
+def _operarios_por_bono(conn):
+    """{(idorden, idbono): nº de operarios asignados} para los bonos abiertos.
+
+    Hace falta porque tanto `min_estimados` como `minutos_reales` son del BONO
+    ENTERO, no del operario: v_asignaciones_empleado repite el mismo total en
+    la fila de cada operario asignado. Sin repartir, un bono de 109 min con 4
+    operarios pinta cuatro barras de 109 min y reserva 436 minutos de
+    capacidad."""
+    return {
+        (r['idorden'], r['idbono']): int(r['n'])
+        for r in conn.execute(text("""
+            SELECT idorden, idbono, count(DISTINCT idempleado) AS n
+            FROM core.fact_asignaciones_empleado
+            WHERE situacion <> 'ANULADO' AND estado_orden <> 2
+            GROUP BY idorden, idbono
+            HAVING count(DISTINCT idempleado) > 1
+        """)).mappings()
+    }
+
+
+def _aplicar_estandar(rows, estandar, reparto=None):
+    """Pisa `min_estimados` con el tiempo teórico del escandallo cuando el bono
+    lo tiene declarado, y deja constancia de qué fuente ganó.
+
+    Misma fórmula en las dos ramas -- `setup + min/pieza × cantidad` -- sólo
+    cambia de dónde salen los dos coeficientes: del escandallo del ERP, o del
+    ajuste sobre el histórico (analytics.v_tiempos_referencia, que ya viene
+    calculado en `min_estimados` y etiquetado en `origen_referencia`).
+
+    Además REPARTE el trabajo del bono entre los operarios asignados (ver
+    _operarios_por_bono). Se dividen los dos totales a la vez -- estimado y
+    real -- porque ambos son del bono: dividir sólo el estimado rompería el
+    porcentaje de progreso, que es el cociente de los dos.
+
+    Devuelve dicts, no RowMapping, porque el resto del endpoint ya trabaja con
+    dicts mutables (`d['min_est'] = ...`) y así la fila normalizada sirve para
+    ambos caminos, máquina y empleado."""
+    reparto = reparto or {}
+    salida = []
+    for r in rows:
+        d = dict(r)
+        bono     = (d.get('idorden'), d.get('idbono'))
+        teorico  = estandar.get(bono)
+        cantidad = float(d.get('cantidad_objetivo') or 0)
+        if teorico and cantidad > 0:
+            setup, min_pieza = teorico
+            d['min_estimados']   = round(setup + min_pieza * cantidad)
+            d['origen_estimado'] = 'escandallo'
+        else:
+            d['origen_estimado'] = d.get('origen_referencia')
+
+        n = reparto.get(bono, 1)
+        d['operarios_bono'] = n
+        if n > 1:
+            for campo in ('min_estimados', 'minutos_reales'):
+                if d.get(campo) is not None:
+                    d[campo] = float(d[campo]) / n
+        salida.append(d)
+    return salida
+
+
 def _prioridad_programado(r):
     fp = r.get('fecha_prevista_fin')
     return fp if _prev_fiable(fp, r.get('fecha_orden')) else datetime.max
@@ -273,6 +410,10 @@ def _render_programado(r, recurso_id, id_prefix, start, end):
         "progreso":     None,
         "operarios":    r.get('operarios'),
         "notas":        None,
+        # 'estandar' = tiempo teórico del escandallo del ERP; 'media' = media
+        # ponderada del histórico de bonos. Deja ver de un vistazo qué barras
+        # son un dato declarado y cuáles una estimación.
+        "origen_estimado": r.get('origen_estimado'),
     }
 
 
@@ -514,6 +655,10 @@ def get_items(
     ahora = datetime.now()
     base_prog = _base_programadas(ahora)
 
+    # Tiempo teórico del escandallo (ERP en vivo). Manda sobre la media del
+    # histórico; si el ERP no responde, sale vacío y todo cae a la media.
+    estandar = _tiempos_estandar_bono()
+
     # `bono_fin`/`next_start` se comparten entre máquina Y empleado, namespaced
     # por prefijo ("maq:"/"emp:"), para que una dependencia entre vistas (un
     # montaje de operario que espera una pieza de máquina, o al revés) se
@@ -526,27 +671,14 @@ def get_items(
     engine = get_engine()
     with engine.connect() as conn:
         deps = _cargar_dependencias(conn)
+        # min_estimados y minutos_reales vienen del BONO entero; hay que
+        # repartirlos entre los operarios asignados (ver _operarios_por_bono).
+        reparto = _operarios_por_bono(conn)
 
         # ════════════════════════════ MÁQUINA ════════════════════════════
         # ── Máquinas en curso ──────────────────────────────────────
         activos = conn.execute(text("""
-            WITH hist_art_op AS (
-                SELECT idarticulo::text, LOWER(operacion) AS operacion,
-                       AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
-                FROM core.fact_bonos
-                WHERE estado_orden = 2
-                  AND cantidad_objetivo > 0 AND min_reales > 0
-                GROUP BY idarticulo, LOWER(operacion)
-            ),
-            hist_op AS (
-                SELECT LOWER(operacion) AS operacion,
-                       AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
-                FROM core.fact_bonos
-                WHERE estado_orden = 2
-                  AND cantidad_objetivo > 0 AND min_reales > 0
-                GROUP BY LOWER(operacion)
-            ),
-            op_bono AS (   -- operario(s) fichados ahora mismo en cada bono
+            WITH op_bono AS (   -- operario(s) fichados ahora mismo en cada bono
                 SELECT idorden, idbono,
                        string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
                 FROM analytics.v_asignaciones_empleado
@@ -556,13 +688,23 @@ def get_items(
             SELECT
                 m.matricula, m.maquina, m.idorden, m.idbono, m.operacion, m.articulo,
                 m.situacion, m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden,
-                m.minutos_reales,
+                m.minutos_reales, m.cantidad_objetivo,
                 COALESCE(m.fichaje_activo_desde, m.fecha_asignacion) AS inicio,
-                ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
+                -- setup + min/pieza × cantidad (analytics.v_tiempos_referencia,
+                -- migración 007). El COALESCE elige la fuente ENTERA -- artículo
+                -- o respaldo de operación -- para no mezclar el setup de una con
+                -- la tasa de la otra.
+                ROUND(COALESCE(
+                    tref.setup_min    + tref.min_pieza    * NULLIF(m.cantidad_objetivo, 0),
+                    tref_op.setup_min + tref_op.min_pieza * NULLIF(m.cantidad_objetivo, 0)
+                )) AS min_estimados,
+                COALESCE(tref.origen, tref_op.origen) AS origen_referencia,
                 op_bono.operarios
             FROM core.fact_asignaciones_maquina m
-            LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = LOWER(m.operacion)
-            LEFT JOIN hist_op     ho  ON ho.operacion = LOWER(m.operacion)
+            LEFT JOIN analytics.v_tiempos_referencia tref
+                   ON tref.idarticulo = m.idarticulo AND tref.operacion = LOWER(m.operacion)
+            LEFT JOIN analytics.v_tiempos_referencia tref_op
+                   ON tref_op.idarticulo IS NULL AND tref_op.operacion = LOWER(m.operacion)
             LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
             JOIN core.fact_bonos fb ON fb.idorden = m.idorden AND fb.idbono = m.idbono
             WHERE fb.estado_bono = 1
@@ -571,6 +713,8 @@ def get_items(
               AND m.fichaje_activo_desde IS NOT NULL
             ORDER BY m.matricula, m.fichaje_activo_desde DESC
         """)).mappings().all()
+
+        activos = _aplicar_estandar(activos, estandar, reparto)
 
         maquina_items = []
         for r in activos:
@@ -604,6 +748,7 @@ def get_items(
                 "progreso":     round(min(min_real / min_est * 100, 100)) if min_est > 0 else None,
                 "operarios":    r["operarios"],
                 "notas":        None,
+                "origen_estimado": r.get("origen_estimado"),
             })
 
         # ── Máquinas completadas (dentro de la ventana) ────────────
@@ -659,23 +804,7 @@ def get_items(
 
         # ── Máquinas programadas: candidatas a la cola del scheduler ──
         prog_maq = conn.execute(text("""
-            WITH hist_art_op AS (
-                SELECT idarticulo::text, LOWER(operacion) AS operacion,
-                       AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
-                FROM core.fact_bonos
-                WHERE estado_orden = 2
-                  AND cantidad_objetivo > 0 AND min_reales > 0
-                GROUP BY idarticulo, LOWER(operacion)
-            ),
-            hist_op AS (
-                SELECT LOWER(operacion) AS operacion,
-                       AVG(min_reales / NULLIF(cantidad_objetivo, 0)) AS mpp
-                FROM core.fact_bonos
-                WHERE estado_orden = 2
-                  AND cantidad_objetivo > 0 AND min_reales > 0
-                GROUP BY LOWER(operacion)
-            ),
-            op_bono AS (   -- operario(s) preasignado(s) o que dejaron pausado el bono en cola
+            WITH op_bono AS (   -- operario(s) preasignado(s) o que dejaron pausado el bono en cola
                 SELECT idorden, idbono,
                        string_agg(DISTINCT nombre_empleado, ', ' ORDER BY nombre_empleado) AS operarios
                 FROM analytics.v_asignaciones_empleado
@@ -685,12 +814,22 @@ def get_items(
             SELECT
                 m.matricula AS recurso, m.idorden, m.idbono, m.operacion, m.articulo,
                 m.cantidad_pedida, m.fecha_prevista_fin, m.fecha_orden, m.situacion, m.estado_bono,
-                m.minutos_reales, m.fecha_asignacion, m.ordenar,
-                ROUND(COALESCE(hao.mpp, ho.mpp) * NULLIF(m.cantidad_objetivo, 0)) AS min_estimados,
+                m.minutos_reales, m.fecha_asignacion, m.ordenar, m.cantidad_objetivo,
+                -- setup + min/pieza × cantidad (analytics.v_tiempos_referencia,
+                -- migración 007). El COALESCE elige la fuente ENTERA -- artículo
+                -- o respaldo de operación -- para no mezclar el setup de una con
+                -- la tasa de la otra.
+                ROUND(COALESCE(
+                    tref.setup_min    + tref.min_pieza    * NULLIF(m.cantidad_objetivo, 0),
+                    tref_op.setup_min + tref_op.min_pieza * NULLIF(m.cantidad_objetivo, 0)
+                )) AS min_estimados,
+                COALESCE(tref.origen, tref_op.origen) AS origen_referencia,
                 op_bono.operarios
             FROM core.fact_asignaciones_maquina m
-            LEFT JOIN hist_art_op hao ON hao.idarticulo = m.idarticulo AND hao.operacion = LOWER(m.operacion)
-            LEFT JOIN hist_op     ho  ON ho.operacion = LOWER(m.operacion)
+            LEFT JOIN analytics.v_tiempos_referencia tref
+                   ON tref.idarticulo = m.idarticulo AND tref.operacion = LOWER(m.operacion)
+            LEFT JOIN analytics.v_tiempos_referencia tref_op
+                   ON tref_op.idarticulo IS NULL AND tref_op.operacion = LOWER(m.operacion)
             LEFT JOIN op_bono         ON op_bono.idorden = m.idorden AND op_bono.idbono = m.idbono
             WHERE (
                     m.estado_bono IN (0, 3)
@@ -700,10 +839,11 @@ def get_items(
             ORDER BY m.matricula, m.fecha_prevista_fin NULLS LAST
         """)).mappings().all()
 
+        prog_maq = _aplicar_estandar(prog_maq, estandar, reparto)
+
         sched_rows = []
-        for r in prog_maq:
-            d = dict(r)
-            d['recurso_key'] = f"maq:{r['recurso']}"
+        for d in prog_maq:
+            d['recurso_key'] = f"maq:{d['recurso']}"
             d['min_est'] = _min_est_neto(d, cap_min=MAX_MAQ_MIN)
             sched_rows.append(d)
 
@@ -726,7 +866,7 @@ def get_items(
             SELECT
                 e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
                 e.situacion, e.cantidad_pedida, e.fecha_prevista_fin, e.fecha_orden,
-                e.min_estimados, e.minutos_reales,
+                e.min_estimados, e.cantidad_objetivo, e.origen_referencia, e.minutos_reales,
                 COALESCE(e.fichaje_activo_desde, e.fecha_asignacion) AS inicio
             FROM analytics.v_asignaciones_empleado e
             JOIN core.fact_bonos fb ON fb.idorden = e.idorden AND fb.idbono = e.idbono
@@ -734,6 +874,8 @@ def get_items(
               AND e.situacion NOT IN ('COMPLETADO', 'ANULADO')
               AND e.fichaje_activo_desde IS NOT NULL
         """)).mappings().all()
+
+        activos = _aplicar_estandar(activos, estandar, reparto)
 
         empleado_items = []
         for r in activos:
@@ -769,6 +911,7 @@ def get_items(
                 "progreso":     round(min(min_real / min_est * 100, 100)) if min_est > 0 else None,
                 "operarios":    None,
                 "notas":        None,
+                "origen_estimado": r.get("origen_estimado"),
             })
 
         # ── Empleados: sesiones reales de fichaje (trabajado/parcial) ──────
@@ -789,20 +932,25 @@ def get_items(
             SELECT
                 e.idempleado, e.idorden, e.idbono, e.operacion, e.articulo,
                 e.cantidad_pedida, e.fecha_prevista_fin, e.fecha_orden, e.min_estimados, e.situacion, e.estado_bono,
-                e.minutos_reales, e.fecha_inicio_real, e.fecha_fin_real, e.ordenar, e.estado_color
+                e.cantidad_objetivo, e.origen_referencia, e.minutos_reales, e.fecha_inicio_real, e.fecha_fin_real,
+                e.ordenar, e.estado_color
             FROM analytics.v_asignaciones_empleado e
             WHERE (
                     e.estado_bono IN (0, 3)
                     OR (e.estado_bono = 1 AND e.fichaje_activo_desde IS NULL)  -- pausado: abierto pero sin nadie fichado
                   )
               AND e.estado_orden <> 2
-              AND e.min_estimados > 0
             ORDER BY e.idempleado, e.fecha_prevista_fin NULLS LAST
         """)).mappings().all()
 
-        for r in prog_emp:
-            d = dict(r)
-            d['recurso_key'] = f"emp:{r['idempleado']}"
+        # El "min_estimados > 0" que antes filtraba en SQL se hace ahora aquí,
+        # DESPUÉS de aplicar el escandallo: un bono con tiempo teórico pero sin
+        # histórico (artículo nuevo) traía min_estimados NULL de la vista y la
+        # consulta lo tiraba antes de que el teórico pudiera rellenarlo.
+        prog_emp = [d for d in _aplicar_estandar(prog_emp, estandar, reparto) if (d.get('min_estimados') or 0) > 0]
+
+        for d in prog_emp:
+            d['recurso_key'] = f"emp:{d['idempleado']}"
             d['min_est'] = _min_est_neto(d)
             sched_rows.append(d)
 
