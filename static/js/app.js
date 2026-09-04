@@ -406,7 +406,10 @@ const App = (() => {
     } else if (it.min_pieza != null) {
       if (it.base_estimacion === 'piezas') {
         rows.push(`<div class="tip__row">Piezas <span>${fmtNum(it.piezas_hechas)} de ${fmtNum(it.piezas_objetivo)} · quedan ${fmtNum(it.piezas_pendientes)}</span></div>`);
-        rows.push(`<div class="tip__row">Ritmo <span>${fmtNum(it.min_pieza_real)} min/pieza · esperado ${fmtNum(it.min_pieza)}${it.excedido ? ' (va lento)' : ''}</span></div>`);
+        // Un bono que aun no ha empezado no tiene ritmo real que comparar.
+        rows.push(it.min_pieza_real != null
+          ? `<div class="tip__row">Ritmo <span>${fmtNum(it.min_pieza_real)} min/pieza · esperado ${fmtNum(it.min_pieza)}${it.excedido ? ' (va lento)' : ''}</span></div>`
+          : `<div class="tip__row">Ritmo <span>${fmtNum(it.min_pieza)} min/pieza esperado</span></div>`);
       } else {
         rows.push(`<div class="tip__row">Piezas <span>${it.piezas_objetivo ? fmtNum(it.piezas_objetivo) : '—'} · ninguna declarada</span></div>`);
         rows.push(`<div class="tip__row">Estimado <span>${it.min_estimados} min en total</span></div>`);

@@ -142,6 +142,51 @@ el esperado. Por encima de un **15 %** la barra pasa a ámbar como *En riesgo*,
 pero **se sigue dibujando lo que falta**: ir tarde no borra el trabajo
 pendiente.
 
+### La cola: lo que cada operario tiene por delante
+
+Detrás de lo que está haciendo ahora, el Gantt pinta en punteado los bonos que
+tiene **asignados y aún sin empezar**, uno detrás de otro.
+
+La asignación operario↔bono vive en **`Pers_EmpleadosOrdenBono`** (Orden, Bono
+→ IdEmpleado), y se lee por la vista del ERP **`persV_DatosAsociadoEmpleado`**,
+que ya trae resuelto todo lo que hace falta para una barra: máquina, área,
+artículo, piezas objetivo, piezas hechas y la posición manual
+(`Conf_OrdenesBonos.ordenar`).
+
+> Ojo: `Ordenes_Bonos.IdEmpleado` —donde parecería que debe estar la
+> asignación— está a **NULL en los 562 bonos abiertos**. No es ahí.
+
+Medido: 19.517 asignaciones, 25 empleados, **238 de los 562 bonos abiertos**
+con operario. Se toman solo los de `IdEstado = 0` (sin arrancar); los de estado
+1 ya salen como barras reales de su propio fichaje.
+
+**Cómo se encadena.** Cada bono empieza cuando el recurso queda libre —después
+de la barra en curso— y dura lo que falta por fabricar
+(`pendientes × min/pieza`, la misma cadena de siempre). El orden es el manual
+del ERP; los que no lo tienen van detrás, por número de orden. Todo dentro de
+la jornada **07:00–16:00 y saltando fines de semana**, y se corta en cuanto la
+cola se sale de la ventana visible.
+
+La jornada se cuenta entera (540 min) sin descontar el descanso de 11:00–11:15
+a propósito: el eje del Gantt tampoco lo comprime, lo pinta como una banda.
+Descontarlo desalinearía las barras del eje.
+
+Dos cosas heredadas del ERP que se ven en pantalla: **un bono puede tener más
+de un operario** (197 con uno, 21 con dos, 4 con tres, 2 con cuatro), así que
+aparece en las dos filas; y un bono en cola **sin tiempo estimado** recibe un
+bloque nominal de 60 min para que no adelante a los que van detrás, marcado con
+el aviso.
+
+### Nombres que engañan en el ERP
+
+| campo | qué es de verdad |
+|---|---|
+| `Ordenes_Bonos.CantidadTotal` | cantidad **objetivo** del bono |
+| `Ordenes_Bonos_Salidas.Cantidad` | cantidad **objetivo** (la del Access original) |
+| `Ordenes_Bonos_Salidas.CantidadTotal` | lo **ya fabricado** — al revés que la de arriba |
+| `Trabajos_Fases.TpoMuerto` | el tiempo de **montaje** (relleno en 4 filas de 6.502) |
+| `Ordenes_Bonos_Lineas.Fecha` | cuándo se **grabó** la línea, no cuándo se trabajó |
+
 ### El gran pero: casi nadie declara piezas
 
 **Solo 11 de 565 bonos abiertos tienen piezas declaradas** (2 %). Sin ese dato

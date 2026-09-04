@@ -463,6 +463,18 @@ def get_items(
             _proyectar(item, l, ahora, teoricos, medias, avance)
 
         items.append(item)
+
+    # La cola solo tiene sentido si la ventana llega a hoy o más allá: en un
+    # día pasado no había "programado", había lo que pasó.
+    if d1 >= hoy:
+        ocupado_hasta = {}
+        for it in items:
+            if it["en_curso"]:
+                rid = it["recurso_id"]
+                ocupado_hasta[rid] = max(ocupado_hasta.get(rid, ahora), it["end"])
+        hasta_dt = datetime.combine(d1, datetime.min.time()).replace(hour=JORNADA_FIN)
+        items += _encolar(vista, ocupado_hasta, hasta_dt, ahora, teoricos, medias)
+
     return items
 
 
@@ -470,6 +482,190 @@ def get_items(
 #  baila solo con que la preparación caiga dentro o fuera de lo ya declarado;
 #  sin margen, el ámbar sería ruido.
 _TOLERANCIA_RITMO = 0.15
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  COLA: los bonos que un operario tiene asignados y aún no ha empezado
+# ─────────────────────────────────────────────────────────────────────
+#  Fuente: `persV_DatosAsociadoEmpleado`, vista del ERP sobre
+#  `Pers_EmpleadosOrdenBono` (Orden, Bono → IdEmpleado). Ahí SÍ está la
+#  asignación operario↔bono; `Ordenes_Bonos.IdEmpleado`, que es donde parecía
+#  que debía vivir, está a NULL en los 562 bonos abiertos.
+#
+#  La vista trae ya resuelto todo lo que hace falta para una barra: máquina,
+#  área, artículo, piezas objetivo, piezas hechas y la posición manual
+#  (`Conf_OrdenesBonos.ordenar`). Medido: 19.517 asignaciones, 25 empleados,
+#  238 de los 562 bonos abiertos con operario.
+#
+#  OJO con `Fabricadas`: sale de `Ordenes_Bonos_Salidas.CantidadTotal`. En esa
+#  tabla `Cantidad` es el objetivo y `CantidadTotal` lo ya producido — justo al
+#  revés que en `Ordenes_Bonos`, donde `CantidadTotal` es el objetivo.
+#
+#  Se toma solo `IdEstado = 0` (aún sin arrancar): los de estado 1 ya salen
+#  como barras reales de su propio fichaje.
+# ─────────────────────────────────────────────────────────────────────
+
+_COLA_QUERY = """
+SELECT
+    v.IdEmpleado                              AS idempleado,
+    ed.Nombre                                 AS nombre,
+    ed.Apellidos                              AS apellidos,
+    v.idorden                                 AS idorden,
+    v.IdBono                                  AS idbono,
+    v.ordenar                                 AS ordenar,
+    v.CdgMaq                                  AS matricula,
+    v.Maquina                                 AS descrip_maquina,
+    v.Area                                    AS area,
+    v.ArtFabricar                             AS descrip_salida,
+    TRY_CAST(v.PiezasFabricar AS decimal(18,4)) AS objetivo,
+    v.Fabricadas                              AS fabricadas,
+    ob.IdTrabajo                              AS idtrabajo,
+    obs.IdArticulo                            AS idarticulo_salida
+FROM persV_DatosAsociadoEmpleado v
+    JOIN Ordenes_Bonos ob            ON ob.IdOrden  = v.idorden AND ob.IdBono  = v.IdBono
+    JOIN Empleados_Datos ed          ON ed.IdEmpleado = v.IdEmpleado
+    LEFT JOIN Ordenes_Bonos_Salidas obs ON obs.IdOrden = v.idorden AND obs.IdBono = v.IdBono
+WHERE ob.IdEstado = 0
+"""
+
+#  Un bono en cola sin tiempo estimado no se puede dimensionar. Se le da un
+#  bloque nominal para que siga ocupando su sitio en la cola (si no, los que
+#  van detrás se adelantarían como si no existiera) y va marcado `sin_tiempo`.
+_MIN_BLOQUE_SIN_TIEMPO = 60
+
+JORNADA_INICIO = 7
+JORNADA_FIN    = 16
+
+
+def _siguiente_hueco(dt: datetime) -> datetime:
+    """El primer instante laborable a partir de `dt` (07:00–16:00, L-V)."""
+    t = dt
+    for _ in range(14):
+        if t.weekday() >= 5:
+            t = (t + timedelta(days=1)).replace(hour=JORNADA_INICIO, minute=0, second=0, microsecond=0)
+            continue
+        if t.hour < JORNADA_INICIO:
+            return t.replace(hour=JORNADA_INICIO, minute=0, second=0, microsecond=0)
+        if t.hour >= JORNADA_FIN:
+            t = (t + timedelta(days=1)).replace(hour=JORNADA_INICIO, minute=0, second=0, microsecond=0)
+            continue
+        return t
+    return t
+
+
+def _sumar_laborables(inicio: datetime, minutos: float) -> datetime:
+    """Avanza `minutos` de trabajo desde `inicio` sin salirse de la jornada.
+
+    Cuenta la jornada entera (07:00–16:00 = 540 min) sin descontar el descanso
+    de 11:00–11:15 a propósito: el eje del Gantt tampoco lo comprime, lo pinta
+    como una banda. Descontarlo aquí desalinearía las barras del eje."""
+    t = _siguiente_hueco(inicio)
+    restante = float(minutos)
+    for _ in range(400):
+        fin_jornada = t.replace(hour=JORNADA_FIN, minute=0, second=0, microsecond=0)
+        hueco = (fin_jornada - t).total_seconds() / 60
+        if restante <= hueco:
+            return t + timedelta(minutes=restante)
+        restante -= hueco
+        t = _siguiente_hueco(fin_jornada)
+    return t
+
+
+def _leer_cola() -> list[dict]:
+    """Los bonos asignados y aún sin empezar, deduplicados por (bono, operario).
+
+    La vista repite fila cuando un bono declara más de un artículo de salida,
+    igual que la consulta de líneas."""
+    filas = _erp(_COLA_QUERY, {})
+    cola, vistas = [], set()
+    for r in filas:
+        clave = (r["idorden"], r["idbono"], r["idempleado"])
+        if clave in vistas:
+            continue
+        vistas.add(clave)
+        cola.append({
+            "idorden":           r["idorden"],
+            "idbono":            r["idbono"],
+            "idempleado":        r["idempleado"],
+            "empleado":          _nombre_completo(r),
+            "ordenar":           int(r["ordenar"] or 0),
+            "matricula":         (r["matricula"] or "").strip(),
+            "descrip_maquina":   r["descrip_maquina"],
+            "area":              (r["area"] or "").strip() or None,
+            "descrip_salida":    r["descrip_salida"],
+            "idarticulo_salida": r["idarticulo_salida"],
+            "idtrabajo":         r["idtrabajo"],
+            "piezas_a_fabricar": float(r["objetivo"] or 0),
+            "fabricadas":        float(r["fabricadas"] or 0),
+        })
+    return cola
+
+
+def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
+             ahora: datetime, teoricos, medias) -> list[dict]:
+    """Las barras 'programado': la cola de cada recurso, una detrás de otra.
+
+    Cada bono arranca cuando el recurso queda libre —después de lo que está
+    haciendo ahora— y dura lo que falta por fabricar. El orden es el manual del
+    ERP (`ordenar`); los que no lo tienen van detrás, por número de orden.
+
+    Se corta en cuanto la cola se sale de la ventana visible: encolar meses de
+    trabajo que nadie va a ver solo gasta tiempo."""
+    por_recurso: dict[str, list] = {}
+    for b in _leer_cola():
+        rid = str(b["idempleado"]) if vista == "empleado" else b["matricula"]
+        if not rid:
+            continue
+        por_recurso.setdefault(rid, []).append(b)
+
+    items = []
+    for rid, bonos in por_recurso.items():
+        # `ordenar` = 0 significa "sin colocar a mano": esos van al final.
+        bonos.sort(key=lambda b: (b["ordenar"] or 10_000, b["idorden"], b["idbono"]))
+        cursor = _siguiente_hueco(max(ocupado_hasta.get(rid, ahora), ahora))
+
+        for b in bonos:
+            if cursor > hasta_dt:
+                break
+            min_pieza, setup, origen = _estimar(b, teoricos, medias)
+            pendientes = max(0.0, b["piezas_a_fabricar"] - b["fabricadas"])
+            sin_tiempo = not min_pieza or min_pieza <= 0
+            dur = _MIN_BLOQUE_SIN_TIEMPO if sin_tiempo else setup + pendientes * min_pieza
+            if dur <= 0:
+                continue
+
+            inicio = _siguiente_hueco(cursor)
+            fin    = _sumar_laborables(inicio, dur)
+            cursor = fin
+
+            items.append({
+                "id":         f"P-{b['idorden']}-{b['idbono']}-{rid}",
+                "recurso_id": rid,
+                "tipo":       "programado",
+                "estado":     "sin-estimar" if sin_tiempo else "programado",
+                "en_curso":   False,
+                "estimado":   True,
+                "start":      inicio,
+                "end":        fin,
+                "idorden":    b["idorden"],
+                "idbono":     b["idbono"],
+                "art":        b["descrip_salida"],
+                "operacion":  (f"{b['matricula']} · {b['descrip_maquina']}"
+                               if vista == "empleado" else b["empleado"]),
+                "operarios":  b["empleado"],
+                "piezas":     b["piezas_a_fabricar"],
+                "min_real":   None,
+                "sin_tiempo": sin_tiempo,
+                "orden_manual":     b["ordenar"] or None,
+                "origen_estimado":  origen,
+                "piezas_objetivo":  b["piezas_a_fabricar"] or None,
+                "piezas_hechas":    b["fabricadas"],
+                "piezas_pendientes": pendientes,
+                "min_pieza":        round(min_pieza, 3) if min_pieza else None,
+                "min_restantes":    round(dur),
+                "base_estimacion":  "piezas",
+            })
+    return items
 
 
 def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avance) -> None:
