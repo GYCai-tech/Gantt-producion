@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Driver ODBC de SQL Server (Consultor de Bonos consulta el ERP en vivo)
+# Driver ODBC de SQL Server: la app lee el ERP en vivo
 RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg unixodbc-dev \
     && curl -sSL -O https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb \
     && dpkg -i packages-microsoft-prod.deb && rm packages-microsoft-prod.deb \
@@ -21,7 +21,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY templates ./templates
 COPY static ./static
-COPY migrations ./migrations
 
 # Usuario no-root
 RUN useradd -m appuser && chown -R appuser:appuser /app

@@ -1,11 +1,18 @@
+import datetime
+import decimal
+import json
+
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
-from app.routers import pages, api
-import decimal, datetime, json
+from fastapi.staticfiles import StaticFiles
+
+from app.routers import api, pages
 
 
 class _Encoder(json.JSONEncoder):
+    """El ERP devuelve Decimal (cantidades) y datetime (horas); ninguno de los
+    dos es serializable por el json de la stdlib."""
+
     def default(self, obj):
         if isinstance(obj, decimal.Decimal):
             return float(obj)
@@ -20,8 +27,8 @@ class _JSONResponse(JSONResponse):
 
 
 app = FastAPI(
-    title="GYC — Planificador de Producción",
-    version="1.0",
+    title="GYC — Seguimiento de Producción",
+    version="2.0",
     default_response_class=_JSONResponse,
 )
 

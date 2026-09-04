@@ -9,7 +9,7 @@ services:
       - .env
     restart: unless-stopped
     extra_hosts:
-      - "host.docker.internal:host-gateway"  # acceso al PostgreSQL/Prefect en la red local
+      - "host.docker.internal:host-gateway"  # acceso al ERP en la red local
 
 # Nota: el código (app/templates/static) va dentro de la imagen.
 # Tras cambiar código/plantillas:  docker compose up -d --build

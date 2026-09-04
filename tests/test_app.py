@@ -1,22 +1,22 @@
-"""Smoke test: la app debe poder importarse y registrar sus rutas sin
-necesitar una conexion real a la base de datos (get_engine() es lazy)."""
+"""Smoke test: la app debe importarse y publicar sus rutas sin necesidad de
+una conexión real al ERP (get_erp_engine() es perezoso).
+
+Se leen del esquema OpenAPI y no de `app.routes` a propósito: según la versión
+de FastAPI, los routers incluidos aparecen ahí envueltos y sin `.path`."""
 from app.main import app
 
 
-def test_la_app_importa_y_registra_las_rutas_esperadas():
-    rutas = {r.path for r in app.routes}
-    esperadas = {
-        "/",
-        "/historico-produccion",
-        "/consultor-bonos",
-        "/api/grupos",
-        "/api/items",
-        "/api/recursos",
-        "/api/historico/bonos",
-        "/api/historico/actividad-diaria",
-        "/api/bonos",
-        "/api/matriculas",
-        "/api/refrescar",
-        "/api/refrescar/{flow_run_id}",
+def _rutas():
+    return set(app.openapi()["paths"])
+
+
+def test_la_app_publica_las_rutas_esperadas():
+    assert {"/", "/api/lineas"}.issubset(_rutas())
+
+
+def test_no_quedan_rutas_de_la_version_anterior():
+    viejas = {
+        "/historico-produccion", "/consultor-bonos",
+        "/api/grupos", "/api/items", "/api/bonos", "/api/refrescar",
     }
-    assert esperadas.issubset(rutas)
+    assert not (_rutas() & viejas)
