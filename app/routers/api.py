@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db import get_erp_engine
@@ -43,12 +43,15 @@ SELECT
     obl.Hinicial      AS hinicial,
     obl.Hfinal        AS hfinal,
     obl.Matricula     AS matricula,
+    ob.IdTrabajo      AS idtrabajo,
     a_maq.Descrip     AS descrip_maquina,
     am.Area           AS area,
     obs.Cantidad      AS piezas_a_fabricar,
     obs.IdArticulo    AS idarticulo_salida,
     a_sal.Descrip     AS descrip_salida
 FROM Ordenes_Bonos_Lineas obl
+    JOIN Ordenes_Bonos ob          ON obl.IdOrden     = ob.IdOrden
+                                  AND obl.IdBono      = ob.IdBono
     JOIN Articulos_Maquinas am     ON obl.Matricula   = am.IdArticulo
     JOIN Articulos a_maq           ON am.IdArticulo   = a_maq.IdArticulo
     JOIN Ordenes_Bonos_Salidas obs ON obl.IdOrden     = obs.IdOrden
@@ -100,6 +103,7 @@ def _leer_lineas(desde: date, hasta: date, estado: int = 1) -> list[dict]:
             "fin":               r["hfinal"],
             "abierta":           r["hfinal"] is None,
             "matricula":         r["matricula"],
+            "idtrabajo":         r["idtrabajo"],
             "descrip_maquina":   r["descrip_maquina"],
             "area":              (r["area"] or "").strip() or None,
             "piezas_a_fabricar": r["piezas_a_fabricar"],
@@ -208,6 +212,197 @@ def _dia_local(dt: datetime) -> date:
     return (dt.astimezone() if dt.tzinfo else dt).date()
 
 
+# ─────────────────────────────────────────────────────────────────────
+#  DURACIÓN ESTIMADA DE UN BONO
+# ─────────────────────────────────────────────────────────────────────
+#  Cadena de prioridad, en este orden:
+#    1. tiempo TEÓRICO del escandallo del ERP (Trabajos_ManoObra + montaje)
+#    2. MEDIA de los registros reales: artículo → trabajo → máquina
+#    3. nada: la barra se marca "sin tiempo" y salta el aviso
+#
+#  Cobertura medida el 2026-09-04 sobre los 570 bonos abiertos:
+#    · escandallo .......................  9 bonos ( 1,6 %)
+#    · campos Media*/Moda* de Ordenes_Bonos: 0-1,8 % — están vacíos, por eso
+#      la media NO se lee del ERP sino que se calcula aquí desde el histórico
+#      de líneas ya cerradas
+#    · media del histórico ............... los 13 bonos del Gantt de hoy
+#      (6 por artículo, 7 por máquina)
+#
+#  Dos limitaciones conocidas y asumidas:
+#    · la media por máquina es gruesa — una misma máquina hace piezas muy
+#      distintas — pero es el último escalón antes del aviso;
+#    · es min/pieza pura, sin término de preparación. En bonos de pocas piezas
+#      el setup es la mayor parte del tiempo, así que ahí se queda corta.
+# ─────────────────────────────────────────────────────────────────────
+
+_ESTIMA_TTL_S     = 600   # el escandallo y el histórico no cambian por minutos
+_HIST_MESES       = 18
+_MIN_BONOS_MEDIA  = 3     # con menos bonos, la media es ruido
+_HORAS_LINEA_VIVA = 24    # una línea abierta más vieja que esto es fantasma, no trabajo
+
+_SQL_TEORICO = """
+WITH mano_obra AS (
+    SELECT IdTrabajo, SUM(Duracion) * 1440.0 AS MinPieza
+    FROM Trabajos_ManoObra
+    WHERE Duracion > 0        -- 0 no es una medición, es la casilla sin rellenar
+    GROUP BY IdTrabajo
+)
+SELECT
+    ob.IdOrden AS idorden,
+    ob.IdBono  AS idbono,
+    -- Duracion viene en DÍAS (IdUnidadDuracion='D'): x1440 -> min/pieza.
+    -- Se prefiere el detalle de Trabajos_ManoObra sobre Trabajos_Fases.TiempoMO,
+    -- que es la copia desnormalizada y a veces está sin recalcular.
+    COALESCE(mo.MinPieza, NULLIF(tf.TiempoMO, 0) * 1440.0) AS min_pieza,
+    COALESCE(NULLIF(ob.TiempoMontaje, 0), 0)
+      + COALESCE(NULLIF(ob.TiempoDesMontaje, 0), 0)        AS setup_min
+FROM Ordenes_Bonos ob
+    LEFT JOIN mano_obra mo      ON mo.IdTrabajo = ob.IdTrabajo
+    LEFT JOIN Trabajos_Fases tf ON tf.IdTrabajo = ob.IdTrabajo
+WHERE ob.IdEstado IN (0, 1, 3)   -- solo bonos abiertos; los cerrados ya tienen minutos reales
+  AND COALESCE(mo.MinPieza, NULLIF(tf.TiempoMO, 0) * 1440.0) > 0
+"""
+
+_SQL_MEDIAS = """
+WITH bono_min AS (
+    SELECT obl.IdOrden, obl.IdBono,
+           SUM(DATEDIFF(minute, obl.Hinicial, obl.Hfinal)) AS minutos
+    FROM Ordenes_Bonos_Lineas obl
+    WHERE obl.Hinicial IS NOT NULL
+      AND obl.Hfinal   IS NOT NULL
+      AND obl.Hfinal   > obl.Hinicial
+      AND obl.Fecha   >= DATEADD(month, :meses, GETDATE())
+    GROUP BY obl.IdOrden, obl.IdBono
+)
+SELECT
+    obs.IdArticulo AS idarticulo,
+    ob.IdTrabajo   AS idtrabajo,
+    ob.Matricula   AS matricula,
+    COUNT(*)          AS n,
+    SUM(bm.minutos)   AS minutos,
+    SUM(obs.Cantidad) AS piezas
+FROM bono_min bm
+    JOIN Ordenes_Bonos ob          ON ob.IdOrden  = bm.IdOrden AND ob.IdBono  = bm.IdBono
+    JOIN Ordenes_Bonos_Salidas obs ON obs.IdOrden = bm.IdOrden AND obs.IdBono = bm.IdBono
+WHERE ob.IdEstado = 2            -- solo bonos terminados: los abiertos aún no miden nada
+  AND obs.Cantidad > 0
+GROUP BY obs.IdArticulo, ob.IdTrabajo, ob.Matricula
+"""
+
+_cache_estima = {"ts": None, "teoricos": {}, "medias": {"articulo": {}, "trabajo": {}, "maquina": {}}}
+
+
+def _cargar_estimaciones():
+    """Escandallo y medias históricas, cacheados _ESTIMA_TTL_S segundos.
+
+    Si el ERP falla se reutiliza la última caché aunque esté caducada: es
+    preferible estimar con datos de hace diez minutos que marcar de golpe
+    todas las barras como "sin tiempo"."""
+    ahora = datetime.now()
+    ts = _cache_estima["ts"]
+    if ts is not None and (ahora - ts).total_seconds() < _ESTIMA_TTL_S:
+        return _cache_estima["teoricos"], _cache_estima["medias"]
+
+    try:
+        with get_erp_engine().connect() as conn:
+            teoricos = {
+                (int(r["idorden"]), int(r["idbono"])):
+                    (float(r["setup_min"] or 0), float(r["min_pieza"]))
+                for r in conn.execute(text(_SQL_TEORICO)).mappings()
+            }
+            medias = {"articulo": {}, "trabajo": {}, "maquina": {}}
+            for r in conn.execute(text(_SQL_MEDIAS), {"meses": -_HIST_MESES}).mappings():
+                for nivel, clave in (("articulo", r["idarticulo"]),
+                                     ("trabajo",  r["idtrabajo"]),
+                                     ("maquina",  r["matricula"])):
+                    if clave is None:
+                        continue
+                    if isinstance(clave, str):
+                        clave = clave.strip()
+                    acc = medias[nivel].setdefault(clave, {"n": 0, "minutos": 0.0, "piezas": 0.0})
+                    acc["n"]       += int(r["n"] or 0)
+                    acc["minutos"] += float(r["minutos"] or 0)
+                    acc["piezas"]  += float(r["piezas"] or 0)
+    except SQLAlchemyError as e:
+        print(f"[items] estimaciones no disponibles, se reutiliza la caché: {e.__class__.__name__}")
+        return _cache_estima["teoricos"], _cache_estima["medias"]
+
+    _cache_estima.update(ts=ahora, teoricos=teoricos, medias=medias)
+    return teoricos, medias
+
+
+def _estimar(linea: dict, teoricos: dict, medias: dict):
+    """(minutos estimados, origen) para el bono de esta línea, o (None, None)."""
+    cantidad = float(linea["piezas_a_fabricar"] or 0)
+
+    teorico = teoricos.get((linea["idorden"], linea["idbono"]))
+    if teorico:
+        setup, min_pieza = teorico
+        return setup + min_pieza * cantidad, "teorico"
+
+    if cantidad > 0:
+        matricula = (linea["matricula"] or "").strip()
+        for origen, nivel, clave in (
+            ("media_articulo", "articulo", linea["idarticulo_salida"]),
+            ("media_trabajo",  "trabajo",  linea["idtrabajo"]),
+            ("media_maquina",  "maquina",  matricula),
+        ):
+            acc = medias[nivel].get(clave)
+            if acc and acc["n"] >= _MIN_BONOS_MEDIA and acc["piezas"] > 0:
+                return acc["minutos"] / acc["piezas"] * cantidad, origen
+
+    return None, None
+
+
+def _consumo_por_bono(lineas: list[dict], ahora: datetime) -> dict:
+    """Minutos ya gastados en cada bono y cuántos operarios lo tienen abierto.
+
+    Se cuentan TODAS las líneas del bono, no solo las de la ventana visible:
+    un bono que empezó ayer ya lleva tiempo consumido y lo que queda por hacer
+    hoy es menos. Son minutos-hombre (dos operarios a la vez gastan dos
+    minutos por cada minuto de reloj), igual que la media histórica.
+
+    OJO con las líneas fantasma: el ERP tiene líneas abiertas que nadie cerró
+    hace meses o años. Contarlas hasta GETDATE() dispara el consumo (medido:
+    un bono con 3.383 min "gastados" que en realidad lleva unas horas) y además
+    infla el recuento de operarios activos, que es el divisor del tiempo que
+    queda. Una línea abierta solo cuenta si empezó en las últimas
+    _HORAS_LINEA_VIVA horas; el resto aporta cero."""
+    ordenes = sorted({l["idorden"] for l in lineas})
+    if not ordenes:
+        return {}
+
+    consulta = text(f"""
+        SELECT IdOrden AS idorden, IdBono AS idbono,
+               SUM(DATEDIFF(minute, Hinicial,
+                     CASE WHEN Hfinal IS NOT NULL THEN Hfinal
+                          WHEN Hinicial > DATEADD(hour, -{_HORAS_LINEA_VIVA}, GETDATE()) THEN GETDATE()
+                          ELSE Hinicial END)) AS minutos,
+               COUNT(DISTINCT CASE
+                     WHEN Hfinal IS NULL
+                      AND Hinicial > DATEADD(hour, -{_HORAS_LINEA_VIVA}, GETDATE())
+                     THEN IdEmpleado END) AS operarios_activos
+        FROM Ordenes_Bonos_Lineas
+        WHERE Hinicial IS NOT NULL
+          AND IdOrden IN :ordenes
+        GROUP BY IdOrden, IdBono
+    """).bindparams(bindparam("ordenes", expanding=True))
+
+    try:
+        with get_erp_engine().connect() as conn:
+            filas = conn.execute(consulta, {"ordenes": ordenes}).mappings().all()
+    except SQLAlchemyError:
+        return {}
+
+    return {
+        (r["idorden"], r["idbono"]): {
+            "minutos":  float(r["minutos"] or 0),
+            "operarios": max(1, int(r["operarios_activos"] or 0)),
+        }
+        for r in filas
+    }
+
+
 @router.get("/items")
 def get_items(
     vista: str = Query("empleado", pattern="^(maquina|empleado)$"),
@@ -223,24 +418,27 @@ def get_items(
         d1 = d0
 
     ahora = datetime.now()
+    lineas = _leer_lineas(d0, d1, estado)
+    teoricos, medias = _cargar_estimaciones()
+    consumo = _consumo_por_bono([l for l in lineas if l["abierta"]], ahora)
+
     items = []
-    for l in _leer_lineas(d0, d1, estado):
+    for l in lineas:
         abierta = l["abierta"]
-        fin = l["fin"] or ahora
-        min_real = None
-        if not abierta and l["inicio"]:
-            min_real = round((fin - l["inicio"]).total_seconds() / 60)
+        inicio  = l["inicio"]
+        fin     = l["fin"] or ahora
+        min_real = None if abierta else round((fin - inicio).total_seconds() / 60)
 
         # La línea abierta es trabajo EN CURSO; la cerrada, trabajo hecho.
         # No hay un tercer estado que inventar: el ERP no dice nada más.
-        items.append({
+        item = {
             "id":         f"{l['idorden']}-{l['idbono']}-{l['idlinea']}",
             "recurso_id": str(l["idempleado"]) if vista == "empleado" else str(l["matricula"]).strip(),
             "tipo":       "real" if abierta else "trabajado",
             "estado":     "plazo" if abierta else "completado",
             "en_curso":   abierta,
             "estimado":   False,
-            "start":      l["inicio"],
+            "start":      inicio,
             "end":        fin,
             "idorden":    l["idorden"],
             "idbono":     l["idbono"],
@@ -252,8 +450,61 @@ def get_items(
             "operarios":  l["empleado"],
             "piezas":     l["piezas_a_fabricar"],
             "min_real":   min_real,
-        })
+            "sin_tiempo": False,
+        }
+
+        # Solo se estima lo que sigue abierto: una línea cerrada ya tiene su
+        # tiempo real medido y no hay nada que predecir.
+        if abierta:
+            _proyectar(item, l, ahora, teoricos, medias, consumo)
+
+        items.append(item)
     return items
+
+
+def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, consumo) -> None:
+    """Estira la barra abierta hasta su fin estimado, o la marca sin tiempo.
+
+    Modifica `item` en el sitio. Lo que se dibuja:
+      · `end` pasa de "ahora" a la hora de fin estimada;
+      · `progreso` es qué parte de esa barra ya ha transcurrido, así que el
+        relleno sólido acaba justo en la línea de ahora y el resto queda tenue;
+      · sin estimación, la barra se queda como estaba (acaba en ahora) y va
+        marcada `sin_tiempo` para que salte el aviso."""
+    min_est, origen = _estimar(linea, teoricos, medias)
+    item["origen_estimado"] = origen
+
+    if min_est is None or min_est <= 0:
+        item["sin_tiempo"] = True
+        item["estado"] = "sin-estimar"
+        return
+
+    gasto = consumo.get((linea["idorden"], linea["idbono"]), {"minutos": 0.0, "operarios": 1})
+    item["min_estimados"]  = round(min_est)
+    item["min_consumidos"] = round(gasto["minutos"])
+
+    # Lo estimado y lo consumido son minutos-HOMBRE. Para llevarlos al eje de
+    # tiempo hay que repartir lo que queda entre los operarios que están ahora
+    # mismo en el bono: dos a la vez lo terminan en la mitad de reloj.
+    restante = max(0.0, min_est - gasto["minutos"]) / gasto["operarios"]
+
+    if restante <= 0:
+        # Ya se ha pasado de lo estimado. La barra no se alarga (sería fingir
+        # que aún le queda) pero se marca en ámbar: el bono ha reventado su
+        # tiempo y eso es justo lo que hay que ver.
+        item["estado"]    = "riesgo"
+        item["excedido"]  = True
+        return
+
+    fin_estimado = ahora + timedelta(minutes=restante)
+    item["end"]           = fin_estimado
+    item["fin_estimado"]  = fin_estimado
+    item["excedido"]      = False
+
+    total = (fin_estimado - item["start"]).total_seconds()
+    if total > 0:
+        transcurrido = (ahora - item["start"]).total_seconds()
+        item["progreso"] = round(max(0.0, min(1.0, transcurrido / total)) * 100)
 
 
 # ─────────────────────────────────────────────────────────────────────

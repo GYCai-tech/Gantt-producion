@@ -216,6 +216,14 @@ button { font-family: inherit; }
 #search-gantt:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
 #search-gantt::placeholder { color: var(--ink-3); }
 .summary b { color: var(--ink); }
+.summary__warn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px; cursor: pointer;
+  background: var(--ambar-bg); color: #80490a; border: 1px solid #ecca97;
+}
+.summary__warn:hover { background: #f8e6cd; }
+.summary__warn.is-active { background: #80490a; color: #fff; border-color: #80490a; }
+.summary__warn.is-active b { color: #fff; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; vertical-align: middle; }
 
 /* Filtros de área (pills) */
@@ -355,15 +363,30 @@ button { font-family: inherit; }
 .bar.st-retrasada, .bar.st-vencida { background: var(--rojo-bg);  border-color: #f1b6ba; color: #8f2129; }
 .bar.st-riesgo,    .bar.st-urgente { background: var(--ambar-bg); border-color: #ecca97; color: #80490a; }
 .bar.st-plazo,     .bar.st-normal  { background: var(--verde-bg); border-color: #a8dcbb; color: #156138; }
-.bar.st-sin-estimar,.bar.st-sin-fecha { background: var(--gris-bg); border-color: #cfd6e0; color: #56627a; }
+.bar.st-sin-fecha { background: var(--gris-bg); border-color: #cfd6e0; color: #56627a; }
+/* Sin tiempo teorico ni media: no se puede estimar el fin, y se ve. */
+.bar.st-sin-estimar {
+  background: var(--ambar-bg); border-color: #e0a94f; border-style: dashed;
+  color: #80490a;
+}
+.bar.st-sin-estimar::before { content: "⚠"; margin-right: 4px; flex-shrink: 0; }
 .bar.st-parada  { background: #f4e9ea; border-color: #dcb9bd; color: #7e3a40; }
 .bar.st-pausada { background: #eaeef5; border-color: #bcc8dc; color: #45526e; }
 .bar.st-programado { background: #d3d8f7; border-color: #8a93d8; color: #2f3470; }
 .bar.st-disponible { background: var(--verde-bg); border-color: #a8dcbb; color: #156138; }
 .bar.st-parcial { background: #eef1f5; border-color: #cdd5e0; color: #59657a; }
 
-/* Mini barra de progreso dentro de la barra real */
-.bar__prog { position: absolute; left: 0; bottom: 0; height: 3px; background: currentColor; opacity: .45; border-radius: 0 2px 2px 0; }
+/* Relleno de lo ya trabajado dentro de una barra en curso: la parte solida
+   llega hasta "ahora" y el resto, tenue, es lo estimado que queda. Antes esto
+   era una rayita de 3px al pie; ahora ocupa toda la altura porque es la
+   distincion principal de la barra, no un adorno. */
+.bar__prog {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: currentColor; opacity: .16;
+  border-radius: 5px 0 0 5px;
+  border-right: 1px solid currentColor;
+  pointer-events: none;
+}
 
 /* Punto "live" en bonos en curso ahora mismo */
 .bar__live {

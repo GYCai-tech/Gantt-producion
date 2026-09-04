@@ -33,9 +33,17 @@ const App = (() => {
   };
   const ST_COLOR = {
     plazo: '#1f9254', completado: '#6b7689',
-    retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#79859a',
+    retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#c4710c',
     parada: '#9a4b52', pausada: '#5b6b8a', parcial: '#c77b1f',
     programado: '#5b63b0', disponible: '#1f9254',
+  };
+
+  // De donde ha salido el tiempo estimado de un bono (ver /api/items).
+  const ORIGEN = {
+    teorico:        'tiempo teorico',
+    media_articulo: 'media del articulo',
+    media_trabajo:  'media del trabajo',
+    media_maquina:  'media de la maquina',
   };
 
   // ── Estado ─────────────────────────────────────────────────────────
@@ -45,6 +53,7 @@ const App = (() => {
   let allGrupos = [], grupos = [], items = [];
   const itemMap = new Map();
   let areaActive = 'todos', cargaFilter = 'con', selectedId = null, searchTerm = '';
+  let soloSinTiempo = false;   // lo enciende el contador de aviso de la cabecera
 
   // ── Utilidades de fecha ────────────────────────────────────────────
   const DAY = 86400000;
@@ -241,8 +250,10 @@ const App = (() => {
       cont.innerHTML = `<div class="gantt__empty">No hay ${recursoLabel} para esta área.</div>`;
       return;
     }
+    // El contador "sin tiempo" de la cabecera filtra a solo esos bonos.
+    const visibles = soloSinTiempo ? items.filter(i => i.sin_tiempo) : items;
     const byRes = new Map();
-    items.forEach(i => {
+    visibles.forEach(i => {
       const k = String(i.recurso_id);
       if (!byRes.has(k)) byRes.set(k, []);
       byRes.get(k).push(i);
@@ -386,6 +397,14 @@ const App = (() => {
       if (it.min_real != null) rows.push(`<div class="tip__row">Tiempo real <span>${Math.round(it.min_real)} min</span></div>`);
       if (it.piezas)           rows.push(`<div class="tip__row">Piezas <span>${it.piezas}</span></div>`);
     }
+    if (it.sin_tiempo) {
+      rows.push(`<div class="tip__row">Estimado <span>sin tiempo teorico ni media</span></div>`);
+    } else if (it.min_estimados != null) {
+      rows.push(`<div class="tip__row">Estimado <span>${it.min_estimados} min · ${ORIGEN[it.origen_estimado] || it.origen_estimado}</span></div>`);
+      if (it.min_consumidos != null) {
+        rows.push(`<div class="tip__row">Consumido <span>${it.min_consumidos} min${it.excedido ? ' · se ha pasado' : ''}</span></div>`);
+      }
+    }
     rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}</span></div>`);
     rows.push(`<div class="tip__row">Fin <span>${fmtDt(it.end)}${it.estimado ? ' ~' : ''}</span></div>`);
     if (it.prev) rows.push(`<div class="tip__row">Prevista <span>${fmtDate(it.prev)}</span></div>`);
@@ -495,10 +514,22 @@ const App = (() => {
     const en_curso   = items.filter(i => i.tipo === 'real').length;
     const trabajado  = items.filter(i => i.tipo === 'trabajado').length;
     const programado = items.filter(i => i.tipo === 'programado').length;
+    const sinTiempo = items.filter(i => i.sin_tiempo).length;
     $('summary').innerHTML =
       `<span><span class="dot" style="background:var(--verde)"></span><b>${en_curso}</b> en curso</span>` +
       `<span><span class="dot" style="background:#6b7689"></span><b>${trabajado}</b> completadas</span>` +
-      `<span><span class="dot" style="background:#8a93d8"></span><b>${programado}</b> en espera</span>`;
+      `<span><span class="dot" style="background:#8a93d8"></span><b>${programado}</b> en espera</span>` +
+      (sinTiempo || soloSinTiempo
+        ? `<span class="summary__warn${soloSinTiempo ? ' is-active' : ''}" onclick="App.toggleSinTiempo()"
+                 title="Bonos sin tiempo teorico ni media. Pincha para ver solo esos.">` +
+          `⚠ <b>${sinTiempo}</b> sin tiempo</span>`
+        : '');
+  }
+
+  function toggleSinTiempo() {
+    soloSinTiempo = !soloSinTiempo;
+    render();
+    updateSummary();
   }
 
   function setCarga(v) {
@@ -577,6 +608,7 @@ const App = (() => {
 
   return {
     setArea, setCarga, setVista, setSearch, nav, today, setZoom, refrescar, openModal, closeModal, init,
+    toggleSinTiempo,
   };
 })();
 

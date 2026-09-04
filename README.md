@@ -109,6 +109,50 @@ de verdad en planta.
 No hay `programado`: el ERP no dice nada de trabajo futuro y no se inventa,
 así que el contador "en espera" del resumen marca siempre 0.
 
+### Cuánto se estima que dura un bono
+
+Una barra abierta ya no se corta en "ahora": se estira hasta su **fin
+estimado**, con la parte transcurrida en relleno sólido y lo que queda tenue.
+El número sale de esta cadena, en este orden:
+
+1. **Tiempo teórico** — el escandallo del ERP: `SUM(Trabajos_ManoObra.Duracion)`
+   (viene en días, x1440 → min/pieza) más `TiempoMontaje + TiempoDesMontaje`
+   del bono como preparación.
+2. **Media de los registros** — calculada aquí desde los bonos ya cerrados de
+   los últimos 18 meses, con al menos 3 bonos por clave:
+   **artículo → trabajo → máquina**.
+3. **Nada** — la barra se marca en ámbar con `⚠`, se queda acabando en "ahora"
+   y suma al contador *"N sin tiempo"* de la cabecera, que filtra al pincharlo.
+
+Si lo consumido ya supera lo estimado, la barra **no se alarga** (sería fingir
+que le queda trabajo): se pinta en ámbar como *En riesgo*, y el tooltip dice
+"se ha pasado".
+
+**Cobertura medida el 2026-09-04** sobre los 570 bonos abiertos:
+
+| fuente | cobertura |
+|---|---|
+| Escandallo (`Trabajos_ManoObra`) | 9 bonos — **1,6 %** |
+| Campos `MediaCon`/`MediaBonoCon`… de `Ordenes_Bonos` | **0–1,8 %** (vacíos) |
+| Media calculada del histórico de líneas | los 13 bonos del día |
+
+Los campos de media que ya trae el ERP **están vacíos**, por eso la media no se
+lee: se calcula. Tres cosas que conviene tener presentes:
+
+- La **media por máquina** es gruesa (una máquina hace piezas muy distintas),
+  pero es el último escalón antes del aviso y hoy cubre 7 de 13 bonos.
+- Es **min/pieza pura, sin término de preparación**. En bonos de pocas piezas el
+  setup es la mayor parte del tiempo, así que ahí la estimación se queda corta.
+- Con la cadena llegando hasta máquina, **el aviso casi nunca salta**: no hubo
+  ningún caso en los últimos 25 días laborables.
+
+Lo estimado y lo consumido son **minutos-hombre**. Para llevarlos al eje de
+tiempo, lo que queda se reparte entre los operarios que tienen el bono abierto
+ahora mismo. Y ojo con las **líneas fantasma**: el ERP tiene líneas abiertas que
+nadie cerró hace meses; contarlas hasta hoy disparaba el consumo (medido: 3.383
+min en un bono de unas horas) e inflaba ese divisor, así que una línea abierta
+solo cuenta si empezó en las últimas 24 h.
+
 **`POST /api/refrescar`** (+ `GET /api/refrescar/{id}`) — ya no hay ETL que
 lanzar, los datos son del ERP en vivo. Responden `COMPLETED` al momento para
 que el botón "Actualizar" siga funcionando: recargar y ya.
