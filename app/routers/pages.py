@@ -37,5 +37,5 @@ def index(request: Request):
     # Firma request-first: la forma antigua (name primero) ya no la acepta
     # Starlette y se traga el dict de contexto como si fuera el nombre.
     return templates.TemplateResponse(
-        request, "index.html", {"static_v": _static_v()}
+        request, "index.html", {"current_page": "planificador", "static_v": _static_v()}
     )

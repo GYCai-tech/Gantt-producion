@@ -65,10 +65,10 @@ app/
   db.py              # engine SQLAlchemy perezoso hacia SQL Server (solo lectura)
   routers/
     pages.py         # una ruta HTML: "/"
-    api.py           # una ruta JSON: "/api/lineas"
-templates/index.html # la página entera
+    api.py           # /api/grupos, /api/items, /api/lineas, /api/refrescar
+templates/           # base.html + index.html (Jinja2)
 static/css/app.css   # estilos del Gantt
-static/js/app.js     # el render, vanilla JS sin build step
+static/js/app.js     # el motor de render, vanilla JS sin build step
 ```
 
 **El ERP es solo lectura.** La app nunca escribe en `GOMEZYCRESPO`.
@@ -77,33 +77,51 @@ Se lee del ERP en vivo y no de la réplica analítica `gyc_analytics` porque
 `Ordenes_Bonos_Lineas` —el detalle línea a línea de cada bono— no está
 replicado en PostgreSQL. De paso, se evitan los desfases del ETL.
 
-### `GET /api/lineas?dia=YYYY-MM-DD&estado=1`
+### El frontend no cambió
 
-Por defecto, hoy y estado 1. Devuelve `{dia, ahora, total, lineas[]}`. Cada
-línea trae además tres campos derivados que consume el frontend:
+`static/js/app.js`, `static/css/app.css` e `index.html` son los mismos de la
+v1: motor de Gantt propio (vanilla JS, sin librerías), con eje en horas de
+trabajo 07:00–16:00, descanso 11:00–11:15, carriles para bonos solapados,
+toggle Operarios/Máquinas, zoom Día/3 días/Semana, píldoras de área, filtro
+de carga, buscador, tooltip y modal de detalle. Lo único que cambió es **de
+dónde salen las filas y las barras**. (En `base.html` se quitaron los dos
+enlaces a las páginas eliminadas.)
 
-| campo     | qué es                                                        |
-|-----------|---------------------------------------------------------------|
-| `empleado`| `Nombre + Apellidos`, la etiqueta de la fila                   |
-| `inicio`  | `Hinicial`, o `Fecha` si el ERP no tiene hora de inicio        |
-| `abierta` | `Hfinal IS NULL`: la línea sigue en curso                      |
+### Los endpoints que consume
 
-### Frontend
+**`GET /api/grupos?vista=empleado|maquina`** — las filas.
 
-- Una fila por operario; una barra por línea, posicionada en porcentaje sobre
-  la ventana del día (no hay scroll horizontal ni zoom).
-- La ventana es 07:00–16:00 y **se ensancha sola** si hay trabajo fuera.
-- Si un operario tiene líneas solapadas, cada una baja a un carril libre y la
-  fila crece; ninguna barra tapa a otra.
-- Las líneas sin `Hfinal` van rayadas y con el borde latiendo: se estiran hasta
-  ahora si el día es hoy, y hasta el final del día si es un día pasado (el ERP
-  nunca las cerró y no sabemos cuándo acabaron; el tooltip lo dice).
-- Color por matrícula: la misma máquina siempre del mismo color.
-- Mirando hoy, refresca solo cada 60 s (y no lo hace con la pestaña en fondo).
+El censo completo de quien alguna vez ha tenido una línea de bono: 29
+operarios, 103 máquinas. **No depende de la ventana visible a propósito**: el
+frontend carga los grupos una sola vez, así que si la lista dependiera de
+fechas, al navegar a otro día habría barras sin fila a la que colgarse y
+desaparecerían sin aviso. El área de un operario sale de las máquinas que ha
+usado en los últimos 90 días, no de su departamento del ERP: es lo que agrupa
+de verdad en planta.
 
-Las horas del ERP llegan sin zona horaria (`2026-09-04T07:54:00`) y se parsean
-a mano en JS en vez de con `new Date(s)`: son horas de fábrica y no deben
-reinterpretarse como UTC.
+**`GET /api/items?vista=&desde=&hasta=`** — las barras.
+
+| línea del ERP        | tipo         | se ve como            |
+|----------------------|--------------|-----------------------|
+| sin `Hfinal`         | `real`       | En curso (verde, late)|
+| con `Hfinal`         | `trabajado`  | Completada (gris)     |
+
+No hay `programado`: el ERP no dice nada de trabajo futuro y no se inventa,
+así que el contador "en espera" del resumen marca siempre 0.
+
+**`POST /api/refrescar`** (+ `GET /api/refrescar/{id}`) — ya no hay ETL que
+lanzar, los datos son del ERP en vivo. Responden `COMPLETED` al momento para
+que el botón "Actualizar" siga funcionando: recargar y ya.
+
+**`GET /api/lineas?dia=YYYY-MM-DD`** — la consulta en crudo. No la usa el
+Gantt, pero es el sitio donde mirar qué está devolviendo el ERP.
+
+### Zona horaria
+
+El frontend manda la ventana como `days[0].toISOString()`: medianoche
+**local** escrita en UTC. Por eso el contenedor fija `TZ=Europe/Madrid` y
+`_dia_local()` la devuelve a hora local antes de quedarse con el día. Sin
+esas dos cosas se pierde un día entero.
 
 ## Tests
 
@@ -112,5 +130,6 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Es un smoke test: comprueba que la app importa y registra sus rutas sin tocar
-el ERP. Las consultas se validan contra el ERP real, a mano.
+Es un smoke test: comprueba que la app importa y publica las rutas que llama
+el frontend, sin tocar el ERP. Las consultas se validan contra el ERP real, a
+mano.

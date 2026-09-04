@@ -7,6 +7,10 @@ services:
       - "70:8000"
     env_file:
       - .env
+    environment:
+      # Sin esto el contenedor va en UTC y `date.today()` / la conversion de
+      # la ventana que manda el frontend se irian un dia entero.
+      - TZ=Europe/Madrid
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"  # acceso al ERP en la red local

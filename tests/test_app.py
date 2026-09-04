@@ -10,13 +10,14 @@ def _rutas():
     return set(app.openapi()["paths"])
 
 
-def test_la_app_publica_las_rutas_esperadas():
-    assert {"/", "/api/lineas"}.issubset(_rutas())
+def test_la_app_publica_las_rutas_que_consume_el_frontend():
+    # /grupos, /items y /refrescar son las que llama static/js/app.js;
+    # /lineas expone la consulta en crudo.
+    assert {
+        "/", "/api/lineas", "/api/grupos", "/api/items",
+        "/api/refrescar", "/api/refrescar/{flow_run_id}",
+    }.issubset(_rutas())
 
 
-def test_no_quedan_rutas_de_la_version_anterior():
-    viejas = {
-        "/historico-produccion", "/consultor-bonos",
-        "/api/grupos", "/api/items", "/api/bonos", "/api/refrescar",
-    }
-    assert not (_rutas() & viejas)
+def test_no_quedan_rutas_de_las_paginas_eliminadas():
+    assert not (_rutas() & {"/historico-produccion", "/consultor-bonos", "/api/bonos"})
