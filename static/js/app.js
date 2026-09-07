@@ -32,12 +32,14 @@ const App = (() => {
     retrasada: 'Retrasada', riesgo: 'En riesgo', 'sin-estimar': 'Sin estimar',
     parada: 'Bloqueada', pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
     programado: 'En espera', disponible: 'Disponible',
+    'pendiente-cierre': 'Pendiente de cerrar',
   };
   const ST_COLOR = {
     plazo: '#1f9254', completado: '#6b7689',
     retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#c4710c',
     parada: '#9a4b52', pausada: '#5b6b8a', parcial: '#c77b1f',
     programado: '#5b63b0', disponible: '#1f9254',
+    'pendiente-cierre': '#3f7d9e',
   };
 
   // De donde ha salido el tiempo estimado de un bono (ver /api/items).

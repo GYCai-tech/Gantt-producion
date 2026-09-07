@@ -1012,14 +1012,23 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
         item["piezas_pendientes"] = pendientes
         item["min_pieza_real"]    = round(ritmo_real, 3)
         item["progreso_piezas"]   = round(hechas / objetivo * 100)
-        item["excedido"]          = ritmo_real > min_pieza * (1 + _TOLERANCIA_RITMO)
+        # Un bono que ya ha hecho todas sus piezas no puede ir "lento": no le
+        # queda trabajo. Marcarlo en ámbar era ruido -- no hay nada que corregir
+        # en planta, hay que cerrar el fichaje.
+        item["excedido"] = pendientes > 0 and ritmo_real > min_pieza * (1 + _TOLERANCIA_RITMO)
     else:
         # Sin piezas declaradas no se puede medir el avance real.
         restante = max(0.0, item["min_estimados"] - consumido)
         item["base_estimacion"] = "minutos"
         item["excedido"] = consumido > item["min_estimados"]
 
-    if item["excedido"]:
+    if objetivo > 0 and hechas >= objetivo:
+        # Fabricadas todas las piezas y el fichaje sigue abierto. Y mientras
+        # siga abierto los minutos consumidos crecen con el reloj, así que el
+        # ritmo real empeora solo: sin este caso, el bono se hundía en ámbar
+        # cuanto más tardaran en cerrarlo (6583/50: 100% de piezas y +21%).
+        item["estado"] = "pendiente-cierre"
+    elif item["excedido"]:
         # Va por encima del ritmo esperado. Se sigue dibujando lo que queda
         # (el trabajo pendiente no desaparece por ir tarde), pero en ámbar.
         item["estado"] = "riesgo"

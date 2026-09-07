@@ -397,6 +397,9 @@ button { font-family: inherit; }
 .bar.st-pausada { background: #eaeef5; border-color: #bcc8dc; color: #45526e; }
 .bar.st-programado { background: #d3d8f7; border-color: #8a93d8; color: #2f3470; }
 .bar.st-disponible { background: var(--verde-bg); border-color: #a8dcbb; color: #156138; }
+/* Todas las piezas hechas y el fichaje aun abierto: no hay nada que corregir
+   en planta, solo cerrarlo. Azul informativo, no ambar de aviso. */
+.bar.st-pendiente-cierre { background: #e7f1f6; border-color: #a9cbdc; color: #2c5c74; }
 .bar.st-parcial { background: #eef1f5; border-color: #cdd5e0; color: #59657a; }
 
 /* Relleno de lo ya trabajado dentro de una barra en curso: la parte solida

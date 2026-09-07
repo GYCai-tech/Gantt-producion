@@ -167,7 +167,16 @@ máquina.
 **Retraso.** Se compara el ritmo real (`minutos gastados / piezas hechas`) con
 el esperado. Por encima de un **15 %** la barra pasa a ámbar como *En riesgo*,
 pero **se sigue dibujando lo que falta**: ir tarde no borra el trabajo
-pendiente.
+pendiente. No hay ninguna fecha de entrega en juego —el ERP no tiene—, así que
+"riesgo" significa *va más lento de lo que suele costar*, no *llega tarde*.
+
+**Pendiente de cerrar.** Un bono que ya ha fabricado **todas** sus piezas y
+sigue con el fichaje abierto no entra en ese criterio: sale en azul como
+*Pendiente de cerrar*. No puede "ir lento" porque no le queda trabajo, y
+mientras el fichaje siga abierto los minutos consumidos crecen con el reloj, así
+que el ritmo real empeora solo — el bono se hundía en ámbar cuanto más tardaran
+en cerrarlo. Medido en 6583/50: 50 de 50 piezas y un 21 % de desviación. No hay
+nada que corregir en planta; hay que cerrar el fichaje.
 
 **Tope a las 15:00.** Ninguna barra se proyecta más allá del fin de jornada. Lo
 que quede pendiente sigue en `min_restantes`, pero estirar la barra hasta la
