@@ -1,8 +1,6 @@
 """Reservas conjuntas y continuidad, con casos de taller sin tocar el ERP."""
 from datetime import datetime
 
-import pytest
-
 from app.routers import api
 
 AHORA = datetime(2026, 9, 7, 12)
@@ -64,10 +62,11 @@ def test_bono_compartido_reserva_a_todos_sin_duplicar_trabajo():
 
 def test_la_reserva_activa_se_respeta_en_ambos_recursos():
     fin = datetime(2026, 9, 8, 11, 30)
-    activo = {'idempleado': '1', 'matricula': 'M1', 'fin_estimado': fin,
-              'es_montaje': False}
+    activo = {'idempleado': '1', 'matricula': 'M1', 'libre_desde': fin}
     ocupado = api._ocupacion_actual([activo], HASTA, AHORA)
     tareas = plan([bono(1, 2, 'M1'), bono(2, 1, 'M2')], ocupado)
+    # Sin el len, un plan vacío haría pasar el `all` sin comprobar nada.
+    assert len(tareas) == 2
     assert all(t['start'] == fin for t in tareas)
 
 
@@ -111,11 +110,43 @@ def test_no_se_cobra_preparacion_si_no_quedan_piezas():
     assert plan([b]) == []
 
 
-@pytest.mark.parametrize('es_montaje', [False, True])
-def test_abierta_sin_liberacion_estimable_no_regala_capacidad(es_montaje):
-    item = {'idempleado': '1', 'matricula': 'M1', 'es_montaje': es_montaje}
+def test_abierta_sin_liberacion_estimable_no_regala_capacidad():
+    """Sin `libre_desde` no se sabe cuándo se libera: se reserva todo."""
+    item = {'idempleado': '1', 'matricula': 'M1'}
     ocupado = api._ocupacion_actual([item], HASTA, AHORA)
     assert plan([bono()], ocupado) == []
+
+
+def test_bono_con_las_piezas_hechas_no_bloquea_la_cola_de_su_operario():
+    """El fichaje sin cerrar es trabajo terminado, no ocupación desconocida."""
+    linea = bono(cantidad=100)
+    item = {'start': AHORA.replace(hour=8), 'end': AHORA, 'estado': 'plazo',
+            'sin_tiempo': False, 'idempleado': '1', 'matricula': 'M1',
+            'es_montaje': False}
+    avance = {(1, 10): {'minutos': 240, 'min_produccion': 240, 'min_montaje': 0,
+                        'piezas': 100, 'operarios': 1}}
+    api._proyectar(item, linea, AHORA, {(1, 10): (5, 1)}, MEDIAS, avance)
+    assert item['estado'] == 'pendiente-cierre'
+    assert item['libre_desde'] == AHORA
+    ocupado = api._ocupacion_actual([item], HASTA, AHORA)
+    assert plan([bono(2, 1, 'M1')], ocupado)[0]['start'] == AHORA
+
+
+def test_una_preparacion_pasada_de_tiempo_sigue_reservando_su_produccion(monkeypatch):
+    """Que el montaje se pase de su media no borra el bono que viene detrás."""
+    monkeypatch.setattr(api, '_minutos_montaje', lambda l: 60)
+    linea = dict(bono(), idoperacion=1)
+    item = {'start': AHORA.replace(hour=10, minute=30), 'end': AHORA,
+            'estado': 'plazo', 'sin_tiempo': False, 'idempleado': '1',
+            'matricula': 'M1', 'es_montaje': True}
+    avance = {(1, 10): {'minutos': 90, 'min_produccion': 0, 'min_montaje': 90,
+                        'piezas': 0, 'operarios': 1}}
+    api._proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, avance)
+    assert item['min_restantes'] == 0
+    # 100 piezas x 1 min desde ahora, no la ventana entera.
+    assert item['libre_desde'] == AHORA.replace(hour=13, minute=40)
+    ocupado = api._ocupacion_actual([item], HASTA, AHORA)
+    assert plan([bono(2)], ocupado)[0]['start'] == item['libre_desde']
 
 
 def test_la_preparacion_reserva_tambien_la_produccion_que_viene_despues(monkeypatch):

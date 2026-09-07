@@ -188,8 +188,22 @@ nada que corregir en planta; hay que cerrar el fichaje.
 completo, calculado dentro de 07:00–15:00 y saltando fines de semana. El eje
 recorta la ventana visible. A las 12:00, 450 minutos pendientes ocupan hasta
 las 11:30 del siguiente día laborable, y la cola no libera antes el recurso.
-La ocupación actual también se consulta al navegar a días futuros. Un fichaje
-abierto sin final estimable reserva el recurso durante toda la ventana.
+La ocupación actual también se consulta al navegar a días futuros.
+
+**Cuándo se libera un recurso** lo dice `libre_desde`, que no es el fin de la
+barra: un montaje libera cuando acaba la producción que viene detrás, no
+cuando termina de preparar. Y hay que distinguir dos cosas que se parecen:
+
+- **No se sabe** cuándo se libera —fichaje abierto que no se puede
+  dimensionar—: se reserva la ventana entera. Ignorar cuánto queda no es
+  estar libre.
+- **Se sabe que ya no queda trabajo** —el bono con todas sus piezas hechas y
+  el fichaje sin cerrar—: se suelta el recurso ya. Reservarlo el día entero
+  dejaba sin cola al operario y a su máquina por un fichaje que nadie cerró,
+  que es justo lo contrario del diagnóstico: no hay nada que corregir en
+  planta, hay que cerrar el fichaje. Medido en un día cualquiera: 5 de 14
+  líneas abiertas caían ahí y se llevaban por delante 5 de 16 barras
+  "programado" y la cola de 4 de 10 operarios.
 
 ### Montaje de utillaje: preparar no es fabricar
 

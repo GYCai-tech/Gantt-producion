@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api")
 #  Python por (orden, bono, línea), que es la identidad real de una barra.
 # ─────────────────────────────────────────────────────────────────────
 
-_LINEAS_QUERY = """
+_LINEAS_SELECT = """
 SELECT
     obl.IdOrden       AS idorden,
     obl.IdBono        AS idbono,
@@ -59,9 +59,23 @@ FROM Ordenes_Bonos_Lineas obl
     JOIN Articulos a_sal           ON obs.IdArticulo  = a_sal.IdArticulo
     JOIN Empleados_Datos ed        ON obl.IdEmpleado  = ed.IdEmpleado
 WHERE obl.IdEstado = :estado
-  AND CAST(obl.Fecha AS date) BETWEEN :desde AND :hasta
+"""
+
+_LINEAS_ORDEN = """
 ORDER BY obl.Fecha
 """
+
+#  Los dos filtros que se le cuelgan. La consulta se COMPONE con ellos en vez
+#  de parchear el WHERE con un `replace`: si el texto buscado dejara de
+#  encajar, un replace no falla — se queda sin sustituir y la consulta sale sin
+#  filtrar o revienta con los parámetros sin bindear, que es un 503 opaco.
+_FILTRO_RANGO    = "CAST(obl.Fecha AS date) BETWEEN :desde AND :hasta"
+_FILTRO_ABIERTAS = "obl.Hfinal IS NULL AND obl.Hinicial BETWEEN :limite AND :ahora"
+
+
+def _consulta_lineas(filtro: str) -> str:
+    """La consulta de líneas con el filtro que toque, sin duplicar el SELECT."""
+    return _LINEAS_SELECT + "  AND " + filtro + _LINEAS_ORDEN
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -101,17 +115,14 @@ def _nombre_completo(r) -> str:
 
 def _leer_lineas(desde: date, hasta: date, estado: int = 1) -> list[dict]:
     """Las líneas de bono del rango, deduplicadas y con inicio/fin resueltos."""
-    filas = _erp(_LINEAS_QUERY, {"desde": desde, "hasta": hasta, "estado": estado})
+    filas = _erp(_consulta_lineas(_FILTRO_RANGO),
+                 {"desde": desde, "hasta": hasta, "estado": estado})
     return _normalizar_lineas(filas)
 
 
 def _leer_abiertas(ahora: datetime, estado: int) -> list[dict]:
     """Ocupación actual, independiente del día que se está consultando."""
-    consulta = _LINEAS_QUERY.replace(
-        "AND CAST(obl.Fecha AS date) BETWEEN :desde AND :hasta",
-        "AND obl.Hfinal IS NULL AND obl.Hinicial BETWEEN :limite AND :ahora",
-    )
-    return _normalizar_lineas(_erp(consulta, {
+    return _normalizar_lineas(_erp(_consulta_lineas(_FILTRO_ABIERTAS), {
         "estado": estado, "ahora": ahora,
         "limite": ahora - timedelta(hours=_HORAS_LINEA_VIVA),
     }))
@@ -849,15 +860,21 @@ def _leer_cola() -> list[dict]:
 
 
 def _ocupacion_actual(items: list[dict], hasta: datetime, ahora: datetime) -> dict:
-    """Reserva operario y máquina usando el fin completo, nunca el corte visual.
+    """Reserva operario y máquina hasta que `_proyectar` dice que se liberan.
 
-    Si el fichaje sigue abierto y no podemos estimar su liberación, se reserva
-    la ventana completa. No disponer de una duración no significa estar libre.
+    `libre_desde` responde a "¿cuándo queda libre el recurso?", que no es el
+    fin de la barra: un montaje libera cuando acaba la producción que viene
+    detrás, no cuando termina de preparar la máquina.
+
+    Si falta, es que NO SE SABE —el fichaje sigue abierto y no hay con qué
+    dimensionarlo— y entonces se reserva la ventana entera: ignorar cuánto
+    queda no es estar libre. Es distinto de saber que ya no queda trabajo,
+    que es un `libre_desde` en `ahora` y suelta el recurso.
     """
     ocupado = {}
     for it in items:
-        fin = it.get("libre_desde") if it["es_montaje"] else it.get("fin_estimado")
-        if fin is None or fin <= ahora:
+        fin = it.get("libre_desde")
+        if fin is None:
             fin = max(hasta, ahora)
         for tipo, rid in (("empleado", it["idempleado"]), ("maquina", it["matricula"])):
             if rid:
@@ -1046,7 +1063,10 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
         ritmo, _, _ = _estimar(linea, teoricos, medias)
         gasto = avance.get((linea["idorden"], linea["idbono"]))
         objetivo = float(linea["piezas_a_fabricar"] or 0)
-        if ritmo and objetivo > 0 and gasto and restante > 0:
+        # Sin `restante > 0`: que la preparación se haya pasado de su media no
+        # quita que detrás siga habiendo un bono que fabricar. Lo que no se
+        # puede dimensionar es la producción, y eso ya lo dice el `if`.
+        if ritmo and objetivo > 0 and gasto:
             produccion = (max(0.0, objetivo - gasto["piezas"]) * ritmo
                           if gasto["piezas"] > 0 else
                           max(0.0, objetivo * ritmo - gasto["min_produccion"]))
@@ -1114,6 +1134,12 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
     restante_reloj = restante / gasto["operarios"]
     item["min_restantes"] = round(restante_reloj)
     if restante_reloj <= 0:
+        # Ya no queda trabajo que estimar: es el bono con todas sus piezas
+        # hechas y el fichaje sin cerrar. Eso es SABER que el recurso está
+        # libre, no ignorar cuándo lo estará, así que se suelta ya. Reservarlo
+        # la ventana entera dejaba sin cola al operario y a su máquina por un
+        # fichaje que nadie cerró — justo lo contrario del diagnóstico.
+        item["libre_desde"] = ahora
         return
 
     # Conserva la ocupación hasta terminar, saltando noches y fines de semana.
@@ -1121,6 +1147,7 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
     fin_estimado = _sumar_laborables(ahora, restante_reloj)
     item["end"]          = fin_estimado
     item["fin_estimado"] = fin_estimado
+    item["libre_desde"]  = fin_estimado
 
     # `progreso` es el relleno visual de la barra: qué parte de ella ya ha
     # transcurrido, para que lo sólido acabe justo en la línea de ahora.
