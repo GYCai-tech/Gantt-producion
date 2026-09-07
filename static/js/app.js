@@ -389,7 +389,9 @@ const App = (() => {
       const m = document.createElement('div');
       m.className = 'bar__montaje';
       m.style.width = it.pct_montaje + '%';
-      m.title = `Montaje de utillaje: ${it.min_montaje} min`;
+      // Sin `title`: el div lleva pointer-events:none para no robarle el hover
+      // a la barra, asi que un title aqui no se mostraria nunca. El dato va en
+      // el tooltip de la barra (ver showTip).
       bar.appendChild(m);
     }
 
@@ -407,6 +409,7 @@ const App = (() => {
     if (it.operacion) rows.push(`<div class="tip__row">Operación <span>${esc(it.operacion)}</span></div>`);
     rows.push(`<div class="tip__row">Bono <span>${it.idbono || '—'}</span></div>`);
     if (it.es_montaje) rows.push(`<div class="tip__row">Tipo <span>⚙ Montaje de utillaje</span></div>`);
+    if (it.min_montaje) rows.push(`<div class="tip__row">Preparación <span>${fmtMin(it.min_montaje)} · ${it.pct_montaje}% de la barra</span></div>`);
     if (it.tipo === 'real') {
       if (it.progreso_piezas != null) rows.push(`<div class="tip__row">Progreso <span>${it.progreso_piezas}% de las piezas</span></div>`);
       if (it.operarios) rows.push(`<div class="tip__row">Operarios <span>${it.operarios}</span></div>`);
