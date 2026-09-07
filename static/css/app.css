@@ -351,16 +351,17 @@ button { font-family: inherit; }
   background: #c77b1f; color: #fff;
 }
 
-/* Tramo de preparación dentro de la barra de un bono. Se distingue del relleno
-   de progreso (.bar__prog, translúcido y liso) por el rayado vertical y por el
-   corte marcado a la derecha, que es donde acaba el montaje y empieza a
-   fabricarse. */
+/* Tramo de preparación dentro de la barra de un bono: azul apagado sobre el
+   color de estado de la barra, con el corte marcado donde acaba el montaje y
+   empieza a fabricarse.
+
+   Translúcido a propósito: este div se añade DESPUÉS del texto, así que se pinta
+   encima; con un color sólido taparía el número de orden y la máquina. */
 .bar__montaje {
   position: absolute; left: 0; top: 0; bottom: 0;
   border-radius: 5px 0 0 5px;
   border-right: 2px solid currentColor;
-  background-image: repeating-linear-gradient(90deg,
-    transparent 0 3px, rgba(91, 107, 138, .38) 3px 5px);
+  background: rgba(63, 125, 158, .26);
   pointer-events: none;
 }
 

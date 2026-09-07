@@ -375,7 +375,10 @@ const App = (() => {
     const bonoLabel = it.idbono != null ? `·${it.idbono}` : '';
     bar.innerHTML = (it.tipo === 'real' && it.en_curso ? '<span class="bar__live"></span>' : '') +
                     (it.tipo === 'parcial' ? '<span class="bar__pause" title="Sesión cerrada; el bono sigue abierto">⏸</span>' : '') +
-                    (it.es_montaje ? '<span class="bar__setup" title="Montaje de utillaje: preparando la máquina, no fabricando">⚙</span>' : '') +
+                    // El engranaje marca que hay montaje, tanto si la barra es
+                    // solo montaje como si lo lleva dentro (barra fundida).
+                    (it.es_montaje || it.min_montaje
+                      ? `<span class="bar__setup" title="${it.es_montaje ? 'Montaje de utillaje: preparando la máquina, no fabricando' : 'Incluye ' + it.min_montaje + ' min de montaje de utillaje'}">⚙</span>` : '') +
                     `<span class="bar__id">${esc(it.idorden)}<span class="bar__bono">${esc(bonoLabel)}</span></span>` +
                     (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '');
     if (it.tipo === 'real' && it.progreso != null) {
