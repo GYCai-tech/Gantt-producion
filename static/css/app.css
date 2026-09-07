@@ -351,6 +351,29 @@ button { font-family: inherit; }
   background: #c77b1f; color: #fff;
 }
 
+/* Tramo de preparación dentro de la barra de un bono. Se distingue del relleno
+   de progreso (.bar__prog, translúcido y liso) por el rayado vertical y por el
+   corte marcado a la derecha, que es donde acaba el montaje y empieza a
+   fabricarse. */
+.bar__montaje {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  border-radius: 5px 0 0 5px;
+  border-right: 2px solid currentColor;
+  background-image: repeating-linear-gradient(90deg,
+    transparent 0 3px, rgba(91, 107, 138, .38) 3px 5px);
+  pointer-events: none;
+}
+
+/* Montaje de utillaje (IdOperacion 1/2): preparar la máquina no es fabricar.
+   Glifo y no trama, porque la trama diagonal ya significa "estimado" en las
+   barras programadas y se confundirían. */
+.bar__setup {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 9px; line-height: 1;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: #5b6b8a; color: #fff;
+}
+
 /* Programado: futuro estimado → borde discontinuo + trama diagonal */
 .bar--programado { border-style: dashed; }
 .bar--programado::after {

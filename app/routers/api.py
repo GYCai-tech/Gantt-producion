@@ -64,6 +64,28 @@ ORDER BY obl.Fecha
 """
 
 
+# ─────────────────────────────────────────────────────────────────────
+#  Preparar la máquina no es fabricar
+# ─────────────────────────────────────────────────────────────────────
+#  `Ordenes_Bonos_Lineas.IdOperacion` distingue el tipo de fichaje, según la
+#  tabla `Operaciones` del ERP:
+#
+#      0 = Funcionamiento normal      1 = Montaje utillaje      2 = Desmontaje
+#
+#  Cada línea tiene un solo tipo (medido: 54.619 de 54.619), así que montaje y
+#  producción ya llegan como barras separadas — solo faltaba distinguirlas.
+#
+#  Que esto no es una etiqueta cosmética lo dicen los números: en 18 meses el
+#  montaje son 5.127 h frente a 28.915 de producción (15%), pero **el 86% del
+#  tiempo en bonos de 1-5 piezas** y el 56% en los de 6-50. Las líneas de
+#  montaje declaran cero piezas — las 4.753, sin excepción.
+#
+#  El desmontaje (2) no se usa: cero líneas en 6 meses. Se agrupa con el
+#  montaje por si algún día aparece, que es donde encaja.
+# ─────────────────────────────────────────────────────────────────────
+_OPERACION_MONTAJE = (1, 2)
+
+
 def _erp(query: str, params: dict):
     try:
         with get_erp_engine().connect() as conn:
@@ -289,7 +311,35 @@ WHERE ob.IdEstado = 2            -- solo bonos terminados: los abiertos aún no 
 GROUP BY obs.IdArticulo, ob.IdTrabajo, ob.Matricula
 """
 
-_cache_estima = {"ts": None, "teoricos": {}, "medias": {"articulo": {}, "trabajo": {}, "maquina": {}}}
+#  Cuánto se tarda en montar el utillaje, por máquina y por trabajo. Un montaje
+#  no produce piezas, así que no se puede estimar con el modelo de piezas: sin
+#  esto, la barra de Elías preparando la 001 se estiraba hasta las 20:08 porque
+#  se le aplicaba el tiempo de fabricar el bono entero.
+#
+#  Varía muchísimo entre máquinas y por eso se guarda por matrícula: la 107 monta
+#  en 11 min de media y la 001 en 113. El tope de 480 min (una jornada) descarta
+#  las líneas fantasma que nadie cerró.
+_SQL_MONTAJE = """
+SELECT
+    obl.Matricula AS matricula,
+    ob.IdTrabajo  AS idtrabajo,
+    COUNT(*)      AS n,
+    AVG(CAST(DATEDIFF(minute, obl.Hinicial, obl.Hfinal) AS float)) AS media
+FROM Ordenes_Bonos_Lineas obl
+    JOIN Ordenes_Bonos ob ON ob.IdOrden = obl.IdOrden AND ob.IdBono = obl.IdBono
+WHERE obl.IdOperacion IN (1, 2)
+  AND obl.Hfinal > obl.Hinicial
+  AND DATEDIFF(minute, obl.Hinicial, obl.Hfinal) BETWEEN 1 AND 480
+  AND obl.Hinicial >= DATEADD(month, :meses, GETDATE())
+GROUP BY obl.Matricula, ob.IdTrabajo
+"""
+
+#  Último recurso si la máquina no tiene histórico de montajes: la media global
+#  medida sobre 18 meses.
+_MONTAJE_POR_DEFECTO_MIN = 31
+
+_cache_estima = {"ts": None, "teoricos": {}, "medias": {"articulo": {}, "trabajo": {}, "maquina": {}},
+                 "montajes": {"trabajo": {}, "maquina": {}}}
 
 
 def _cargar_estimaciones():
@@ -323,12 +373,38 @@ def _cargar_estimaciones():
                     acc["n"]       += int(r["n"] or 0)
                     acc["minutos"] += float(r["minutos"] or 0)
                     acc["piezas"]  += float(r["piezas"] or 0)
+
+            montajes = {"trabajo": {}, "maquina": {}}
+            for r in conn.execute(text(_SQL_MONTAJE), {"meses": -_HIST_MESES}).mappings():
+                for nivel, clave in (("trabajo", r["idtrabajo"]), ("maquina", r["matricula"])):
+                    if clave is None:
+                        continue
+                    if isinstance(clave, str):
+                        clave = clave.strip()
+                    acc = montajes[nivel].setdefault(clave, {"n": 0, "minutos": 0.0})
+                    acc["n"]       += int(r["n"] or 0)
+                    acc["minutos"] += float(r["media"] or 0) * int(r["n"] or 0)
     except SQLAlchemyError as e:
         print(f"[items] estimaciones no disponibles, se reutiliza la caché: {e.__class__.__name__}")
         return _cache_estima["teoricos"], _cache_estima["medias"]
 
-    _cache_estima.update(ts=ahora, teoricos=teoricos, medias=medias)
+    _cache_estima.update(ts=ahora, teoricos=teoricos, medias=medias, montajes=montajes)
     return teoricos, medias
+
+
+def _minutos_montaje(linea: dict) -> float:
+    """Cuánto suele durar montar el utillaje de este bono, en minutos.
+
+    Por máquina primero (es lo que determina el montaje: la 107 son 11 min y la
+    001 son 113), con respaldo al trabajo y, si no hay histórico de ninguno, la
+    media global."""
+    montajes = _cache_estima["montajes"]
+    for nivel, clave in (("maquina", (linea["matricula"] or "").strip()),
+                         ("trabajo", linea["idtrabajo"])):
+        acc = montajes[nivel].get(clave)
+        if acc and acc["n"] >= _MIN_BONOS_MEDIA:
+            return acc["minutos"] / acc["n"]
+    return _MONTAJE_POR_DEFECTO_MIN
 
 
 def _estimar(linea: dict, teoricos: dict, medias: dict):
@@ -435,12 +511,17 @@ def get_items(
 
         # La línea abierta es trabajo EN CURSO; la cerrada, trabajo hecho.
         # No hay un tercer estado que inventar: el ERP no dice nada más.
+        montaje = l.get("idoperacion") in _OPERACION_MONTAJE
         item = {
             "id":         f"{l['idorden']}-{l['idbono']}-{l['idlinea']}",
             "recurso_id": str(l["idempleado"]) if vista == "empleado" else str(l["matricula"]).strip(),
             "tipo":       "real" if abierta else "trabajado",
             "estado":     "plazo" if abierta else "completado",
             "en_curso":   abierta,
+            # Preparar la máquina no es fabricar: son fichajes distintos y hay
+            # que poder distinguirlos. Ver _OPERACION_MONTAJE.
+            "es_montaje":   montaje,
+            "tipo_trabajo": "montaje" if montaje else "produccion",
             "estimado":   False,
             "start":      inicio,
             "end":        fin,
@@ -463,6 +544,11 @@ def get_items(
             _proyectar(item, l, ahora, teoricos, medias, avance)
 
         items.append(item)
+
+    # Montaje y producción del mismo bono son una sola barra con la parte de
+    # preparación marcada dentro. Va antes de encolar para que `ocupado_hasta`
+    # vea el inicio real (el del montaje), no el de la producción.
+    items = _fundir_montaje(items)
 
     # La cola solo tiene sentido si la ventana llega a hoy o más allá: en un
     # día pasado no había "programado", había lo que pasó.
@@ -603,7 +689,13 @@ def _cargar_semaforo() -> dict:
     return mapa
 
 JORNADA_INICIO = 7
-JORNADA_FIN    = 16
+#  Medido sobre 6 meses de fichajes: el ultimo cierre del dia es 15:01 en 38
+#  dias, 15:02 en 17, 15:00 en 12 y 15:03 en 10 -- 77 de 110. Por minuto, las
+#  15:00 concentran 506 cierres y las 16:00 solo 98. La jornada acaba a las 15,
+#  no a las 16: con 16 la app daba 540 min/dia cuando son 480, un 12,5% de
+#  capacidad inflada en toda proyeccion. Debe coincidir con WORK_FIN en app.js
+#  o las barras se pintan en el pixel equivocado.
+JORNADA_FIN    = 15
 
 
 def _siguiente_hueco(dt: datetime) -> datetime:
@@ -625,7 +717,7 @@ def _siguiente_hueco(dt: datetime) -> datetime:
 def _sumar_laborables(inicio: datetime, minutos: float) -> datetime:
     """Avanza `minutos` de trabajo desde `inicio` sin salirse de la jornada.
 
-    Cuenta la jornada entera (07:00–16:00 = 540 min) sin descontar el descanso
+    Cuenta la jornada entera (07:00–15:00 = 480 min) sin descontar el descanso
     de 11:00–11:15 a propósito: el eje del Gantt tampoco lo comprime, lo pinta
     como una banda. Descontarlo aquí desalinearía las barras del eje."""
     t = _siguiente_hueco(inicio)
@@ -768,6 +860,62 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
     return items
 
 
+#  Hueco máximo entre el fin del montaje y el inicio de la producción para
+#  considerar que son el mismo trabajo. Medido sobre 6 meses: 4.091 de 4.749
+#  montajes enlazan con su producción en 2 minutos o menos (86%).
+_HUECO_MONTAJE_MIN = 2
+
+
+def _fundir_montaje(items: list[dict]) -> list[dict]:
+    """Funde la barra de montaje con la de producción del mismo bono y operario.
+
+    El ERP graba el montaje como una línea aparte, así que llegan como dos
+    barras seguidas. Se pintan como una sola con la parte de preparación
+    marcada dentro (`pct_montaje`), que es como se lee de un vistazo cuánto de
+    ese bono fue preparar y cuánto fabricar.
+
+    Solo se funden si van pegadas (<= 2 min): el 86% de los casos. Si el
+    montaje fue otro día —Elías montó la 001 el jueves y siguió el lunes— son
+    trabajos separados de verdad y se quedan como dos barras.
+    """
+    prod = {}
+    for it in items:
+        if it["tipo"] in ("real", "trabajado") and not it["es_montaje"]:
+            prod.setdefault((it["idorden"], it["idbono"], it["recurso_id"]), []).append(it)
+
+    fundidos, absorbidos = [], set()
+    for it in items:
+        if not it["es_montaje"] or it["tipo"] not in ("real", "trabajado"):
+            continue
+        clave = (it["idorden"], it["idbono"], it["recurso_id"])
+        # La producción que arranca justo después de este montaje.
+        siguiente = min(
+            (p for p in prod.get(clave, [])
+             if 0 <= (p["start"] - it["end"]).total_seconds() / 60 <= _HUECO_MONTAJE_MIN),
+            key=lambda p: p["start"], default=None)
+        if siguiente is None:
+            continue
+        min_montaje = (it["end"] - it["start"]).total_seconds() / 60
+        siguiente["start"]       = it["start"]
+        siguiente["min_montaje"] = round(min_montaje)
+        total = (siguiente["end"] - siguiente["start"]).total_seconds() / 60
+        siguiente["pct_montaje"] = round(100 * min_montaje / total, 1) if total > 0 else 0
+        absorbidos.add(id(it))
+        fundidos.append(siguiente)
+
+    return [it for it in items if id(it) not in absorbidos]
+
+
+def _fin_de_jornada(inicio: datetime, fin: datetime) -> datetime:
+    """Recorta `fin` al final de la jornada del día en que empezó la barra.
+
+    A las 15:00 se para: una barra que se proyecta más allá está prometiendo
+    trabajo en horas en las que no hay nadie. Lo que quede se seguirá viendo
+    mañana, cuando el fichaje siga abierto."""
+    tope = inicio.replace(hour=JORNADA_FIN, minute=0, second=0, microsecond=0)
+    return min(fin, tope) if fin > tope else fin
+
+
 def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avance) -> None:
     """Estira la barra abierta hasta su fin estimado, o la marca sin tiempo.
 
@@ -785,6 +933,23 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
     ese dato no hay forma de saber lo avanzado, así que se cae al criterio
     viejo (presupuesto de minutos menos lo gastado) y el item lo dice en
     `base_estimacion` para que no haya que adivinarlo."""
+    # Un montaje NO produce piezas (las 4.753 líneas de montaje declaran cero),
+    # así que el modelo de piezas no le aplica: se estima con lo que suele
+    # tardar montar esa máquina. Sin esto, preparar la 001 se proyectaba con el
+    # tiempo de fabricar el bono entero y la barra llegaba hasta las 20:08.
+    if linea.get("idoperacion") in _OPERACION_MONTAJE:
+        dur = _minutos_montaje(linea)
+        item["origen_estimado"] = "media_montaje"
+        item["min_restantes"]   = round(max(0.0, dur - (ahora - item["start"]).total_seconds() / 60))
+        fin_estimado = _fin_de_jornada(item["start"], item["start"] + timedelta(minutes=dur))
+        if fin_estimado > ahora:
+            item["end"] = item["fin_estimado"] = fin_estimado
+            total = (fin_estimado - item["start"]).total_seconds()
+            if total > 0:
+                item["progreso"] = round(max(0.0, min(1.0,
+                    (ahora - item["start"]).total_seconds() / total)) * 100)
+        return
+
     min_pieza, setup, origen = _estimar(linea, teoricos, medias)
     item["origen_estimado"] = origen
 
@@ -834,7 +999,9 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
     if restante_reloj <= 0:
         return
 
-    fin_estimado = ahora + timedelta(minutes=restante_reloj)
+    # Tope a las 15:00 igual que en el montaje: a esa hora se para, y una barra
+    # que se estira más allá promete trabajo cuando ya no hay nadie en planta.
+    fin_estimado = _fin_de_jornada(item["start"], ahora + timedelta(minutes=restante_reloj))
     item["end"]          = fin_estimado
     item["fin_estimado"] = fin_estimado
 

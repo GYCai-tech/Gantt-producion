@@ -81,7 +81,7 @@ replicado en PostgreSQL. De paso, se evitan los desfases del ETL.
 
 `static/js/app.js`, `static/css/app.css` e `index.html` son los mismos de la
 v1: motor de Gantt propio (vanilla JS, sin librerías), con eje en horas de
-trabajo 07:00–16:00, descanso 11:00–11:15, carriles para bonos solapados,
+trabajo 07:00–15:00, descanso 11:00–11:15, carriles para bonos solapados,
 toggle Operarios/Máquinas, zoom Día/3 días/Semana, píldoras de área, filtro
 de carga, buscador, tooltip y modal de detalle. Lo único que cambió es **de
 dónde salen las filas y las barras**. (En `base.html` se quitaron los dos
@@ -144,6 +144,54 @@ el esperado. Por encima de un **15 %** la barra pasa a ámbar como *En riesgo*,
 pero **se sigue dibujando lo que falta**: ir tarde no borra el trabajo
 pendiente.
 
+**Tope a las 15:00.** Ninguna barra se proyecta más allá del fin de jornada. Lo
+que quede pendiente sigue en `min_restantes`, pero estirar la barra hasta la
+madrugada prometía trabajo cuando ya no hay nadie en planta.
+
+### Montaje de utillaje: preparar no es fabricar
+
+`Ordenes_Bonos_Lineas.IdOperacion` dice de qué tipo es el fichaje, según la
+tabla `Operaciones`: **0 = Funcionamiento normal, 1 = Montaje utillaje,
+2 = Desmontaje**. Cada línea tiene un solo tipo (54.619 de 54.619), así que el
+montaje llega como una línea aparte de la producción.
+
+No es una etiqueta cosmética. En 18 meses de bonos cerrados:
+
+| Lote | Bonos | Montaje | Producción | **% montaje** |
+|---|---|---|---|---|
+| 1-5 piezas | 302 | 22,1 min | 5,8 min | **86,4 %** |
+| 6-50 | 1.568 | 26,1 min | 25,1 min | **55,8 %** |
+| 51-500 | 3.378 | 32,7 min | 85,2 min | 31,1 % |
+| +500 | 2.408 | 60,8 min | 374,3 min | 17,8 % |
+
+En total son 5.127 h de montaje frente a 28.915 de producción — el 15 %. Y las
+4.753 líneas de montaje declaran **cero piezas**, sin excepción.
+
+De ahí salen dos cosas:
+
+- **Un montaje abierto no se estima por piezas**, porque no produce ninguna. Se
+  proyecta con lo que suele tardarse en montar esa máquina (`_SQL_MONTAJE`, por
+  matrícula con respaldo a trabajo y una media global de 31 min). Varía mucho:
+  la 107 monta en 11 min y la 001 en 113. Sin esto, la barra de un operario
+  preparando la 001 se estiraba hasta las 20:08 con el tiempo de fabricar el
+  bono entero.
+- **Montaje y producción se pintan como una sola barra**, con el tramo de
+  preparación marcado dentro (rayado vertical y un corte donde acaba). Solo se
+  funden si van pegadas (≤ 2 min), que es el 86 % de los casos: 4.091 de 4.749.
+  Si el montaje fue otro día son trabajos separados de verdad y se quedan como
+  dos barras, la de montaje con el glifo `⚙`.
+
+### La jornada son 480 minutos, no 540
+
+`JORNADA_FIN` estuvo en las 16:00 y la jornada real acaba a las **15:00**.
+Medido sobre 6 meses de fichajes: el último cierre del día es a las 15:01 en 38
+días, 15:02 en 17, 15:00 en 12 y 15:03 en 10 — 77 de 110. Por minuto, las 15:00
+concentran 506 cierres y las 16:00 solo 98.
+
+Con 16:00 la app creía que el día tenía 540 minutos: un **12,5 % de capacidad
+inflada** en toda proyección. `JORNADA_FIN` (`api.py`) y `WORK_FIN` (`app.js`)
+tienen que coincidir, o las barras se pintan en el píxel equivocado.
+
 ### La cola: lo que cada operario tiene por delante
 
 Detrás de lo que está haciendo ahora, el Gantt pinta en punteado los bonos que
@@ -165,7 +213,7 @@ con operario. Se toman solo los de `IdEstado = 0` (sin arrancar); los de estado
 **Cómo se encadena.** Cada bono empieza cuando el recurso queda libre —después
 de la barra en curso— y dura lo que falta por fabricar
 (`pendientes × min/pieza`, la misma cadena de siempre). Todo dentro de la
-jornada **07:00–16:00 y saltando fines de semana**, y se corta en cuanto la
+jornada **07:00–15:00 y saltando fines de semana**, y se corta en cuanto la
 cola se sale de la ventana visible.
 
 ### El semáforo: la cola se reordena sola
@@ -212,7 +260,7 @@ visible. En vista de operarios se pintan 4 de 77 bloqueadas. Para el operario es
 lo correcto —solo ve lo que puede hacer—; si algún día hace falta verlas todas,
 lo suyo sería que no consumieran tiempo de cola en vez de intercalarlas.
 
-La jornada se cuenta entera (540 min) sin descontar el descanso de 11:00–11:15
+La jornada se cuenta entera (480 min) sin descontar el descanso de 11:00–11:15
 a propósito: el eje del Gantt tampoco lo comprime, lo pinta como una banda.
 Descontarlo desalinearía las barras del eje.
 

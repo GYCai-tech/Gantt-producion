@@ -1,7 +1,7 @@
 """La cola de bonos programados se coloca dentro de la jornada laboral.
 
 Sin esto, un bono de 8 horas encolado a las 15:00 acabaría de madrugada y la
-barra caería fuera del eje del Gantt, que solo pinta de 07:00 a 16:00.
+barra caería fuera del eje del Gantt, que solo pinta de 07:00 a 15:00.
 """
 from datetime import datetime
 
@@ -22,7 +22,7 @@ def test_antes_de_abrir_espera_a_las_siete():
 
 
 def test_despues_de_cerrar_salta_al_dia_siguiente():
-    assert _siguiente_hueco(VIERNES.replace(hour=16)) == LUNES.replace(hour=7)
+    assert _siguiente_hueco(VIERNES.replace(hour=15)) == LUNES.replace(hour=7)
     assert _siguiente_hueco(VIERNES.replace(hour=21)) == LUNES.replace(hour=7)
 
 
@@ -38,14 +38,16 @@ def test_lo_que_cabe_en_el_dia_se_queda_en_el_dia():
 
 
 def test_lo_que_no_cabe_continua_el_siguiente_dia_laborable():
-    # Quedan 60 min de viernes (15:00-16:00); los otros 60 van al lunes.
-    assert _sumar_laborables(VIERNES.replace(hour=15), 120) == LUNES.replace(hour=8)
+    # Quedan 60 min de viernes (14:00-15:00); los otros 60 van al lunes.
+    assert _sumar_laborables(VIERNES.replace(hour=14), 120) == LUNES.replace(hour=8)
 
 
-def test_una_jornada_entera_son_540_minutos():
-    assert _sumar_laborables(VIERNES.replace(hour=7), 540) == VIERNES.replace(hour=16)
-    # 541 ya no cabe: el minuto sobrante abre el lunes.
-    assert _sumar_laborables(VIERNES.replace(hour=7), 541) == LUNES.replace(hour=7, minute=1)
+def test_una_jornada_entera_son_480_minutos():
+    # 07:00-15:00. Medido sobre 6 meses de fichajes: las 15:00 concentran 506
+    # cierres y las 16:00 solo 98, y 77 de 110 dias cierran entre 15:00 y 15:03.
+    assert _sumar_laborables(VIERNES.replace(hour=7), 480) == VIERNES.replace(hour=15)
+    # 481 ya no cabe: el minuto sobrante abre el lunes.
+    assert _sumar_laborables(VIERNES.replace(hour=7), 481) == LUNES.replace(hour=7, minute=1)
 
 
 def test_arrancar_fuera_de_hora_no_regala_tiempo():
@@ -54,5 +56,5 @@ def test_arrancar_fuera_de_hora_no_regala_tiempo():
 
 
 def test_un_bono_largo_cruza_varios_dias():
-    # 1.080 min = dos jornadas completas: viernes entero + lunes entero.
-    assert _sumar_laborables(VIERNES.replace(hour=7), 1080) == LUNES.replace(hour=16)
+    # 960 min = dos jornadas completas: viernes entero + lunes entero.
+    assert _sumar_laborables(VIERNES.replace(hour=7), 960) == LUNES.replace(hour=15)

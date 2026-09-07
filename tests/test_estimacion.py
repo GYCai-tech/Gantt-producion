@@ -5,7 +5,7 @@ piezas solo se puede ver en vivo cuando algún bono las declara, y eso pasa en
 11 de 565 bonos abiertos: sin estos tests, la aritmética quedaría sin cubrir
 casi siempre.
 """
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from app.routers.api import _proyectar
 
@@ -44,7 +44,10 @@ def test_con_piezas_declaradas_lo_que_queda_sale_de_las_piezas_pendientes():
     assert item["piezas_pendientes"] == 240
     assert item["min_restantes"] == round(240 * 5.6)      # 1.344, no "3.351 - 3.400"
     assert item["progreso_piezas"] == 60
-    assert item["fin_estimado"] == AHORA + timedelta(minutes=240 * 5.6)
+    # Quedan 1.344 min de trabajo, pero la barra se corta a las 15:00: a esa
+    # hora se para, y estirarla hasta la madrugada prometería trabajo cuando no
+    # hay nadie en planta. Lo pendiente sigue estando en `min_restantes`.
+    assert item["fin_estimado"] == AHORA.replace(hour=15, minute=0)
 
 
 def test_el_tiempo_que_gasto_otro_operario_no_acorta_lo_que_queda():

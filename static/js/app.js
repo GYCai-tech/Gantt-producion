@@ -1,7 +1,7 @@
 /* ============================================================
    GYC · Seguimiento de Producción — motor del Gantt
    Muestra actividad real: bonos en curso y completados.
-   Eje en horas de trabajo (7–16, descanso 11:00–11:15).
+   Eje en horas de trabajo (7–15, descanso 11:00–11:15).
    ============================================================ */
 const App = (() => {
   'use strict';
@@ -9,8 +9,10 @@ const App = (() => {
   // ── Configuración ──────────────────────────────────────────────────
   const RAIL    = 232;
   const BAR_H   = 36, LANE_GAP = 7, ROW_PAD = 10;
-  const WORK_INI = 7, WORK_FIN = 16;
-  const VIS_MIN  = (WORK_FIN - WORK_INI) * 60;       // 540 min/día
+  // 07:00-15:00. Medido sobre los fichajes: las 15:00 concentran 506 cierres
+  // y las 16:00 solo 98. Debe coincidir con JORNADA_FIN en api.py.
+  const WORK_INI = 7, WORK_FIN = 15;
+  const VIS_MIN  = (WORK_FIN - WORK_INI) * 60;       // 480 min/día
   const BREAK    = { ini: 11 * 60, fin: 11 * 60 + 15 };
 
   const ZOOM = [
@@ -371,12 +373,22 @@ const App = (() => {
     const bonoLabel = it.idbono != null ? `·${it.idbono}` : '';
     bar.innerHTML = (it.tipo === 'real' && it.en_curso ? '<span class="bar__live"></span>' : '') +
                     (it.tipo === 'parcial' ? '<span class="bar__pause" title="Sesión cerrada; el bono sigue abierto">⏸</span>' : '') +
+                    (it.es_montaje ? '<span class="bar__setup" title="Montaje de utillaje: preparando la máquina, no fabricando">⚙</span>' : '') +
                     `<span class="bar__id">${esc(it.idorden)}<span class="bar__bono">${esc(bonoLabel)}</span></span>` +
                     (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '');
     if (it.tipo === 'real' && it.progreso != null) {
       const p = document.createElement('div');
       p.className = 'bar__prog'; p.style.width = it.progreso + '%';
       bar.appendChild(p);
+    }
+    // Tramo de preparación dentro de la barra del bono: el ERP lo graba como
+    // línea aparte y el backend las funde cuando van pegadas.
+    if (it.pct_montaje > 0) {
+      const m = document.createElement('div');
+      m.className = 'bar__montaje';
+      m.style.width = it.pct_montaje + '%';
+      m.title = `Montaje de utillaje: ${it.min_montaje} min`;
+      bar.appendChild(m);
     }
 
     bar.addEventListener('mouseenter', e => showTip(e, it));
@@ -392,6 +404,7 @@ const App = (() => {
     const rows = [];
     if (it.operacion) rows.push(`<div class="tip__row">Operación <span>${esc(it.operacion)}</span></div>`);
     rows.push(`<div class="tip__row">Bono <span>${it.idbono || '—'}</span></div>`);
+    if (it.es_montaje) rows.push(`<div class="tip__row">Tipo <span>⚙ Montaje de utillaje</span></div>`);
     if (it.tipo === 'real') {
       if (it.progreso_piezas != null) rows.push(`<div class="tip__row">Progreso <span>${it.progreso_piezas}% de las piezas</span></div>`);
       if (it.operarios) rows.push(`<div class="tip__row">Operarios <span>${it.operarios}</span></div>`);
