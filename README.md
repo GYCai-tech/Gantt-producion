@@ -131,13 +131,38 @@ antes. En piezas eso no pasa: da igual quién hizo las anteriores.
 El `min/pieza` sale de esta cadena, en este orden:
 
 1. **Tiempo teórico** — escandallo del ERP: `SUM(Trabajos_ManoObra.Duracion)`
-   (viene en días, ×1440) más `TiempoMontaje + TiempoDesMontaje` como
-   preparación, que solo se cobra si el bono aún no ha gastado ni un minuto.
+   (viene en días, ×1440).
 2. **Media de los registros** — calculada aquí desde los bonos ya cerrados de
    los últimos 18 meses, mínimo 3 bonos por clave: **artículo → trabajo →
-   máquina**.
+   máquina**. Cuenta **solo minutos de producción** (`IdOperacion = 0`).
 3. **Nada** — barra ámbar con `⚠`, acaba en "ahora", y suma al contador
    *"N sin tiempo"* de la cabecera, que filtra al pincharlo.
+
+**La preparación va por su cuenta**, no atada a la rama que gane el ritmo:
+`TiempoMontaje + TiempoDesMontaje` del bono si el ERP los declara, y si no, lo
+que suele tardarse en montar esa máquina. Solo se cobra si el bono aún no ha
+gastado ni un minuto — si ya arrancó, esa preparación está pagada.
+
+Antes iba pegada al escandallo, y como el escandallo (10 bonos abiertos) y la
+preparación (18) casi no se solapan —**solo 1 bono tiene ambas**—, 17 de los 18
+tiempos de montaje declarados se tiraban. Y el ritmo incluía los minutos de
+montaje, que al repartirse entre las piezas inflaba los lotes cortos: en un bono
+de 3 piezas con 22 min de montaje y 6 de fabricación salía un min/pieza de 9,3
+cuando el real es 1,9.
+
+Efecto de arreglar las dos cosas, medido sobre la misma cola:
+
+| Lote | Bonos | Antes | Ahora | |
+|---|---|---|---|---|
+| 1-5 piezas | 46 | **2 min** | 12 min | +637 % |
+| 6-50 | 55 | 28 min | 42 min | +50 % |
+| 51-500 | 77 | 89 min | 94 min | +5 % |
+| +500 | 27 | 799 min | 811 min | +1 % |
+| **Total** | | 742 h | 751 h | **+1 %** |
+
+El total apenas se mueve: lo que cambia es **el reparto**. La app venía diciendo
+que un bono de 3 piezas se hace en 2 minutos, cuando no da ni para preparar la
+máquina.
 
 **Retraso.** Se compara el ritmo real (`minutos gastados / piezas hechas`) con
 el esperado. Por encima de un **15 %** la barra pasa a ámbar como *En riesgo*,

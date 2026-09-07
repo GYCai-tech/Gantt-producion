@@ -282,13 +282,30 @@ FROM Ordenes_Bonos ob
     LEFT JOIN mano_obra mo      ON mo.IdTrabajo = ob.IdTrabajo
     LEFT JOIN Trabajos_Fases tf ON tf.IdTrabajo = ob.IdTrabajo
 WHERE ob.IdEstado IN (0, 1, 3)   -- solo bonos abiertos; los cerrados ya tienen minutos reales
-  AND COALESCE(mo.MinPieza, NULLIF(tf.TiempoMO, 0) * 1440.0) > 0
+  -- Basta con que el ERP declare UNA de las dos cosas. Antes se exigía el
+  -- min/pieza, y como el escandallo (10 bonos) y la preparación (18) casi no
+  -- se solapan -- solo 1 bono tiene ambas --, 17 de los 18 tiempos de montaje
+  -- declarados se tiraban a la basura: el bono caía a la media histórica y
+  -- perdía su setup por el camino.
+  AND (COALESCE(mo.MinPieza, NULLIF(tf.TiempoMO, 0) * 1440.0) > 0
+       OR COALESCE(NULLIF(ob.TiempoMontaje, 0), 0)
+        + COALESCE(NULLIF(ob.TiempoDesMontaje, 0), 0) > 0)
 """
 
+#  OJO con el CASE por IdOperacion: sumar todos los minutos y dividirlos entre
+#  las piezas mete el montaje dentro del ritmo. Y como el montaje no produce
+#  nada, se reparte entre las piezas del lote: en un bono de 3 piezas con 22 min
+#  de montaje y 6 de fabricación salía un "min/pieza" de 9,3 cuando el ritmo real
+#  es 1,9 -- cinco veces inflado. Ese número contaminaba la media del artículo y
+#  luego se aplicaba a lotes de miles de piezas. El ritmo se mide solo con
+#  producción; la preparación va aparte, en su propia columna.
 _SQL_MEDIAS = """
 WITH bono_min AS (
     SELECT obl.IdOrden, obl.IdBono,
-           SUM(DATEDIFF(minute, obl.Hinicial, obl.Hfinal)) AS minutos
+           SUM(CASE WHEN obl.IdOperacion = 0
+                    THEN DATEDIFF(minute, obl.Hinicial, obl.Hfinal) ELSE 0 END) AS min_produccion,
+           SUM(CASE WHEN obl.IdOperacion IN (1, 2)
+                    THEN DATEDIFF(minute, obl.Hinicial, obl.Hfinal) ELSE 0 END) AS min_montaje
     FROM Ordenes_Bonos_Lineas obl
     WHERE obl.Hinicial IS NOT NULL
       AND obl.Hfinal   IS NOT NULL
@@ -300,14 +317,18 @@ SELECT
     obs.IdArticulo AS idarticulo,
     ob.IdTrabajo   AS idtrabajo,
     ob.Matricula   AS matricula,
-    COUNT(*)          AS n,
-    SUM(bm.minutos)   AS minutos,
-    SUM(obs.Cantidad) AS piezas
+    COUNT(*)                    AS n,
+    SUM(bm.min_produccion)      AS minutos,
+    SUM(bm.min_montaje)         AS minutos_montaje,
+    SUM(obs.Cantidad)           AS piezas
 FROM bono_min bm
     JOIN Ordenes_Bonos ob          ON ob.IdOrden  = bm.IdOrden AND ob.IdBono  = bm.IdBono
     JOIN Ordenes_Bonos_Salidas obs ON obs.IdOrden = bm.IdOrden AND obs.IdBono = bm.IdBono
 WHERE ob.IdEstado = 2            -- solo bonos terminados: los abiertos aún no miden nada
   AND obs.Cantidad > 0
+  -- Un bono con montaje pero sin producción aportaría piezas con cero minutos
+  -- y desinflaría el ritmo de toda la clave.
+  AND bm.min_produccion > 0
 GROUP BY obs.IdArticulo, ob.IdTrabajo, ob.Matricula
 """
 
@@ -355,9 +376,13 @@ def _cargar_estimaciones():
 
     try:
         with get_erp_engine().connect() as conn:
+            # `min_pieza` puede venir a None: hay bonos que declaran la
+            # preparación y no el escandallo. Se guardan igual, porque el setup
+            # sirve aunque el ritmo tenga que salir del histórico.
             teoricos = {
                 (int(r["idorden"]), int(r["idbono"])):
-                    (float(r["setup_min"] or 0), float(r["min_pieza"]))
+                    (float(r["setup_min"] or 0),
+                     float(r["min_pieza"]) if r["min_pieza"] is not None else None)
                 for r in conn.execute(text(_SQL_TEORICO)).mappings()
             }
             medias = {"articulo": {}, "trabajo": {}, "maquina": {}}
@@ -414,9 +439,17 @@ def _estimar(linea: dict, teoricos: dict, medias: dict):
     de verdad quedan por hacer. Es la diferencia entre "cuánto cuesta el bono
     entero" y "cuánto falta", que es lo que hay que pintar."""
     teorico = teoricos.get((linea["idorden"], linea["idbono"]))
-    if teorico:
-        setup, min_pieza = teorico
-        return min_pieza, setup, "teorico"
+    setup_erp, min_pieza_erp = teorico if teorico else (0.0, None)
+
+    # La preparación es del BONO y el ritmo es del histórico: son dos datos
+    # independientes en el ERP, mantenidos por gente distinta y en tablas
+    # distintas. Atarlos hacía que un bono con su montaje declarado lo perdiera
+    # solo porque el escandallo de su trabajo estaba vacío. Si el ERP no lo
+    # declara se usa lo que suele tardarse en montar esa máquina.
+    setup = setup_erp if setup_erp > 0 else _minutos_montaje(linea)
+
+    if min_pieza_erp:
+        return min_pieza_erp, setup, "teorico"
 
     matricula = (linea["matricula"] or "").strip()
     for origen, nivel, clave in (
@@ -426,9 +459,9 @@ def _estimar(linea: dict, teoricos: dict, medias: dict):
     ):
         acc = medias[nivel].get(clave)
         if acc and acc["n"] >= _MIN_BONOS_MEDIA and acc["piezas"] > 0:
-            return acc["minutos"] / acc["piezas"], 0.0, origen
+            return acc["minutos"] / acc["piezas"], setup, origen
 
-    return None, 0.0, None
+    return None, setup, None
 
 
 def _avance_por_bono(lineas: list[dict], ahora: datetime) -> dict:
