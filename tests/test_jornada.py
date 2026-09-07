@@ -58,3 +58,10 @@ def test_arrancar_fuera_de_hora_no_regala_tiempo():
 def test_un_bono_largo_cruza_varios_dias():
     # 960 min = dos jornadas completas: viernes entero + lunes entero.
     assert _sumar_laborables(VIERNES.replace(hour=7), 960) == LUNES.replace(hour=15)
+
+
+def test_medicion_y_suma_laborable_coinciden_al_cruzar_un_fin_de_semana():
+    from app.routers.api import _minutos_laborables_entre
+    inicio = VIERNES.replace(hour=14)
+    fin = _sumar_laborables(inicio, 600)
+    assert _minutos_laborables_entre(inicio, fin) == 600

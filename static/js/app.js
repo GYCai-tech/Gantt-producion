@@ -308,21 +308,11 @@ const App = (() => {
           return d !== 0 ? d : (TIPO_PRIO[a.tipo] ?? 3) - (TIPO_PRIO[b.tipo] ?? 3);
         });
 
-      // Asignación de carriles (bonos solapados → carriles distintos)
-      // e_vis coincide con el ancho visual de buildBar: en_curso se extiende a now+10min
+      // Las dos vistas usan los mismos intervalos calculados por el servidor.
       const laneEnd = [];
       its.forEach(it => {
-        let s = +new Date(it.start);
-        let e = +new Date(it.end);
-        if (it.en_curso) e = Math.max(e, Date.now() + 10 * 60000);
-        // Un "programado" es una proyección de cola que se recalcula en cada
-        // refresco del servidor; entre refrescos puede quedar con un inicio
-        // ya "pasado" frente al reloj del navegador. Sin este suelo, ese
-        // desfase lo manda a un carril paralelo al del bono activo de su
-        // mismo recurso, dando la falsa impresión de que los dos se trabajan
-        // a la vez. Nunca puede aparecer antes de lo que puede aparecer un
-        // "real" (mismo suelo de +10min) -- así siempre queda detrás, nunca al lado.
-        if (it.tipo === 'programado') s = Math.max(s, Date.now() + 10 * 60000);
+        const s = +new Date(it.start);
+        const e = +new Date(it.end);
         let lane = laneEnd.findIndex(end => end <= s);
         if (lane === -1) { lane = laneEnd.length; laneEnd.push(e); }
         else laneEnd[lane] = e;
@@ -356,10 +346,6 @@ const App = (() => {
 
   function buildBar(it, W, top) {
     let lx = workX(it.start), rx = workX(it.end);
-    if (it.en_curso) rx = Math.max(rx, workX(new Date(Date.now() + 10 * 60000)));
-    // Mismo suelo que en la asignación de carriles (ver renderRows): evita que
-    // el píxel de inicio quede por delante del bono activo de su recurso.
-    if (it.tipo === 'programado') lx = Math.max(lx, workX(new Date(Date.now() + 10 * 60000)));
     if (rx <= 0 || lx >= W) return null;
     lx = clamp(lx, 0, W); rx = clamp(rx, 0, W);
     const w = Math.max(rx - lx, 6);
@@ -381,9 +367,11 @@ const App = (() => {
                       ? `<span class="bar__setup" title="${it.es_montaje ? 'Montaje de utillaje: preparando la máquina, no fabricando' : 'Incluye ' + it.min_montaje + ' min de montaje de utillaje'}">⚙</span>` : '') +
                     `<span class="bar__id">${esc(it.idorden)}<span class="bar__bono">${esc(bonoLabel)}</span></span>` +
                     (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '');
-    if (it.tipo === 'real' && it.progreso != null) {
+    if (it.tipo === 'real' && it.fin_estimado != null) {
       const p = document.createElement('div');
-      p.className = 'bar__prog'; p.style.width = it.progreso + '%';
+      p.className = 'bar__prog';
+      // Porcentaje de la barra VISIBLE, sin contar noches o fines de semana.
+      p.style.width = (100 * clamp((workX(new Date()) - lx) / w, 0, 1)) + '%';
       bar.appendChild(p);
     }
     // Tramo de preparación dentro de la barra del bono: el ERP lo graba como
@@ -391,7 +379,8 @@ const App = (() => {
     if (it.pct_montaje > 0) {
       const m = document.createElement('div');
       m.className = 'bar__montaje';
-      m.style.width = it.pct_montaje + '%';
+      const finMontaje = new Date(+new Date(it.start) + it.min_montaje * 60000);
+      m.style.width = (100 * clamp((workX(finMontaje) - lx) / w, 0, 1)) + '%';
       // Sin `title`: el div lleva pointer-events:none para no robarle el hover
       // a la barra, asi que un title aqui no se mostraria nunca. El dato va en
       // el tooltip de la barra (ver showTip).
@@ -434,7 +423,7 @@ const App = (() => {
       } else {
         rows.push(`<div class="tip__row">Piezas <span>${it.piezas_objetivo ? fmtNum(it.piezas_objetivo) : '—'} · ninguna declarada</span></div>`);
         rows.push(`<div class="tip__row">Estimado <span>${it.min_estimados} min en total</span></div>`);
-        rows.push(`<div class="tip__row">Consumido <span>${it.min_consumidos} min${it.excedido ? ' · se ha pasado' : ''}</span></div>`);
+        rows.push(`<div class="tip__row">Producción consumida <span>${it.min_consumidos} min${it.excedido ? ' · se ha pasado' : ''}</span></div>`);
       }
       if (it.min_restantes != null) rows.push(`<div class="tip__row">Le queda <span>${fmtMin(it.min_restantes)}</span></div>`);
       rows.push(`<div class="tip__row">Segun <span>${fuente}</span></div>`);

@@ -32,8 +32,11 @@ def _medias(min_pieza, n=10):
     }
 
 
-def _avance(minutos, piezas, operarios=1):
-    return {(6372, 30): {"minutos": minutos, "piezas": piezas, "operarios": operarios}}
+def _avance(minutos, piezas, operarios=1, montaje=0):
+    return {(6372, 30): {
+        "minutos": minutos + montaje, "min_produccion": minutos,
+        "min_montaje": montaje, "piezas": piezas, "operarios": operarios,
+    }}
 
 
 def test_con_piezas_declaradas_lo_que_queda_sale_de_las_piezas_pendientes():
@@ -44,10 +47,9 @@ def test_con_piezas_declaradas_lo_que_queda_sale_de_las_piezas_pendientes():
     assert item["piezas_pendientes"] == 240
     assert item["min_restantes"] == round(240 * 5.6)      # 1.344, no "3.351 - 3.400"
     assert item["progreso_piezas"] == 60
-    # Quedan 1.344 min de trabajo, pero la barra se corta a las 15:00: a esa
-    # hora se para, y estirarla hasta la madrugada prometería trabajo cuando no
-    # hay nadie en planta. Lo pendiente sigue estando en `min_restantes`.
-    assert item["fin_estimado"] == AHORA.replace(hour=15, minute=0)
+    # 180 min el viernes, 480 lunes, 480 martes y 204 miércoles.
+    # La reserva completa se conserva; el Gantt recorta la ventana visible.
+    assert item["fin_estimado"] == datetime(2026, 9, 9, 10, 24)
 
 
 def test_el_tiempo_que_gasto_otro_operario_no_acorta_lo_que_queda():
@@ -146,3 +148,53 @@ def test_dos_operarios_a_la_vez_terminan_en_la_mitad_de_reloj():
     _proyectar(dos, _linea(600), AHORA, {}, _medias(5.6), _avance(3400, 360, operarios=2))
 
     assert dos["min_restantes"] == uno["min_restantes"] // 2
+
+
+def test_el_montaje_no_provoca_falsa_alerta_de_ritmo():
+    item = _item()
+    _proyectar(item, _linea(100), AHORA, {}, _medias(1),
+               _avance(minutos=10, piezas=10, montaje=60))
+    assert item['min_pieza_real'] == 1
+    assert item['estado'] == 'plazo'
+    assert item['min_consumidos'] == 10
+    assert item['min_montaje_consumidos'] == 60
+    assert item['min_restantes'] == 90
+
+
+def test_sin_piezas_el_montaje_no_descuenta_presupuesto_de_produccion():
+    item = _item()
+    _proyectar(item, _linea(100), AHORA, {}, _medias(1),
+               _avance(minutos=10, piezas=0, montaje=60))
+    assert item['min_estimados'] == 100
+    assert item['min_restantes'] == 90
+
+
+def test_montaje_terminado_no_se_vuelve_a_cobrar_al_iniciar_produccion():
+    item = _item()
+    _proyectar(item, _linea(100), AHORA, {(6372, 30): (60, 1)}, _medias(1),
+               _avance(minutos=0, piezas=0, montaje=60))
+    assert item['min_estimados'] == 100
+    assert item['min_restantes'] == 100
+
+
+def test_todas_las_piezas_hechas_siguen_pendientes_de_cierre():
+    item = _item()
+    _proyectar(item, _linea(100), AHORA, {}, _medias(1),
+               _avance(minutos=500, piezas=100, montaje=60))
+    assert item['estado'] == 'pendiente-cierre'
+    assert item['excedido'] is False
+    assert item['min_restantes'] == 0
+
+
+def test_sin_dato_de_avance_no_se_inventa_que_el_bono_acaba_de_empezar():
+    item = _item()
+    _proyectar(item, _linea(100), AHORA, {}, _medias(1), {})
+    assert item['sin_tiempo'] is True
+    assert 'fin_estimado' not in item
+
+
+def test_proyeccion_fuera_de_jornada_empieza_el_siguiente_laborable():
+    item = _item()
+    _proyectar(item, _linea(100), AHORA.replace(hour=16), {}, _medias(1),
+               _avance(minutos=10, piezas=10))
+    assert item['fin_estimado'] == datetime(2026, 9, 7, 8, 30)

@@ -3,9 +3,9 @@
 Gantt de una sola pantalla: qué líneas de bono activas hay en el ERP en un
 día concreto, quién las hizo, en qué máquina y durante cuánto tiempo.
 
-No hay planificación, ni estimaciones, ni cola de "programado": **cada barra
-es una línea real del ERP**, de su `Hinicial` a su `Hfinal`. Lo que no está en
-el ERP, no se pinta.
+Combina **fichajes reales del ERP** con estimaciones de duración y una cola
+de bonos asignados. La previsión reserva conjuntamente operarios y máquinas;
+no cambia las asignaciones ni escribe planificación en el ERP.
 
 > La versión anterior del proyecto (Gantt con scheduler propio, Histórico de
 > Producción y Consultor de Bonos) está íntegra en la rama
@@ -138,6 +138,12 @@ El `min/pieza` sale de esta cadena, en este orden:
 3. **Nada** — barra ámbar con `⚠`, acaba en "ahora", y suma al contador
    *"N sin tiempo"* de la cabecera, que filtra al pincharlo.
 
+**El consumo también se separa:** `min_produccion` suma operaciones 0 y
+`min_montaje` suma operaciones 1 y 2. La preparación consumida nunca se
+descuenta del presupuesto de fabricación ni se incorpora al ritmo real.
+Solo los operarios con producción abierta cuentan para convertir minutos-hombre
+a minutos de reloj. Si falla la lectura del avance, la API responde 503.
+
 **La preparación va por su cuenta**, no atada a la rama que gane el ritmo:
 `TiempoMontaje + TiempoDesMontaje` del bono si el ERP los declara, y si no, lo
 que suele tardarse en montar esa máquina. Solo se cobra si el bono aún no ha
@@ -164,7 +170,7 @@ El total apenas se mueve: lo que cambia es **el reparto**. La app venía diciend
 que un bono de 3 piezas se hace en 2 minutos, cuando no da ni para preparar la
 máquina.
 
-**Retraso.** Se compara el ritmo real (`minutos gastados / piezas hechas`) con
+**Retraso.** Se compara el ritmo real (`minutos de producción / piezas hechas`) con
 el esperado. Por encima de un **15 %** la barra pasa a ámbar como *En riesgo*,
 pero **se sigue dibujando lo que falta**: ir tarde no borra el trabajo
 pendiente. No hay ninguna fecha de entrega en juego —el ERP no tiene—, así que
@@ -178,9 +184,12 @@ que el ritmo real empeora solo — el bono se hundía en ámbar cuanto más tard
 en cerrarlo. Medido en 6583/50: 50 de 50 piezas y un 21 % de desviación. No hay
 nada que corregir en planta; hay que cerrar el fichaje.
 
-**Tope a las 15:00.** Ninguna barra se proyecta más allá del fin de jornada. Lo
-que quede pendiente sigue en `min_restantes`, pero estirar la barra hasta la
-madrugada prometía trabajo cuando ya no hay nadie en planta.
+**Continuidad entre jornadas.** `end` y `fin_estimado` conservan el final
+completo, calculado dentro de 07:00–15:00 y saltando fines de semana. El eje
+recorta la ventana visible. A las 12:00, 450 minutos pendientes ocupan hasta
+las 11:30 del siguiente día laborable, y la cola no libera antes el recurso.
+La ocupación actual también se consulta al navegar a días futuros. Un fichaje
+abierto sin final estimable reserva el recurso durante toda la ventana.
 
 ### Montaje de utillaje: preparar no es fabricar
 
@@ -210,7 +219,7 @@ De ahí salen dos cosas:
   preparando la 001 se estiraba hasta las 20:08 con el tiempo de fabricar el
   bono entero.
 - **Montaje y producción se pintan como una sola barra**, con el tramo de
-  preparación marcado dentro (rayado vertical y un corte donde acaba). Solo se
+  preparación marcado dentro (tinte azul y un corte donde acaba). Solo se
   funden si van pegadas (≤ 2 min), que es el 86 % de los casos: 4.091 de 4.749.
   Si el montaje fue otro día son trabajos separados de verdad y se quedan como
   dos barras, la de montaje con el glifo `⚙`.
@@ -244,11 +253,17 @@ Medido: 19.517 asignaciones, 25 empleados, **238 de los 562 bonos abiertos**
 con operario. Se toman solo los de `IdEstado = 0` (sin arrancar); los de estado
 1 ya salen como barras reales de su propio fichaje.
 
-**Cómo se encadena.** Cada bono empieza cuando el recurso queda libre —después
-de la barra en curso— y dura lo que falta por fabricar
-(`pendientes × min/pieza`, la misma cadena de siempre). Todo dentro de la
-jornada **07:00–15:00 y saltando fines de semana**, y se corta en cuanto la
-cola se sale de la ventana visible.
+**Cómo se encadena.** Se calcula una sola previsión para ambas vistas. Cada
+bono empieza cuando están libres su máquina y todos sus operarios asignados.
+Un bono compartido aparece en cada operario y una sola vez en la máquina, con
+los mismos horarios. Su duración no se divide por el número de asignados: esa
+ganancia de rendimiento no está confirmada. Si algún asignado está bloqueado,
+el bono compartido se considera condicional y va detrás de lo disponible.
+
+La duración es `preparación + pendientes × min/pieza`, dentro de la jornada
+**07:00–15:00 y saltando fines de semana**. Se calculan incluso las reservas
+fuera de pantalla para que cambiar el zoom no cambie el orden. Es un cálculo
+conservador que respeta la prioridad; no optimiza huecos ni reasigna trabajo.
 
 ### El semáforo: la cola se reordena sola
 
@@ -284,8 +299,7 @@ secuencia a los que sí la tienen.
 > tomada: no se muestran.
 
 **Coste y caché.** La función se evalúa fila a fila: la consulta pasa de 12 ms a
-~360 ms, y `/api/items` de ~58 ms a ~730 ms. Por eso se cachea **120 s**, igual
-que las estimaciones; si el ERP falla se reutiliza la caché caducada, porque es
+~360 ms, y `/api/items` de ~58 ms a ~730 ms. Por eso el semáforo se cachea **120 s** y las estimaciones **600 s**; si el ERP falla se reutiliza la caché caducada, porque es
 mejor ordenar con colores de hace unos minutos que servir una cola que el
 operario no puede seguir.
 
@@ -351,11 +365,10 @@ Contarlas hasta hoy disparaba el consumo (medido: 3.383 min en un bono de unas
 horas) e inflaba el recuento de operarios activos. Una línea abierta solo
 cuenta si empezó en las últimas 24 h.
 
-**Un dato que el ERP no tiene.** `Ordenes_Bonos.IdEmpleado` —el operario al que
-está asignado el bono— está a `NULL` en los 565 bonos abiertos, y
-`VOrdenes_Bonos_Lineas_Emp.PorcentajeTrabajo` a 0. La asignación existe de
-hecho (cada bono lo ficha un solo operario, y `Operarios` = 1) pero no como
-dato, así que la cantidad del bono **es** la cantidad de su operario.
+**Asignación y trabajo activo.** La cola conserva las asignaciones de
+`Pers_EmpleadosOrdenBono`. Para un bono en producción, el divisor del tiempo
+pendiente cuenta solo operarios con fichajes de producción abiertos y recientes;
+los operarios que están montando no cuentan como fabricantes simultáneos.
 
 **`POST /api/refrescar`** (+ `GET /api/refrescar/{id}`) — ya no hay ETL que
 lanzar, los datos son del ERP en vivo. Responden `COMPLETED` al momento para
@@ -378,6 +391,10 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Es un smoke test: comprueba que la app importa y publica las rutas que llama
-el frontend, sin tocar el ERP. Las consultas se validan contra el ERP real, a
-mano.
+Incluye rutas, estimación, separación de consumos, calendario, reservas
+conjuntas, bonos compartidos y navegación a fechas futuras. Los tests de
+agregación ejecutan la consulta en SQLite adaptando únicamente funciones de
+T-SQL; no sustituyen la validación de SQL Server/ODBC contra el ERP.
+
+Comprobación adicional del frontend: `node --check static/js/app.js` (Node
+solo se necesita para esa comprobación, no en la imagen ni para servir la app).

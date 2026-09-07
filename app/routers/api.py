@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api")
 
 
 # ─────────────────────────────────────────────────────────────────────
-#  Líneas de bono: la ÚNICA consulta de la que sale todo lo que se pinta
+#  Líneas de bono: la actividad real que acompaña a la previsión de cola
 # ─────────────────────────────────────────────────────────────────────
 #  Traducción a T-SQL de la consulta de Access que define esta pantalla:
 #  las líneas de bono en estado 1, con el operario que las fichó, la máquina
@@ -102,6 +102,22 @@ def _nombre_completo(r) -> str:
 def _leer_lineas(desde: date, hasta: date, estado: int = 1) -> list[dict]:
     """Las líneas de bono del rango, deduplicadas y con inicio/fin resueltos."""
     filas = _erp(_LINEAS_QUERY, {"desde": desde, "hasta": hasta, "estado": estado})
+    return _normalizar_lineas(filas)
+
+
+def _leer_abiertas(ahora: datetime, estado: int) -> list[dict]:
+    """Ocupación actual, independiente del día que se está consultando."""
+    consulta = _LINEAS_QUERY.replace(
+        "AND CAST(obl.Fecha AS date) BETWEEN :desde AND :hasta",
+        "AND obl.Hfinal IS NULL AND obl.Hinicial BETWEEN :limite AND :ahora",
+    )
+    return _normalizar_lineas(_erp(consulta, {
+        "estado": estado, "ahora": ahora,
+        "limite": ahora - timedelta(hours=_HORAS_LINEA_VIVA),
+    }))
+
+
+def _normalizar_lineas(filas) -> list[dict]:
 
     lineas, vistas = [], set()
     for r in filas:
@@ -253,8 +269,8 @@ def _dia_local(dt: datetime) -> date:
 #  Dos limitaciones conocidas y asumidas:
 #    · la media por máquina es gruesa — una misma máquina hace piezas muy
 #      distintas — pero es el último escalón antes del aviso;
-#    · es min/pieza pura, sin término de preparación. En bonos de pocas piezas
-#      el setup es la mayor parte del tiempo, así que ahí se queda corta.
+#    · la preparación se estima por separado; las medias son orientativas y
+#      dependen de la calidad de los fichajes del ERP.
 # ─────────────────────────────────────────────────────────────────────
 
 _ESTIMA_TTL_S     = 600   # el escandallo y el histórico no cambian por minutos
@@ -483,32 +499,43 @@ def _avance_por_bono(lineas: list[dict], ahora: datetime) -> dict:
     if not ordenes:
         return {}
 
-    consulta = text(f"""
+    consulta = text("""
+        WITH consumo AS (
+            SELECT *, DATEDIFF(minute, Hinicial,
+                CASE WHEN Hfinal >= Hinicial THEN Hfinal
+                     WHEN Hfinal IS NULL AND Hinicial BETWEEN :limite AND :ahora
+                     THEN :ahora ELSE Hinicial END) AS minutos_linea
+            FROM Ordenes_Bonos_Lineas
+            WHERE Hinicial IS NOT NULL AND IdOrden IN :ordenes
+        )
         SELECT IdOrden AS idorden, IdBono AS idbono,
-               SUM(DATEDIFF(minute, Hinicial,
-                     CASE WHEN Hfinal IS NOT NULL THEN Hfinal
-                          WHEN Hinicial > DATEADD(hour, -{_HORAS_LINEA_VIVA}, GETDATE()) THEN GETDATE()
-                          ELSE Hinicial END)) AS minutos,
+               SUM(minutos_linea) AS minutos,
+               SUM(CASE WHEN IdOperacion = 0 THEN minutos_linea ELSE 0 END) AS min_produccion,
+               SUM(CASE WHEN IdOperacion IN (1, 2) THEN minutos_linea ELSE 0 END) AS min_montaje,
                COUNT(DISTINCT CASE
                      WHEN Hfinal IS NULL
-                      AND Hinicial > DATEADD(hour, -{_HORAS_LINEA_VIVA}, GETDATE())
+                      AND IdOperacion = 0
+                      AND Hinicial BETWEEN :limite AND :ahora
                      THEN IdEmpleado END) AS operarios_activos,
                SUM(ISNULL(TotalPiezas, 0)) AS piezas
-        FROM Ordenes_Bonos_Lineas
-        WHERE Hinicial IS NOT NULL
-          AND IdOrden IN :ordenes
+        FROM consumo
         GROUP BY IdOrden, IdBono
     """).bindparams(bindparam("ordenes", expanding=True))
 
     try:
         with get_erp_engine().connect() as conn:
-            filas = conn.execute(consulta, {"ordenes": ordenes}).mappings().all()
+            filas = conn.execute(consulta, {
+                "ordenes": ordenes, "ahora": ahora,
+                "limite": ahora - timedelta(hours=_HORAS_LINEA_VIVA),
+            }).mappings().all()
     except SQLAlchemyError:
-        return {}
+        raise HTTPException(status_code=503, detail="No se pudo consultar el avance del ERP")
 
     return {
         (r["idorden"], r["idbono"]): {
             "minutos":   float(r["minutos"] or 0),
+            "min_produccion": float(r["min_produccion"] or 0),
+            "min_montaje": float(r["min_montaje"] or 0),
             "operarios": max(1, int(r["operarios_activos"] or 0)),
             "piezas":    float(r["piezas"] or 0),
         }
@@ -532,15 +559,24 @@ def get_items(
 
     ahora = datetime.now()
     lineas = _leer_lineas(d0, d1, estado)
+    abiertas = _leer_abiertas(ahora, estado) if d1 >= hoy else []
+    # La ocupación de hoy debe seguir reservada al navegar a mañana. También
+    # permite dibujar la continuación de un bono iniciado fuera de la ventana.
+    por_id = {(l["idorden"], l["idbono"], l["idlinea"]): l for l in lineas}
+    por_id.update({(l["idorden"], l["idbono"], l["idlinea"]): l for l in abiertas})
+    lineas = list(por_id.values())
     teoricos, medias = _cargar_estimaciones()
     avance = _avance_por_bono([l for l in lineas if l["abierta"]], ahora)
 
     items = []
     for l in lineas:
-        abierta = l["abierta"]
         inicio  = l["inicio"]
+        abierta = (l["abierta"] and d1 >= hoy
+                   and timedelta(0) <= ahora - inicio <= timedelta(hours=_HORAS_LINEA_VIVA))
         fin     = l["fin"] or ahora
-        min_real = None if abierta else round((fin - inicio).total_seconds() / 60)
+        if l["abierta"] and not abierta:
+            fin = min(ahora, max(inicio, inicio.replace(hour=JORNADA_FIN, minute=0, second=0, microsecond=0)))
+        min_real = None if l["abierta"] else round((fin - inicio).total_seconds() / 60)
 
         # La línea abierta es trabajo EN CURSO; la cerrada, trabajo hecho.
         # No hay un tercer estado que inventar: el ERP no dice nada más.
@@ -548,8 +584,10 @@ def get_items(
         item = {
             "id":         f"{l['idorden']}-{l['idbono']}-{l['idlinea']}",
             "recurso_id": str(l["idempleado"]) if vista == "empleado" else str(l["matricula"]).strip(),
-            "tipo":       "real" if abierta else "trabajado",
-            "estado":     "plazo" if abierta else "completado",
+            "idempleado": str(l["idempleado"]),
+            "matricula": (l["matricula"] or "").strip(),
+            "tipo":       "real" if abierta else "parcial" if l["abierta"] else "trabajado",
+            "estado":     "plazo" if abierta else "parcial" if l["abierta"] else "completado",
             "en_curso":   abierta,
             # Preparar la máquina no es fabricar: son fichajes distintos y hay
             # que poder distinguirlos. Ver _OPERACION_MONTAJE.
@@ -578,23 +616,22 @@ def get_items(
 
         items.append(item)
 
-    # Montaje y producción del mismo bono son una sola barra con la parte de
-    # preparación marcada dentro. Va antes de encolar para que `ocupado_hasta`
-    # vea el inicio real (el del montaje), no el de la producción.
-    items = _fundir_montaje(items)
-
     # La cola solo tiene sentido si la ventana llega a hoy o más allá: en un
     # día pasado no había "programado", había lo que pasó.
     if d1 >= hoy:
-        ocupado_hasta = {}
-        for it in items:
-            if it["en_curso"]:
-                rid = it["recurso_id"]
-                ocupado_hasta[rid] = max(ocupado_hasta.get(rid, ahora), it["end"])
         hasta_dt = datetime.combine(d1, datetime.min.time()).replace(hour=JORNADA_FIN)
-        items += _encolar(vista, ocupado_hasta, hasta_dt, ahora, teoricos, medias)
+        ids_abiertas = {f"{l['idorden']}-{l['idbono']}-{l['idlinea']}" for l in abiertas}
+        ocupado_hasta = _ocupacion_actual(
+            [it for it in items if it["id"] in ids_abiertas], hasta_dt, ahora,
+        )
+        cola = _encolar(vista, ocupado_hasta, hasta_dt, ahora, teoricos, medias)
+    else:
+        cola = []
 
-    return items
+    inicio_ventana = datetime.combine(d0, datetime.min.time())
+    fin_ventana = datetime.combine(d1 + timedelta(days=1), datetime.min.time())
+    return [it for it in _fundir_montaje(items) + cola
+            if it["end"] > inicio_ventana and it["start"] < fin_ventana]
 
 
 #  Margen antes de dar un bono por retrasado. El ritmo real contra el esperado
@@ -732,7 +769,7 @@ JORNADA_FIN    = 15
 
 
 def _siguiente_hueco(dt: datetime) -> datetime:
-    """El primer instante laborable a partir de `dt` (07:00–16:00, L-V)."""
+    """El primer instante laborable a partir de `dt` (07:00–15:00, L-V)."""
     t = dt
     for _ in range(14):
         if t.weekday() >= 5:
@@ -763,6 +800,18 @@ def _sumar_laborables(inicio: datetime, minutos: float) -> datetime:
         restante -= hueco
         t = _siguiente_hueco(fin_jornada)
     return t
+
+
+def _minutos_laborables_entre(inicio: datetime, fin: datetime) -> float:
+    """Mide el mismo calendario que usa la proyección, sin noches ni fines de semana."""
+    t, total = inicio, 0.0
+    while t < fin:
+        apertura = t.replace(hour=JORNADA_INICIO, minute=0, second=0, microsecond=0)
+        cierre = t.replace(hour=JORNADA_FIN, minute=0, second=0, microsecond=0)
+        if t.weekday() < 5:
+            total += max(0.0, (min(fin, cierre) - max(t, apertura)).total_seconds() / 60)
+        t = (t + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return total
 
 
 def _leer_cola() -> list[dict]:
@@ -799,96 +848,119 @@ def _leer_cola() -> list[dict]:
     return cola
 
 
+def _ocupacion_actual(items: list[dict], hasta: datetime, ahora: datetime) -> dict:
+    """Reserva operario y máquina usando el fin completo, nunca el corte visual.
+
+    Si el fichaje sigue abierto y no podemos estimar su liberación, se reserva
+    la ventana completa. No disponer de una duración no significa estar libre.
+    """
+    ocupado = {}
+    for it in items:
+        fin = it.get("libre_desde") if it["es_montaje"] else it.get("fin_estimado")
+        if fin is None or fin <= ahora:
+            fin = max(hasta, ahora)
+        for tipo, rid in (("empleado", it["idempleado"]), ("maquina", it["matricula"])):
+            if rid:
+                clave = (tipo, str(rid))
+                ocupado[clave] = max(ocupado.get(clave, ahora), fin)
+    return ocupado
+
+
+def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
+                     ahora: datetime, teoricos, medias) -> list[dict]:
+    """Una previsión común que reserva a la vez máquinas y operarios.
+
+    Un bono con varios asignados es una única tarea compartida. Se conservan
+    todos los asignados y no se infiere una ganancia de velocidad por su número.
+    La prioridad es semáforo, secuencia manual y orden/bono; el cálculo es
+    conservador y no intenta optimizar huecos ni reasignar trabajo del ERP.
+    """
+    agrupados = {}
+    for b in cola:
+        clave = (b["idorden"], b["idbono"], b["matricula"])
+        agrupados.setdefault(clave, {})[str(b["idempleado"])] = b
+
+    tareas = []
+    for asignados in agrupados.values():
+        filas = sorted(asignados.values(), key=lambda b: str(b["idempleado"]))
+        # Todos los asignados se reservan juntos. Si alguno está bloqueado,
+        # el conjunto es condicional y va detrás del trabajo disponible.
+        semaforo = max((b["semaforo"] for b in filas), key=_PRIO_SEMAFORO.get)
+        secuencias = [b["ordenar"] for b in filas if b["ordenar"] > 0]
+        tareas.append((filas, semaforo, min(secuencias) if secuencias else None))
+    tareas.sort(key=lambda t: (_PRIO_SEMAFORO[t[1]], t[2] is None,
+                              t[2] or 0, t[0][0]["idorden"], t[0][0]["idbono"],
+                              t[0][0]["matricula"]))
+
+    ocupado = dict(ocupado_hasta)
+    plan = []
+    for asignados, semaforo, secuencia in tareas:
+        b = asignados[0]
+        recursos = [("empleado", str(a["idempleado"])) for a in asignados]
+        if b["matricula"]:
+            recursos.append(("maquina", b["matricula"]))
+        inicio = _siguiente_hueco(max([ahora] + [ocupado.get(r, ahora) for r in recursos]))
+        min_pieza, setup, origen = _estimar(b, teoricos, medias)
+        pendientes = max(0.0, b["piezas_a_fabricar"] - b["fabricadas"])
+        if pendientes <= 0:
+            continue
+        sin_tiempo = not min_pieza or min_pieza <= 0
+        dur = _MIN_BLOQUE_SIN_TIEMPO if sin_tiempo else setup + pendientes * min_pieza
+        fin = _sumar_laborables(inicio, dur)
+        for r in recursos:
+            ocupado[r] = fin
+        # Las reservas se calculan incluso fuera de la ventana: de lo
+        # contrario cambiar de Día a Semana cambiaría el orden de la cola.
+        if inicio >= hasta_dt:
+            continue
+        plan.append({
+            "bono": b, "asignados": asignados, "semaforo": semaforo,
+            "secuencia": secuencia, "start": inicio, "end": fin,
+            "pendientes": pendientes, "sin_tiempo": sin_tiempo,
+            "min_pieza": min_pieza, "origen": origen, "duracion": dur,
+        })
+    return plan
+
+
 def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
              ahora: datetime, teoricos, medias) -> list[dict]:
-    """Las barras 'programado': la cola de cada recurso, una detrás de otra.
-
-    Cada bono arranca cuando el recurso queda libre —después de lo que está
-    haciendo ahora— y dura lo que falta por fabricar.
-
-    El orden lo manda primero el semáforo del ERP y después la secuencia manual
-    (`ordenar`). Es deliberado: con el 40% de la cola en rojo, un plan que
-    ignore la disponibilidad es ficción — el operario no puede seguirlo y acaba
-    abriendo otro bono por su cuenta. Poniendo delante lo que sí puede hacer, la
-    cola se reordena sola: cuando llega el material el bono pasa a verde en el
-    ERP y sube de posición sin que nadie replanifique nada. La secuencia manual
-    no se pierde, sigue mandando *dentro* de lo que es viable.
-
-    Se corta en cuanto la cola se sale de la ventana visible: encolar meses de
-    trabajo que nadie va a ver solo gasta tiempo."""
-    por_recurso: dict[str, list] = {}
-    for b in _leer_cola():
-        rid = str(b["idempleado"]) if vista == "empleado" else b["matricula"]
-        if not rid:
-            continue
-        if vista == "maquina":
-            # El semáforo es por (bono, operario), pero una máquina no tiene
-            # varios operarios: tiene un bono. Si el bono está asignado a dos
-            # personas saldría dos veces, duplicando su tiempo en la cola de la
-            # máquina. Se queda una sola barra, con el mejor color: a la máquina
-            # le basta con que ALGUIEN pueda hacerlo.
-            gemelo = next((x for x in por_recurso.get(rid, [])
-                           if x["idorden"] == b["idorden"] and x["idbono"] == b["idbono"]), None)
-            if gemelo is not None:
-                if _PRIO_SEMAFORO[b["semaforo"]] < _PRIO_SEMAFORO[gemelo["semaforo"]]:
-                    gemelo["semaforo"] = b["semaforo"]
-                continue
-        por_recurso.setdefault(rid, []).append(b)
-
+    """Proyecta el mismo plan en filas de operarios o de máquinas."""
+    plan = _planificar_cola(_leer_cola(), ocupado_hasta, hasta_dt, ahora, teoricos, medias)
     items = []
-    for rid, bonos in por_recurso.items():
-        # 1º lo que se puede trabajar, 2º la secuencia manual del ERP
-        # (`ordenar` = 0 significa "sin colocar a mano": esos van al final).
-        bonos.sort(key=lambda b: (_PRIO_SEMAFORO[b["semaforo"]],
-                                  b["ordenar"] or 10_000,
-                                  b["idorden"], b["idbono"]))
-        cursor = _siguiente_hueco(max(ocupado_hasta.get(rid, ahora), ahora))
-
-        for b in bonos:
-            if cursor > hasta_dt:
-                break
-            min_pieza, setup, origen = _estimar(b, teoricos, medias)
-            pendientes = max(0.0, b["piezas_a_fabricar"] - b["fabricadas"])
-            sin_tiempo = not min_pieza or min_pieza <= 0
-            dur = _MIN_BLOQUE_SIN_TIEMPO if sin_tiempo else setup + pendientes * min_pieza
-            if dur <= 0:
-                continue
-
-            inicio = _siguiente_hueco(cursor)
-            fin    = _sumar_laborables(inicio, dur)
-            cursor = fin
-
+    for tarea in plan:
+        b = tarea["bono"]
+        asignados = tarea["asignados"]
+        empleados = ", ".join(a["empleado"] for a in asignados)
+        filas = [(str(a["idempleado"]), a) for a in asignados] if vista == "empleado" else (
+            [(b["matricula"], b)] if b["matricula"] else []
+        )
+        for rid, asignado in filas:
+            sin_tiempo, min_pieza = tarea["sin_tiempo"], tarea["min_pieza"]
+            semaforo = tarea["semaforo"]
             items.append({
-                "id":         f"P-{b['idorden']}-{b['idbono']}-{rid}",
+                "id": f"P-{b['idorden']}-{b['idbono']}-{b['matricula']}-{rid}",
                 "recurso_id": rid,
-                "tipo":       "programado",
-                # El semáforo manda sobre el color de la barra; "sin-estimar"
-                # solo se impone cuando además no sabemos cuánto dura.
-                "estado":     ("sin-estimar" if sin_tiempo else
-                               "parada" if b["semaforo"] == "bloqueada" else
-                               "disponible"),
-                "semaforo":   b["semaforo"],
-                "en_curso":   False,
-                "estimado":   True,
-                "start":      inicio,
-                "end":        fin,
-                "idorden":    b["idorden"],
-                "idbono":     b["idbono"],
-                "art":        b["descrip_salida"],
-                "operacion":  (f"{b['matricula']} · {b['descrip_maquina']}"
-                               if vista == "empleado" else b["empleado"]),
-                "operarios":  b["empleado"],
-                "piezas":     b["piezas_a_fabricar"],
-                "min_real":   None,
-                "sin_tiempo": sin_tiempo,
-                "orden_manual":     b["ordenar"] or None,
-                "origen_estimado":  origen,
-                "piezas_objetivo":  b["piezas_a_fabricar"] or None,
-                "piezas_hechas":    b["fabricadas"],
-                "piezas_pendientes": pendientes,
-                "min_pieza":        round(min_pieza, 3) if min_pieza else None,
-                "min_restantes":    round(dur),
-                "base_estimacion":  "piezas",
+                "tipo": "programado",
+                "estado": ("sin-estimar" if sin_tiempo else
+                           "parada" if semaforo == "bloqueada" else "disponible"),
+                "semaforo": semaforo,
+                "semaforo_asignacion": asignado["semaforo"],
+                "en_curso": False, "estimado": True,
+                "start": tarea["start"], "end": tarea["end"],
+                "idorden": b["idorden"], "idbono": b["idbono"],
+                "art": b["descrip_salida"],
+                "operacion": (f"{b['matricula']} · {b['descrip_maquina']}"
+                              if vista == "empleado" else empleados),
+                "operarios": empleados,
+                "piezas": b["piezas_a_fabricar"], "min_real": None,
+                "sin_tiempo": sin_tiempo, "orden_manual": tarea["secuencia"],
+                "origen_estimado": tarea["origen"],
+                "piezas_objetivo": b["piezas_a_fabricar"] or None,
+                "piezas_hechas": b["fabricadas"],
+                "piezas_pendientes": tarea["pendientes"],
+                "min_pieza": round(min_pieza, 3) if min_pieza else None,
+                "min_restantes": round(tarea["duracion"]),
+                "base_estimacion": "piezas",
             })
     return items
 
@@ -931,22 +1003,14 @@ def _fundir_montaje(items: list[dict]) -> list[dict]:
         min_montaje = (it["end"] - it["start"]).total_seconds() / 60
         siguiente["start"]       = it["start"]
         siguiente["min_montaje"] = round(min_montaje)
-        total = (siguiente["end"] - siguiente["start"]).total_seconds() / 60
+        total = (_minutos_laborables_entre(siguiente["start"], siguiente["end"])
+                 if siguiente["en_curso"] else
+                 (siguiente["end"] - siguiente["start"]).total_seconds() / 60)
         siguiente["pct_montaje"] = round(100 * min_montaje / total, 1) if total > 0 else 0
         absorbidos.add(id(it))
         fundidos.append(siguiente)
 
     return [it for it in items if id(it) not in absorbidos]
-
-
-def _fin_de_jornada(inicio: datetime, fin: datetime) -> datetime:
-    """Recorta `fin` al final de la jornada del día en que empezó la barra.
-
-    A las 15:00 se para: una barra que se proyecta más allá está prometiendo
-    trabajo en horas en las que no hay nadie. Lo que quede se seguirá viendo
-    mañana, cuando el fichaje siga abierto."""
-    tope = inicio.replace(hour=JORNADA_FIN, minute=0, second=0, microsecond=0)
-    return min(fin, tope) if fin > tope else fin
 
 
 def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avance) -> None:
@@ -973,14 +1037,20 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
     if linea.get("idoperacion") in _OPERACION_MONTAJE:
         dur = _minutos_montaje(linea)
         item["origen_estimado"] = "media_montaje"
-        item["min_restantes"]   = round(max(0.0, dur - (ahora - item["start"]).total_seconds() / 60))
-        fin_estimado = _fin_de_jornada(item["start"], item["start"] + timedelta(minutes=dur))
-        if fin_estimado > ahora:
-            item["end"] = item["fin_estimado"] = fin_estimado
-            total = (fin_estimado - item["start"]).total_seconds()
-            if total > 0:
-                item["progreso"] = round(max(0.0, min(1.0,
-                    (ahora - item["start"]).total_seconds() / total)) * 100)
+        restante = max(0.0, dur - _minutos_laborables_entre(item["start"], ahora))
+        item["min_restantes"] = round(restante)
+        if restante > 0:
+            item["end"] = item["fin_estimado"] = _sumar_laborables(ahora, restante)
+        # Al terminar el montaje aún queda fabricar el bono. Reservar solo
+        # hasta el fin de preparación adelantaría el siguiente bono.
+        ritmo, _, _ = _estimar(linea, teoricos, medias)
+        gasto = avance.get((linea["idorden"], linea["idbono"]))
+        objetivo = float(linea["piezas_a_fabricar"] or 0)
+        if ritmo and objetivo > 0 and gasto and restante > 0:
+            produccion = (max(0.0, objetivo - gasto["piezas"]) * ritmo
+                          if gasto["piezas"] > 0 else
+                          max(0.0, objetivo * ritmo - gasto["min_produccion"]))
+            item["libre_desde"] = _sumar_laborables(ahora, restante + produccion)
         return
 
     min_pieza, setup, origen = _estimar(linea, teoricos, medias)
@@ -991,18 +1061,23 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
         item["estado"] = "sin-estimar"
         return
 
-    gasto     = avance.get((linea["idorden"], linea["idbono"]), {"minutos": 0.0, "operarios": 1, "piezas": 0.0})
+    gasto = avance.get((linea["idorden"], linea["idbono"]))
+    if gasto is None:
+        item["sin_tiempo"] = True
+        item["estado"] = "sin-estimar"
+        return
     objetivo  = float(linea["piezas_a_fabricar"] or 0)
     hechas    = min(gasto["piezas"], objetivo) if objetivo else gasto["piezas"]
-    consumido = gasto["minutos"]
+    consumido = gasto["min_produccion"]
 
     item["min_pieza"]       = round(min_pieza, 3)
     item["min_consumidos"]  = round(consumido)
+    item["min_montaje_consumidos"] = round(gasto["min_montaje"])
     item["piezas_objetivo"] = objetivo or None
     item["piezas_hechas"]   = hechas
     # La preparación solo cuenta si el bono aún no ha arrancado; si ya hay
     # minutos gastados, esa preparación ya está pagada.
-    item["min_estimados"]   = round(objetivo * min_pieza + (setup if consumido == 0 else 0))
+    item["min_estimados"]   = round(objetivo * min_pieza + (setup if gasto["minutos"] == 0 else 0))
 
     if hechas > 0 and objetivo > 0:
         pendientes = max(0.0, objetivo - hechas)
@@ -1041,18 +1116,18 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
     if restante_reloj <= 0:
         return
 
-    # Tope a las 15:00 igual que en el montaje: a esa hora se para, y una barra
-    # que se estira más allá promete trabajo cuando ya no hay nadie en planta.
-    fin_estimado = _fin_de_jornada(item["start"], ahora + timedelta(minutes=restante_reloj))
+    # Conserva la ocupación hasta terminar, saltando noches y fines de semana.
+    # El frontend recorta la barra a su ventana de horas laborables.
+    fin_estimado = _sumar_laborables(ahora, restante_reloj)
     item["end"]          = fin_estimado
     item["fin_estimado"] = fin_estimado
 
     # `progreso` es el relleno visual de la barra: qué parte de ella ya ha
     # transcurrido, para que lo sólido acabe justo en la línea de ahora.
     # El avance en piezas va aparte, en `progreso_piezas`.
-    total = (fin_estimado - item["start"]).total_seconds()
+    total = _minutos_laborables_entre(item["start"], fin_estimado)
     if total > 0:
-        transcurrido = (ahora - item["start"]).total_seconds()
+        transcurrido = _minutos_laborables_entre(item["start"], ahora)
         item["progreso"] = round(max(0.0, min(1.0, transcurrido / total)) * 100)
 
 
