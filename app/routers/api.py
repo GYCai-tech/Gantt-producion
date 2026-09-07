@@ -533,6 +533,75 @@ WHERE ob.IdEstado = 0
 #  van detrás se adelantarían como si no existiera) y va marcado `sin_tiempo`.
 _MIN_BLOQUE_SIN_TIEMPO = 60
 
+
+# ─────────────────────────────────────────────────────────────────────
+#  SEMÁFORO: ¿puede ESTE operario trabajar ESTE bono ahora mismo?
+# ─────────────────────────────────────────────────────────────────────
+#  `dbo.persFTrazaordenesOperariosColor(idorden, idbono, idempleado)` es la
+#  función del ERP que alimenta el semáforo del programa de producción. Es la
+#  misma que consume la vista `PersVTrazaordenesOperarios`; se invoca aquí
+#  directamente sobre nuestra consulta en vez de usar esa vista, porque la
+#  vista además reescribe `ordenar = 0` como 999 — un valor que se colaría
+#  como posición real y colocaría los bonos sin secuencia por delante de los
+#  que sí la tienen.
+#
+#  Devuelve un RGB concatenado. El rojo NO es `IdEstado = 3`: de las 86 filas
+#  rojas medidas, cero son bonos bloqueados. Es disponibilidad *para esa
+#  persona* — falta material, lo tiene cogido otro, falta una fase previa. Por
+#  eso el mismo bono puede ser verde para uno y rojo para otro.
+#
+#  La función está WITH ENCRYPTION: es una caja negra. Sabemos QUE algo está
+#  rojo, no POR QUÉ.
+# ─────────────────────────────────────────────────────────────────────
+
+_SEMAFORO = {
+    '153255255': 'en_curso',    # azul  — la está trabajando ahora mismo
+    '000204051': 'disponible',  # verde — puede ponerse con ella
+    '255051051': 'bloqueada',   # rojo  — la tiene asignada pero no puede
+}
+
+#  Orden en que se sirve la cola. Lo que se puede hacer va primero; dentro de
+#  cada grupo sigue mandando la secuencia manual del ERP.
+_PRIO_SEMAFORO = {'en_curso': 0, 'disponible': 1, 'bloqueada': 2}
+
+#  La función se evalúa fila a fila: la consulta pasa de 12 ms a ~360 ms. Se
+#  cachea porque el color cambia cuando llega material o alguien coge un bono
+#  —minutos, no segundos— y el Gantt se refresca solo cada pocos minutos.
+_SEMAFORO_TTL_S = 120
+_cache_semaforo = {"ts": None, "mapa": {}}
+
+_SEMAFORO_QUERY = """
+SELECT v.idorden, v.IdBono AS idbono, v.IdEmpleado AS idempleado, col.color
+FROM persV_DatosAsociadoEmpleado v
+    JOIN Ordenes_Bonos ob ON ob.IdOrden = v.idorden AND ob.IdBono = v.IdBono
+    OUTER APPLY dbo.persFTrazaordenesOperariosColor(v.idorden, v.IdBono, v.IdEmpleado) col
+WHERE ob.IdEstado = 0
+"""
+
+
+def _cargar_semaforo() -> dict:
+    """{(idorden, idbono, idempleado): 'disponible'|'bloqueada'|'en_curso'}.
+
+    Si el ERP falla se reutiliza la última caché aunque esté caducada: es mejor
+    ordenar con colores de hace unos minutos que perder el semáforo entero y
+    volver a servir la cola en un orden que el operario no puede seguir."""
+    ahora = datetime.now()
+    ts = _cache_semaforo["ts"]
+    if ts is not None and (ahora - ts).total_seconds() < _SEMAFORO_TTL_S:
+        return _cache_semaforo["mapa"]
+    try:
+        filas = _erp(_SEMAFORO_QUERY, {})
+    except HTTPException:
+        print("[items] semáforo no disponible, se reutiliza la caché")
+        return _cache_semaforo["mapa"]
+
+    mapa = {
+        (r["idorden"], r["idbono"], r["idempleado"]): _SEMAFORO.get(r["color"], 'disponible')
+        for r in filas
+    }
+    _cache_semaforo.update(ts=ahora, mapa=mapa)
+    return mapa
+
 JORNADA_INICIO = 7
 JORNADA_FIN    = 16
 
@@ -577,6 +646,7 @@ def _leer_cola() -> list[dict]:
     La vista repite fila cuando un bono declara más de un artículo de salida,
     igual que la consulta de líneas."""
     filas = _erp(_COLA_QUERY, {})
+    semaforo = _cargar_semaforo()
     cola, vistas = [], set()
     for r in filas:
         clave = (r["idorden"], r["idbono"], r["idempleado"])
@@ -584,6 +654,9 @@ def _leer_cola() -> list[dict]:
             continue
         vistas.add(clave)
         cola.append({
+            # Si el ERP no devuelve color, se asume disponible: es preferible
+            # ofrecer trabajo de más que esconderlo por un fallo de la función.
+            "semaforo":          semaforo.get(clave, 'disponible'),
             "idorden":           r["idorden"],
             "idbono":            r["idbono"],
             "idempleado":        r["idempleado"],
@@ -606,8 +679,15 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
     """Las barras 'programado': la cola de cada recurso, una detrás de otra.
 
     Cada bono arranca cuando el recurso queda libre —después de lo que está
-    haciendo ahora— y dura lo que falta por fabricar. El orden es el manual del
-    ERP (`ordenar`); los que no lo tienen van detrás, por número de orden.
+    haciendo ahora— y dura lo que falta por fabricar.
+
+    El orden lo manda primero el semáforo del ERP y después la secuencia manual
+    (`ordenar`). Es deliberado: con el 40% de la cola en rojo, un plan que
+    ignore la disponibilidad es ficción — el operario no puede seguirlo y acaba
+    abriendo otro bono por su cuenta. Poniendo delante lo que sí puede hacer, la
+    cola se reordena sola: cuando llega el material el bono pasa a verde en el
+    ERP y sube de posición sin que nadie replanifique nada. La secuencia manual
+    no se pierde, sigue mandando *dentro* de lo que es viable.
 
     Se corta en cuanto la cola se sale de la ventana visible: encolar meses de
     trabajo que nadie va a ver solo gasta tiempo."""
@@ -616,12 +696,27 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
         rid = str(b["idempleado"]) if vista == "empleado" else b["matricula"]
         if not rid:
             continue
+        if vista == "maquina":
+            # El semáforo es por (bono, operario), pero una máquina no tiene
+            # varios operarios: tiene un bono. Si el bono está asignado a dos
+            # personas saldría dos veces, duplicando su tiempo en la cola de la
+            # máquina. Se queda una sola barra, con el mejor color: a la máquina
+            # le basta con que ALGUIEN pueda hacerlo.
+            gemelo = next((x for x in por_recurso.get(rid, [])
+                           if x["idorden"] == b["idorden"] and x["idbono"] == b["idbono"]), None)
+            if gemelo is not None:
+                if _PRIO_SEMAFORO[b["semaforo"]] < _PRIO_SEMAFORO[gemelo["semaforo"]]:
+                    gemelo["semaforo"] = b["semaforo"]
+                continue
         por_recurso.setdefault(rid, []).append(b)
 
     items = []
     for rid, bonos in por_recurso.items():
-        # `ordenar` = 0 significa "sin colocar a mano": esos van al final.
-        bonos.sort(key=lambda b: (b["ordenar"] or 10_000, b["idorden"], b["idbono"]))
+        # 1º lo que se puede trabajar, 2º la secuencia manual del ERP
+        # (`ordenar` = 0 significa "sin colocar a mano": esos van al final).
+        bonos.sort(key=lambda b: (_PRIO_SEMAFORO[b["semaforo"]],
+                                  b["ordenar"] or 10_000,
+                                  b["idorden"], b["idbono"]))
         cursor = _siguiente_hueco(max(ocupado_hasta.get(rid, ahora), ahora))
 
         for b in bonos:
@@ -642,7 +737,12 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 "id":         f"P-{b['idorden']}-{b['idbono']}-{rid}",
                 "recurso_id": rid,
                 "tipo":       "programado",
-                "estado":     "sin-estimar" if sin_tiempo else "programado",
+                # El semáforo manda sobre el color de la barra; "sin-estimar"
+                # solo se impone cuando además no sabemos cuánto dura.
+                "estado":     ("sin-estimar" if sin_tiempo else
+                               "parada" if b["semaforo"] == "bloqueada" else
+                               "disponible"),
+                "semaforo":   b["semaforo"],
                 "en_curso":   False,
                 "estimado":   True,
                 "start":      inicio,

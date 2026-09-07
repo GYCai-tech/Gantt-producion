@@ -101,13 +101,15 @@ de verdad en planta.
 
 **`GET /api/items?vista=&desde=&hasta=`** — las barras.
 
-| línea del ERP        | tipo         | se ve como            |
-|----------------------|--------------|-----------------------|
-| sin `Hfinal`         | `real`       | En curso (verde, late)|
-| con `Hfinal`         | `trabajado`  | Completada (gris)     |
+| origen                       | tipo         | se ve como                            |
+|------------------------------|--------------|---------------------------------------|
+| línea del ERP sin `Hfinal`   | `real`       | En curso (verde, late)                |
+| línea del ERP con `Hfinal`   | `trabajado`  | Completada (gris)                     |
+| bono asignado y sin arrancar | `programado` | Disponible (verde) / Bloqueada (rojo) |
 
-No hay `programado`: el ERP no dice nada de trabajo futuro y no se inventa,
-así que el contador "en espera" del resumen marca siempre 0.
+Las dos primeras son trabajo real fichado. La tercera es la **cola** (ver más
+abajo): no se inventa nada de cuándo se hará, solo se encadena lo que el ERP ya
+tiene asignado a esa persona.
 
 ### Cuánto le queda a un bono
 
@@ -162,10 +164,53 @@ con operario. Se toman solo los de `IdEstado = 0` (sin arrancar); los de estado
 
 **Cómo se encadena.** Cada bono empieza cuando el recurso queda libre —después
 de la barra en curso— y dura lo que falta por fabricar
-(`pendientes × min/pieza`, la misma cadena de siempre). El orden es el manual
-del ERP; los que no lo tienen van detrás, por número de orden. Todo dentro de
-la jornada **07:00–16:00 y saltando fines de semana**, y se corta en cuanto la
+(`pendientes × min/pieza`, la misma cadena de siempre). Todo dentro de la
+jornada **07:00–16:00 y saltando fines de semana**, y se corta en cuanto la
 cola se sale de la ventana visible.
+
+### El semáforo: la cola se reordena sola
+
+El orden **no** es la secuencia manual a secas. Manda primero el semáforo del
+ERP, y solo dentro de cada grupo ordena la secuencia (`Conf_OrdenesBonos.ordenar`;
+los que no la tienen, detrás por número de orden).
+
+El motivo es de taller: **el 40 % de la cola asignada está en rojo** (86 filas
+de 215). Un operario que no puede seguir el orden establecido —falta material,
+lo tiene cogido otro— abre otro bono por su cuenta. Un plan que ignore eso es
+ficción. Poniendo delante lo que sí puede hacer, la cola **se reordena sola**:
+cuando llega el material el bono pasa a verde en el ERP y sube de posición sin
+que nadie replanifique nada. La secuencia manual no se pierde, sigue mandando
+*dentro* de lo viable.
+
+El color sale de **`dbo.persFTrazaordenesOperariosColor(idorden, idbono, idempleado)`**,
+la misma función que alimenta el semáforo del programa de producción. Se invoca
+con `OUTER APPLY` sobre nuestra consulta, **no** por la vista
+`PersVTrazaordenesOperarios`, porque esa vista reescribe `ordenar = 0` como
+**999** y ese valor se colaría como posición real, adelantando los bonos sin
+secuencia a los que sí la tienen.
+
+| RGB devuelto | color | significa                              |
+|--------------|-------|----------------------------------------|
+| `000204051`  | verde | ese operario puede trabajarlo ahora    |
+| `255051051`  | rojo  | lo tiene asignado pero no puede        |
+| `153255255`  | azul  | lo está trabajando (no llega a la cola)|
+
+> **Ojo, "bloqueado" son dos cosas distintas y disjuntas.** El rojo del semáforo
+> (86 filas) **no** es `Ordenes_Bonos.IdEstado = 3` (429 bonos): el solapamiento
+> medido es **cero**. Los de `IdEstado = 3` no aparecen en ninguna parte, porque
+> `persV_DatosAsociadoEmpleado` filtra `IdEstado NOT IN ('-1','3','2')`. Decisión
+> tomada: no se muestran.
+
+**Coste y caché.** La función se evalúa fila a fila: la consulta pasa de 12 ms a
+~360 ms, y `/api/items` de ~58 ms a ~730 ms. Por eso se cachea **120 s**, igual
+que las estimaciones; si el ERP falla se reutiliza la caché caducada, porque es
+mejor ordenar con colores de hace unos minutos que servir una cola que el
+operario no puede seguir.
+
+**Efecto secundario conocido:** al mandar el rojo al final, se sale de la ventana
+visible. En vista de operarios se pintan 4 de 77 bloqueadas. Para el operario es
+lo correcto —solo ve lo que puede hacer—; si algún día hace falta verlas todas,
+lo suyo sería que no consumieran tiempo de cola en vez de intercalarlas.
 
 La jornada se cuenta entera (540 min) sin descontar el descanso de 11:00–11:15
 a propósito: el eje del Gantt tampoco lo comprime, lo pinta como una banda.
