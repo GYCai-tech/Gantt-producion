@@ -351,6 +351,23 @@ button { font-family: inherit; }
   background: #c77b1f; color: #fff;
 }
 
+/* Lo que se ha pasado del tiempo teórico: rojo desde el punto en que se agota
+   el presupuesto hasta el final de la barra, con el corte marcado. Translúcido
+   porque se pinta encima del texto de la barra. */
+.bar__exceso {
+  position: absolute; top: 0; bottom: 0;
+  border-left: 2px solid var(--rojo);
+  border-radius: 0 5px 5px 0;
+  background: rgba(200, 32, 45, .42);
+  pointer-events: none;
+  /* El "+1 h 30" va al extremo DERECHO: este div se pinta encima de la barra,
+     y a la izquierda esta el numero de orden y la maquina. Pegado al corte se
+     superponia al texto del bono y no se leia ninguno de los dos. */
+  display: flex; align-items: center; justify-content: flex-end;
+  padding-right: 7px; overflow: hidden;
+  font-size: 11px; font-weight: 700; color: #6e1119; white-space: nowrap;
+}
+
 /* Tramo de preparación dentro de la barra de un bono: azul apagado sobre el
    color de estado de la barra, con el corte marcado donde acaba el montaje y
    empieza a fabricarse.

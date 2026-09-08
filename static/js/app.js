@@ -394,6 +394,29 @@ const App = (() => {
       // el tooltip de la barra (ver showTip).
       bar.appendChild(m);
     }
+    // Lo que se ha pasado del tiempo teorico. `fin_teorico` es el INSTANTE en
+    // que esta sesion agota el presupuesto del bono (el backend ya descuenta lo
+    // gastado en sesiones anteriores). Si cae dentro de la barra, todo lo que
+    // hay a su derecha es exceso. Si no se ha pasado, `fin_teorico` queda en el
+    // borde o mas alla y no se pinta nada.
+    // Se exige `min_exceso` y no solo que `fin_teorico` caiga dentro: como el
+    // fin de una barra abierta es "ahora", el corte teorico queda unos segundos
+    // por detras y pintaba una astilla roja en bonos que no se han pasado.
+    if (it.fin_teorico && it.min_exceso) {
+      const xTeorico = workX(new Date(it.fin_teorico));
+      if (xTeorico < lx + w - 1) {
+        const ex = document.createElement('div');
+        ex.className = 'bar__exceso';
+        const desde = clamp((xTeorico - lx) / w, 0, 1);
+        ex.style.left  = (100 * desde) + '%';
+        ex.style.width = (100 * (1 - desde)) + '%';
+        // El cuanto, dentro del propio tramo: sin esto la barra dice que se ha
+        // pasado pero hay que abrir el tooltip para saber de cuanto. Solo si
+        // cabe, que si no se sale del tramo y se lee peor que nada.
+        if (w * (1 - desde) > 58) ex.textContent = '+' + fmtMin(it.min_exceso);
+        bar.appendChild(ex);
+      }
+    }
 
     bar.addEventListener('mouseenter', e => showTip(e, it));
     bar.addEventListener('mousemove', moveTip);
@@ -410,6 +433,12 @@ const App = (() => {
     rows.push(`<div class="tip__row">Bono <span>${it.idbono || '—'}</span></div>`);
     if (it.es_montaje) rows.push(`<div class="tip__row">Tipo <span>⚙ Montaje de utillaje</span></div>`);
     if (it.min_montaje) rows.push(`<div class="tip__row">Preparación <span>${fmtMin(it.min_montaje)} · ${it.pct_montaje}% de la barra</span></div>`);
+    // El teorico contra lo que de verdad esta costando, que es la lectura que
+    // pide el tramo rojo de la barra.
+    if (it.min_exceso) {
+      rows.push(`<div class="tip__row">Teórico <span>${fmtMin(it.min_estimados)}</span></div>`);
+      rows.push(`<div class="tip__row">Real <span style="color:#ff9a9a">${fmtMin(it.min_consumidos)} · ${fmtMin(it.min_exceso)} de más</span></div>`);
+    }
     if (it.tipo === 'real') {
       if (it.progreso_piezas != null) rows.push(`<div class="tip__row">Progreso <span>${it.progreso_piezas}% de las piezas</span></div>`);
       if (it.operarios) rows.push(`<div class="tip__row">Operarios <span>${it.operarios}</span></div>`);

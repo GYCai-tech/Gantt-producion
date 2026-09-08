@@ -635,9 +635,10 @@ def get_items(
             "idbono":     l["idbono"],
             "art":        l["descrip_salida"],
             # En la vista de operarios interesa saber la máquina; en la de
-            # máquinas, quién estaba en ella.
-            "operacion":  (f"{l['matricula']} · {l['descrip_maquina']}"
-                           if vista == "empleado" else l["empleado"]),
+            # máquinas, quién estaba en ella. Solo el nombre de la máquina: la
+            # matrícula delante comía sitio en una barra que suele ser estrecha
+            # y no aporta nada a quien lee el Gantt.
+            "operacion":  (l["descrip_maquina"] if vista == "empleado" else l["empleado"]),
             "operarios":  l["empleado"],
             "piezas":     l["piezas_a_fabricar"],
             "min_real":   min_real,
@@ -990,8 +991,7 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 "start": tarea["start"], "end": tarea["end"],
                 "idorden": b["idorden"], "idbono": b["idbono"],
                 "art": b["descrip_salida"],
-                "operacion": (f"{b['matricula']} · {b['descrip_maquina']}"
-                              if vista == "empleado" else empleados),
+                "operacion": (b["descrip_maquina"] if vista == "empleado" else empleados),
                 "operarios": empleados,
                 "piezas": b["piezas_a_fabricar"], "min_real": None,
                 "sin_tiempo": sin_tiempo, "orden_manual": tarea["secuencia"],
@@ -1140,6 +1140,31 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
         restante = max(0.0, item["min_estimados"] - consumido)
         item["base_estimacion"] = "minutos"
         item["excedido"] = consumido > item["min_estimados"]
+
+    # ── Dónde se agota el tiempo teórico, sobre ESTA barra ──────────────
+    # El presupuesto (`min_estimados`) y lo gastado (`consumido`) son del BONO
+    # entero, pero la barra es UNA sesión de fichaje. Así que el punto de corte
+    # no es "start + presupuesto": hay que descontar lo que ya se gastó en
+    # sesiones anteriores. En 6135/90 el bono lleva 162 min consumidos, 131 de
+    # ellos en esta barra, luego antes se gastaron 31 y del presupuesto de 43
+    # solo quedaban 12 al empezarla: el corte cae a los 12 minutos, no a los 43.
+    #
+    # Se manda como INSTANTE y no como porcentaje: el eje del Gantt salta el
+    # descanso y las noches, así que un % del ancho caería en el sitio
+    # equivocado en cuanto la barra cruce una de esas bandas.
+    # No se pinta exceso contra un baremo que ya hemos declarado poco fiable:
+    # seria contradictorio que la misma barra dijera "sin datos fiables" y a la
+    # vez acusara de 240 minutos de mas. El rojo solo aparece cuando el tiempo
+    # de referencia es del escandallo o del historico del propio articulo.
+    if (not item.get("sin_tiempo") and item.get("min_estimados")
+            and origen != "media_maquina"):
+        minutos_barra   = _minutos_laborables_entre(item["start"], ahora)
+        consumido_antes = max(0.0, consumido - minutos_barra)
+        resto           = item["min_estimados"] - consumido_antes
+        item["fin_teorico"] = (item["start"] if resto <= 0
+                               else _sumar_laborables(item["start"], resto))
+        if consumido > item["min_estimados"]:
+            item["min_exceso"] = round(consumido - item["min_estimados"])
 
     if objetivo > 0 and hechas >= objetivo:
         # Fabricadas todas las piezas y el fichaje sigue abierto. Y mientras
