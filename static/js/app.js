@@ -43,13 +43,11 @@ const App = (() => {
   };
 
   // De donde ha salido el tiempo estimado de un bono (ver /api/items).
-  // La media de la MAQUINA ya no se usa: mezclaba piezas de cualquier tamano
-  // del mismo puesto y aplicada a un articulo sin historico era adivinar.
   const ORIGEN = {
     teorico:        'tiempo teorico',
     media_articulo: 'media del articulo',
     media_trabajo:  'media del trabajo',
-    media_montaje:  'media de montaje de la maquina',
+    media_maquina:  'media de la maquina',
   };
 
   // ── Estado ─────────────────────────────────────────────────────────
@@ -422,7 +420,7 @@ const App = (() => {
     }
     const fuente = ORIGEN[it.origen_estimado] || it.origen_estimado;
     if (it.sin_tiempo) {
-      rows.push(`<div class="tip__row">Estimado <span>⚠ sin datos: este articulo no tiene historico</span></div>`);
+      rows.push(`<div class="tip__row">Estimado <span>sin tiempo teorico ni media</span></div>`);
     } else if (it.min_pieza != null) {
       if (it.base_estimacion === 'piezas') {
         rows.push(`<div class="tip__row">Piezas <span>${fmtNum(it.piezas_hechas)} de ${fmtNum(it.piezas_objetivo)} · quedan ${fmtNum(it.piezas_pendientes)}</span></div>`);

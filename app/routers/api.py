@@ -478,18 +478,11 @@ def _estimar(linea: dict, teoricos: dict, medias: dict):
     if min_pieza_erp:
         return min_pieza_erp, setup, "teorico"
 
-    # Solo se estima con histórico del propio artículo o de su trabajo. La media
-    # de la MÁQUINA queda fuera a propósito: mezcla todo lo que pasa por ese
-    # puesto, piezas de cualquier tamaño, así que aplicada a un artículo nuevo
-    # es adivinar. En 6135/90 daba 0,448 min/pieza y estimaba el bono entero en
-    # 11 minutos -- 25 piezas a 26 segundos en una plegadora --, y a los 57
-    # minutos reales lo marcaba en riesgo. El aviso era del dato, no del taller.
-    #
-    # Sin estimación el bono sale como "sin-estimar": la barra crece con el
-    # reloj y avisa, en vez de inventar un plazo y luego culpar al operario.
+    matricula = (linea["matricula"] or "").strip()
     for origen, nivel, clave in (
         ("media_articulo", "articulo", linea["idarticulo_salida"]),
         ("media_trabajo",  "trabajo",  linea["idtrabajo"]),
+        ("media_maquina",  "maquina",  matricula),
     ):
         acc = medias[nivel].get(clave)
         if acc and acc["n"] >= _MIN_BONOS_MEDIA and acc["piezas"] > 0:
