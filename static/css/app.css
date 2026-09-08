@@ -386,7 +386,9 @@ button { font-family: inherit; }
 /* Colores por estado */
 .bar.st-retrasada, .bar.st-vencida { background: var(--rojo-bg);  border-color: #f1b6ba; color: #8f2129; }
 .bar.st-riesgo,    .bar.st-urgente { background: var(--ambar-bg); border-color: #ecca97; color: #80490a; }
-.bar.st-plazo,     .bar.st-normal  { background: var(--verde-bg); border-color: #a8dcbb; color: #156138; }
+/* "En curso": cian. El verde se lo dejamos a "disponible" (cola lista para
+   trabajar), que antes compartia color con esto y se confundian. */
+.bar.st-plazo,     .bar.st-normal  { background: #ddf3f8; border-color: #18b5d0; color: #0f5f6e; }
 .bar.st-sin-fecha { background: var(--gris-bg); border-color: #cfd6e0; color: #56627a; }
 /* Sin tiempo teorico ni media: no se puede estimar el fin, y se ve. */
 .bar.st-sin-estimar {

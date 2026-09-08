@@ -35,7 +35,7 @@ const App = (() => {
     'pendiente-cierre': 'Pendiente de cerrar',
   };
   const ST_COLOR = {
-    plazo: '#1f9254', completado: '#6b7689',
+    plazo: '#128fa6', completado: '#6b7689',
     retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#c4710c',
     parada: '#9a4b52', pausada: '#5b6b8a', parcial: '#c77b1f',
     programado: '#5b63b0', disponible: '#1f9254',
