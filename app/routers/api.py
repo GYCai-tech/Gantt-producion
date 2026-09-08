@@ -58,7 +58,13 @@ FROM Ordenes_Bonos_Lineas obl
                                   AND obl.IdBono      = obs.IdBono
     JOIN Articulos a_sal           ON obs.IdArticulo  = a_sal.IdArticulo
     JOIN Empleados_Datos ed        ON obl.IdEmpleado  = ed.IdEmpleado
-WHERE obl.IdEstado = :estado
+-- Una línea es pintable si tiene hora de inicio. NO se filtra por
+-- `obl.IdEstado`: ahí el estado es TRANSITORIO —1 mientras el fichaje está
+-- abierto, 2 al cerrarlo— y no significa "línea válida". Filtrando por 1 el
+-- Gantt solo enseñaba lo que estaba abierto en ese instante y tiraba todo el
+-- trabajo ya terminado: ETT3 pintaba 1 barra de las 9 que hizo hoy, y un día
+-- pasado enseñaba 7 líneas de las 126 que hubo.
+WHERE obl.Hinicial IS NOT NULL
 """
 
 _LINEAS_ORDEN = """
@@ -113,17 +119,16 @@ def _nombre_completo(r) -> str:
     return " ".join(partes) or f"#{r['idempleado']}"
 
 
-def _leer_lineas(desde: date, hasta: date, estado: int = 1) -> list[dict]:
+def _leer_lineas(desde: date, hasta: date) -> list[dict]:
     """Las líneas de bono del rango, deduplicadas y con inicio/fin resueltos."""
-    filas = _erp(_consulta_lineas(_FILTRO_RANGO),
-                 {"desde": desde, "hasta": hasta, "estado": estado})
+    filas = _erp(_consulta_lineas(_FILTRO_RANGO), {"desde": desde, "hasta": hasta})
     return _normalizar_lineas(filas)
 
 
-def _leer_abiertas(ahora: datetime, estado: int) -> list[dict]:
+def _leer_abiertas(ahora: datetime) -> list[dict]:
     """Ocupación actual, independiente del día que se está consultando."""
     return _normalizar_lineas(_erp(_consulta_lineas(_FILTRO_ABIERTAS), {
-        "estado": estado, "ahora": ahora,
+        "ahora": ahora,
         "limite": ahora - timedelta(hours=_HORAS_LINEA_VIVA),
     }))
 
@@ -165,12 +170,11 @@ def _normalizar_lineas(filas) -> list[dict]:
 @router.get("/lineas")
 def get_lineas(
     dia: Optional[date] = Query(None, description="Día a consultar (YYYY-MM-DD). Por defecto, hoy."),
-    estado: int = Query(1, description="IdEstado de la línea de bono. 1 = activa."),
 ):
     """La consulta en crudo, un día. No la usa el Gantt (que va por /items),
     pero es el sitio donde mirar qué está devolviendo el ERP."""
     dia = dia or date.today()
-    lineas = _leer_lineas(dia, dia, estado)
+    lineas = _leer_lineas(dia, dia)
     return {"dia": dia, "ahora": datetime.now(), "total": len(lineas), "lineas": lineas}
 
 
@@ -583,7 +587,6 @@ def get_items(
     vista: str = Query("empleado", pattern="^(maquina|empleado)$"),
     desde: Optional[datetime] = None,
     hasta: Optional[datetime] = None,
-    estado: int = Query(1, description="IdEstado de la línea de bono. 1 = activa."),
 ):
     hoy = date.today()
     d0 = _dia_local(desde) if desde else hoy
@@ -593,8 +596,8 @@ def get_items(
         d1 = d0
 
     ahora = datetime.now()
-    lineas = _leer_lineas(d0, d1, estado)
-    abiertas = _leer_abiertas(ahora, estado) if d1 >= hoy else []
+    lineas = _leer_lineas(d0, d1)
+    abiertas = _leer_abiertas(ahora) if d1 >= hoy else []
     # La ocupación de hoy debe seguir reservada al navegar a mañana. También
     # permite dibujar la continuación de un bono iniciado fuera de la ventana.
     por_id = {(l["idorden"], l["idbono"], l["idlinea"]): l for l in lineas}

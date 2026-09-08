@@ -34,7 +34,7 @@ def test_navegar_a_manana_conserva_el_bono_activo_de_hoy(monkeypatch):
     monkeypatch.setattr(api, '_leer_cola', lambda: [bono(2)])
     for vista in ('empleado', 'maquina'):
         items = api.get_items(vista=vista, desde=datetime(2026, 9, 8),
-                              hasta=datetime(2026, 9, 9), estado=1)
+                              hasta=datetime(2026, 9, 9))
         real = next(i for i in items if i['tipo'] == 'real')
         previsto = next(i for i in items if i['tipo'] == 'programado')
         assert real['end'] == datetime(2026, 9, 8, 11, 30)
@@ -47,8 +47,11 @@ def test_abiertas_usa_hora_real_y_no_fecha_de_grabacion(monkeypatch):
         capturado.update(query=query, params=params)
         return []
     monkeypatch.setattr(api, '_erp', leer)
-    assert api._leer_abiertas(AHORA, 1) == []
+    assert api._leer_abiertas(AHORA) == []
     assert 'obl.Hfinal IS NULL' in capturado['query']
+    # El IdEstado de la LINEA es transitorio (1 abierta, 2 cerrada), no dice si
+    # la linea vale: filtrando por el se perdia todo el trabajo ya terminado.
+    assert 'obl.IdEstado =' not in capturado['query']
     assert 'obl.Hinicial BETWEEN :limite AND :ahora' in capturado['query']
     assert 'CAST(obl.Fecha AS date) BETWEEN' not in capturado['query']
     assert capturado['params']['limite'] == datetime(2026, 9, 6, 12)
@@ -65,7 +68,7 @@ def test_fichaje_antiguo_sin_cerrar_no_se_proyecta_como_trabajo_actual(monkeypat
     monkeypatch.setattr(api, '_avance_por_bono', lambda *args: {})
     monkeypatch.setattr(api, '_leer_cola', lambda: [])
     items = api.get_items(vista='empleado', desde=datetime(2026, 9, 4),
-                          hasta=datetime(2026, 9, 9), estado=1)
+                          hasta=datetime(2026, 9, 9))
     assert items[0]['tipo'] == 'parcial'
     assert items[0]['en_curso'] is False
     assert items[0]['end'] == datetime(2026, 9, 4, 15)
@@ -86,4 +89,4 @@ def test_navegar_al_futuro_no_devuelve_barras_que_ya_terminaron(monkeypatch):
     })
     monkeypatch.setattr(api, '_leer_cola', lambda: [])
     assert api.get_items(vista='empleado', desde=datetime(2026, 9, 8),
-                         hasta=datetime(2026, 9, 9), estado=1) == []
+                         hasta=datetime(2026, 9, 9)) == []
