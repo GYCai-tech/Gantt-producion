@@ -1123,6 +1123,16 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
         # ritmo real empeora solo: sin este caso, el bono se hundía en ámbar
         # cuanto más tardaran en cerrarlo (6583/50: 100% de piezas y +21%).
         item["estado"] = "pendiente-cierre"
+    elif origen == "media_maquina":
+        # La media de la MÁQUINA mezcla todo lo que pasa por ese puesto, piezas
+        # de cualquier tamaño, así que no sirve para juzgar si un bono va lento:
+        # en 6135/90 (artículo sin ningún bono cerrado en 18 meses) daba 25
+        # piezas en 11 minutos y lo marcaba en riesgo a los 57 reales. El aviso
+        # era del dato, no del taller.
+        #
+        # Se conserva la estimación —la barra y la cola mantienen su anchura—
+        # y solo cambia la etiqueta: "sin datos" en vez de "en riesgo".
+        item["estado"] = "sin-estimar"
     elif item["excedido"]:
         # Va por encima del ritmo esperado. Se sigue dibujando lo que queda
         # (el trabajo pendiente no desaparece por ir tarde), pero en ámbar.

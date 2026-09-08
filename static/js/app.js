@@ -29,7 +29,7 @@ const App = (() => {
   // tiene el mismo resultado práctico que uno bloqueado a nivel de bono).
   const ST_LABEL = {
     plazo: 'En curso', completado: 'Completado',
-    retrasada: 'Retrasada', riesgo: 'En riesgo', 'sin-estimar': 'Sin estimar',
+    retrasada: 'Retrasada', riesgo: 'En riesgo', 'sin-estimar': 'Sin datos fiables',
     parada: 'Bloqueada', pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
     programado: 'En espera', disponible: 'Disponible',
     'pendiente-cierre': 'Pendiente de cerrar',
