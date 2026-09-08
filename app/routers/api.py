@@ -390,28 +390,50 @@ _cache_estima = {"ts": None, "teoricos": {}, "medias": {"articulo": {}, "trabajo
                  "montajes": {"trabajo": {}, "maquina": {}}}
 
 
-def _cargar_estimaciones():
-    """Escandallo y medias históricas, cacheados _ESTIMA_TTL_S segundos.
+def _cargar_teoricos() -> dict:
+    """El escandallo del ERP, SIN cachear: leído en cada request.
 
-    Si el ERP falla se reutiliza la última caché aunque esté caducada: es
-    preferible estimar con datos de hace diez minutos que marcar de golpe
-    todas las barras como "sin tiempo"."""
-    ahora = datetime.now()
-    ts = _cache_estima["ts"]
-    if ts is not None and (ahora - ts).total_seconds() < _ESTIMA_TTL_S:
-        return _cache_estima["teoricos"], _cache_estima["medias"]
+    Es el único dato de la cadena que una persona edita y espera ver reflejado
+    al momento. Cuesta 16 ms sobre 30 filas —solo mira bonos abiertos—, así que
+    cachearlo solo servía para que un tiempo recién metido tardara hasta diez
+    minutos en aparecer. Los agregados históricos, que sí son caros (123 y 52
+    ms sobre miles de filas), siguen en `_cargar_estimaciones`: esos hablan de
+    18 meses de bonos cerrados y no cambian de un minuto a otro.
 
+    `min_pieza` puede venir a None: hay bonos que declaran la preparación y no
+    el escandallo. Se guardan igual, porque el setup sirve aunque el ritmo
+    tenga que salir del histórico.
+    """
     try:
         with get_erp_engine().connect() as conn:
-            # `min_pieza` puede venir a None: hay bonos que declaran la
-            # preparación y no el escandallo. Se guardan igual, porque el setup
-            # sirve aunque el ritmo tenga que salir del histórico.
             teoricos = {
                 (int(r["idorden"]), int(r["idbono"])):
                     (float(r["setup_min"] or 0),
                      float(r["min_pieza"]) if r["min_pieza"] is not None else None)
                 for r in conn.execute(text(_SQL_TEORICO)).mappings()
             }
+    except SQLAlchemyError as e:
+        print(f"[items] escandallo no disponible, se reutiliza el último: {e.__class__.__name__}")
+        return _cache_estima["teoricos"]
+    _cache_estima["teoricos"] = teoricos
+    return teoricos
+
+
+def _cargar_estimaciones():
+    """Medias históricas, cacheadas _ESTIMA_TTL_S segundos. El escandallo va
+    aparte y en vivo (ver `_cargar_teoricos`).
+
+    Si el ERP falla se reutiliza la última caché aunque esté caducada: es
+    preferible estimar con datos de hace diez minutos que marcar de golpe
+    todas las barras como "sin tiempo"."""
+    ahora = datetime.now()
+    teoricos = _cargar_teoricos()
+    ts = _cache_estima["ts"]
+    if ts is not None and (ahora - ts).total_seconds() < _ESTIMA_TTL_S:
+        return teoricos, _cache_estima["medias"]
+
+    try:
+        with get_erp_engine().connect() as conn:
             medias = {"articulo": {}, "trabajo": {}, "maquina": {}}
             for r in conn.execute(text(_SQL_MEDIAS), {"meses": -_HIST_MESES}).mappings():
                 for nivel, clave in (("articulo", r["idarticulo"]),
@@ -437,10 +459,12 @@ def _cargar_estimaciones():
                     acc["n"]       += int(r["n"] or 0)
                     acc["minutos"] += float(r["media"] or 0) * int(r["n"] or 0)
     except SQLAlchemyError as e:
-        print(f"[items] estimaciones no disponibles, se reutiliza la caché: {e.__class__.__name__}")
-        return _cache_estima["teoricos"], _cache_estima["medias"]
+        print(f"[items] históricos no disponibles, se reutiliza la caché: {e.__class__.__name__}")
+        return teoricos, _cache_estima["medias"]
 
-    _cache_estima.update(ts=ahora, teoricos=teoricos, medias=medias, montajes=montajes)
+    # `teoricos` no entra aquí: lo refresca y guarda `_cargar_teoricos` en cada
+    # request, y meterlo en este update lo ataría otra vez al TTL de 10 minutos.
+    _cache_estima.update(ts=ahora, medias=medias, montajes=montajes)
     return teoricos, medias
 
 
