@@ -266,10 +266,17 @@ const App = (() => {
       byRes.get(k).push(i);
     });
 
+    // Mirando HOY, "con actividad" es tener un fichaje ABIERTO ahora mismo
+    // (Hfinal NULL, que el API manda como en_curso): quien cerro su bono a las
+    // 9 ya no esta trabajando. En un dia PASADO no hay fichajes abiertos por
+    // definicion, asi que ahi la pregunta util es otra —quien trabajo ese dia—
+    // y vale cualquier barra; si no, el filtro dejaria la pantalla en blanco.
+    const ventanaIncluyeHoy = days.some(d => +d === +startOfDay(new Date()));
     let lista = grupos;
     if (cargaFilter !== 'todos') {
       lista = grupos.filter(g => {
-        const has = (byRes.get(String(g.id)) || []).length > 0;
+        const barras = byRes.get(String(g.id)) || [];
+        const has = ventanaIncluyeHoy ? barras.some(i => i.en_curso) : barras.length > 0;
         return cargaFilter === 'con' ? has : !has;
       });
     }
@@ -288,8 +295,9 @@ const App = (() => {
     if (!lista.length) {
       cont.innerHTML = `<div class="gantt__empty">${
         searchTerm ? `Sin resultados para "<b>${esc(searchTerm)}</b>".` :
-        cargaFilter === 'con' ? `Ningún${vista === 'maquina' ? 'a máquina' : ' operario'} con actividad en esta vista.` :
-        `Tod${vista === 'maquina' ? 'as las máquinas' : 'os los operarios'} tienen actividad.`}</div>`;
+        cargaFilter === 'con'
+          ? `Ningún${vista === 'maquina' ? 'a máquina' : ' operario'} ${ventanaIncluyeHoy ? 'con un fichaje abierto ahora mismo' : 'con actividad ese día'}.`
+          : `Tod${vista === 'maquina' ? 'as las máquinas' : 'os los operarios'} ${ventanaIncluyeHoy ? 'tienen un fichaje abierto' : 'tuvieron actividad'}.`}</div>`;
       return;
     }
 
