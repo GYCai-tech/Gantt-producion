@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}GYC · Fiabilidad de las estimaciones{% endblock %}
+
+{% block navbar_extra %}
+<button class="btn-refresh" id="btn-refresh" onclick="Fiab.refrescar()" title="Rehacer el análisis contra el ERP">
+  <svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+  <span id="refresh-label">Recalcular</span>
+</button>
+<span class="topbar__clock fiab-clock" id="generado"></span>
+{% endblock %}
+
+{% block body %}
+<div class="app">
+  <main class="panel fiab">
+
+    <header class="fiab__intro">
+      <h1>¿Nos podemos fiar de las estimaciones?</h1>
+      <p>
+        Para responderlo se cogen los bonos <b>ya cerrados</b> —de los que se sabe lo que
+        costaron de verdad—, se calcula lo que la app habría predicho para cada uno
+        <b>sin contar con ese bono</b>, y se compara. Es la misma cadena de estimación que
+        alimenta el Gantt, medida contra la realidad.
+      </p>
+    </header>
+
+    <div id="fiab-cargando" class="fiab__estado">Analizando el histórico…</div>
+    <div id="fiab-error" class="fiab__estado fiab__estado--error" hidden></div>
+
+    <div id="fiab-cuerpo" hidden>
+
+      <!-- Titular -->
+      <section class="fiab__titular" id="titular"></section>
+
+      <!-- Cada escalón de la cadena -->
+      <section class="fiab__bloque">
+        <h2>Qué tal funciona cada escalón</h2>
+        <p class="fiab__nota">
+          La app prueba estas fuentes en orden y se queda con la primera que responde.
+          <b>MdAPE</b> es el error absoluto mediano; <b>sesgo</b> es real ÷ estimado, así que
+          por encima de 1 nos quedamos cortos y por debajo nos pasamos.
+        </p>
+        <div class="fiab__tabla-wrap">
+          <table class="fiab__tabla" id="tabla-origenes"></table>
+        </div>
+      </section>
+
+      <!-- Distribución -->
+      <section class="fiab__bloque">
+        <h2>Cómo se reparte el error</h2>
+        <p class="fiab__nota">
+          Cada barra es el porcentaje de bonos que cayó en ese tramo de real ÷ estimado.
+          Lo bueno es que se amontone en el centro.
+        </p>
+        <div class="fiab__hists" id="histogramas"></div>
+      </section>
+
+      <!-- Lo que hay hoy en pantalla -->
+      <section class="fiab__bloque">
+        <h2>En qué se apoya lo que hay hoy en el Gantt</h2>
+        <p class="fiab__nota">
+          Lo de arriba es historia. Esto es cuánto del tablero de <b>ahora mismo</b> depende
+          de cada fuente.
+        </p>
+        <div class="fiab__cobertura" id="cobertura"></div>
+      </section>
+
+      <!-- Dónde arreglarlo -->
+      <section class="fiab__bloque">
+        <h2>Por dónde empezar a arreglarlo</h2>
+        <p class="fiab__nota">
+          Artículos con al menos 3 bonos, un error mediano por encima del 25% y
+          ordenados por <b>horas perdidas</b>: un 300% de error en bonos de 4 minutos no
+          molesta a nadie, y un 40% en bonos de 12 horas descoloca el taller. Meter el
+          tiempo de estos en el escandallo es lo que más cambia el Gantt.
+        </p>
+        <div class="fiab__tabla-wrap">
+          <table class="fiab__tabla" id="tabla-peores"></table>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/fiabilidad.js?v={{ static_v }}"></script>
+{% endblock %}

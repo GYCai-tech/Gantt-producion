@@ -16,6 +16,7 @@ def test_la_app_publica_las_rutas_que_consume_el_frontend():
     assert {
         "/", "/api/lineas", "/api/grupos", "/api/items",
         "/api/refrescar", "/api/refrescar/{flow_run_id}",
+        "/fiabilidad", "/api/fiabilidad",
     }.issubset(_rutas())
 
 
