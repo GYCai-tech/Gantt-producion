@@ -65,16 +65,37 @@ def test_el_tiempo_que_gasto_otro_operario_no_acorta_lo_que_queda():
     assert solo["min_restantes"] == compartido["min_restantes"]
 
 
-def test_ritmo_peor_que_el_esperado_marca_riesgo_pero_sigue_pintando_lo_que_falta():
+def test_pasarse_del_presupuesto_se_marca_con_el_tramo_rojo_no_con_ambar():
+    """Cuando se sabe DONDE se agoto el presupuesto, el aviso es ese punto.
+
+    Tenir ademas toda la barra de ambar decia lo mismo dos veces y pintaba de
+    alarma la parte que si fue dentro de presupuesto: la barra iba ambar ->
+    rojo -> ambar, y el mismo ambar significaba "esto iba bien" a la izquierda
+    y "esto aun no ha pasado" a la derecha."""
     item = _item()
     # 3.400 min para 360 piezas = 9,44 min/pieza frente a 5,6 esperados.
     _proyectar(item, _linea(600), AHORA, {}, _medias(5.6), _avance(minutos=3400, piezas=360))
 
     assert item["excedido"] is True
-    assert item["estado"] == "riesgo"
+    assert item["min_exceso"] > 0           # 3.400 gastados sobre 3.360 de presupuesto
+    assert "fin_teorico" in item            # el punto del corte, para pintar el tramo
+    assert item["estado"] != "riesgo"       # el ambar sobraba
     assert item["min_pieza_real"] == 9.444
     assert item["min_restantes"] > 0        # ir tarde no borra el trabajo pendiente
     assert "fin_estimado" in item
+
+
+def test_ir_lento_sin_agotar_el_presupuesto_si_marca_riesgo():
+    """Aqui no hay punto de corte que pintar —el presupuesto aun no se agoto—,
+    asi que el aviso tiene que ser de toda la barra."""
+    item = _item()
+    # 200 min para 20 piezas = 10 min/pieza frente a 5,6; pero el bono entero
+    # presupuesta 600 x 5,6 = 3.360, asi que todavia no se ha pasado.
+    _proyectar(item, _linea(600), AHORA, {}, _medias(5.6), _avance(minutos=200, piezas=20))
+
+    assert item["excedido"] is True
+    assert "min_exceso" not in item
+    assert item["estado"] == "riesgo"
 
 
 def test_un_desvio_dentro_de_la_tolerancia_no_marca_riesgo():
@@ -96,12 +117,12 @@ def test_sin_piezas_declaradas_cae_al_presupuesto_de_minutos():
     assert item["excedido"] is False
 
 
-def test_sin_piezas_y_pasado_de_presupuesto_marca_riesgo():
+def test_sin_piezas_y_pasado_de_presupuesto_se_marca_el_exceso():
     item = _item()
     _proyectar(item, _linea(100), AHORA, {}, _medias(10.0), _avance(minutos=1200, piezas=0))
 
     assert item["excedido"] is True
-    assert item["estado"] == "riesgo"
+    assert item["min_exceso"] == 200        # 1.200 gastados sobre 1.000
     assert item["min_restantes"] == 0
 
 

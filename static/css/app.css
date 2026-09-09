@@ -326,6 +326,13 @@ button { font-family: inherit; }
 .bar__id { font-weight: 700; flex-shrink: 0; }
 .bar__bono { font-weight: 400; opacity: .75; font-size: .85em; }
 .bar__sub { font-weight: 500; opacity: .8; overflow: hidden; text-overflow: ellipsis; }
+/* Cuanto se ha pasado del teorico. Va en el flujo de la barra y pegado a la
+   derecha: el tramo rojo acaba en "ahora", o sea en mitad de la barra, y una
+   etiqueta dentro de el caia encima del nombre del bono. */
+.bar__exceso-num {
+  margin-left: auto; flex-shrink: 0; position: relative; z-index: 1;
+  font-size: 11px; font-weight: 700; color: #9c2530;
+}
 
 /* Planificadas: arrastrables (sólidas) */
 .bar--planificado { cursor: grab; }

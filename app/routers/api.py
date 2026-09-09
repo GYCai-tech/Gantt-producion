@@ -1185,10 +1185,18 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
         # Se conserva la estimación —la barra y la cola mantienen su anchura—
         # y solo cambia la etiqueta: "sin datos" en vez de "en riesgo".
         item["estado"] = "sin-estimar"
-    elif item["excedido"]:
-        # Va por encima del ritmo esperado. Se sigue dibujando lo que queda
-        # (el trabajo pendiente no desaparece por ir tarde), pero en ámbar.
+    elif item["excedido"] and not item.get("min_exceso"):
+        # Va a peor ritmo del esperado pero AÚN NO ha agotado el presupuesto
+        # del bono: no hay un punto del que decir "a partir de aquí te pasaste",
+        # así que el aviso tiene que ser de toda la barra. Es un problema
+        # distinto del de abajo — "va lento" frente a "ya se pasó".
         item["estado"] = "riesgo"
+    # Si hay `min_exceso`, la barra se queda en su color normal y el aviso lo
+    # da el tramo rojo, que además dice desde cuándo y cuánto. Pintarla ADEMÁS
+    # de ámbar era decir lo mismo dos veces y, peor, teñía de alarma la parte
+    # que sí fue dentro de presupuesto: la barra iba ámbar → rojo → ámbar y el
+    # mismo ámbar significaba "esto iba bien" a la izquierda y "esto aún no ha
+    # pasado" a la derecha.
 
     # Los minutos son minutos-HOMBRE. Para llevarlos al eje de tiempo se
     # reparten entre los operarios que tienen el bono abierto ahora mismo;

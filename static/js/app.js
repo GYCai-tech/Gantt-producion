@@ -374,7 +374,9 @@ const App = (() => {
                     (it.es_montaje || it.min_montaje
                       ? `<span class="bar__setup" title="${it.es_montaje ? 'Montaje de utillaje: preparando la máquina, no fabricando' : 'Incluye ' + it.min_montaje + ' min de montaje de utillaje'}">⚙</span>` : '') +
                     `<span class="bar__id">${esc(it.idorden)}<span class="bar__bono">${esc(bonoLabel)}</span></span>` +
-                    (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '');
+                    (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '') +
+                    (it.min_exceso && w > 150
+                      ? `<span class="bar__exceso-num">+${esc(fmtMin(it.min_exceso))}</span>` : '');
     if (it.tipo === 'real' && it.fin_estimado != null) {
       const p = document.createElement('div');
       p.className = 'bar__prog';
@@ -416,10 +418,9 @@ const App = (() => {
         const hasta = clamp((xAhora   - lx) / w, 0, 1);
         ex.style.left  = (100 * desde) + '%';
         ex.style.width = (100 * (hasta - desde)) + '%';
-        // El cuanto, dentro del propio tramo. Se exige holgura tambien en la
-        // barra entera: en una estrecha, el texto se montaba sobre el numero
-        // de orden y no se leia ninguno de los dos.
-        if (w * (hasta - desde) > 64 && w > 150) ex.textContent = '+' + fmtMin(it.min_exceso);
+        // Sin texto dentro: el tramo acaba en "ahora", asi que queda en MITAD
+        // de la barra, justo encima del nombre. La cifra va en el flujo normal
+        // (bar__exceso-num), empujada a la derecha, donde no puede solaparse.
         bar.appendChild(ex);
       }
     }
