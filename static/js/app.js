@@ -589,7 +589,7 @@ const App = (() => {
       (sinTiempo || soloSinTiempo
         ? `<span class="summary__warn${soloSinTiempo ? ' is-active' : ''}" onclick="App.toggleSinTiempo()"
                  title="Bonos sin tiempo teorico ni media. Pincha para ver solo esos.">` +
-          `⚠ <b>${sinTiempo}</b> sin tiempo</span>`
+          `▲ <b>${sinTiempo}</b> sin tiempo</span>`
         : '');
   }
 
