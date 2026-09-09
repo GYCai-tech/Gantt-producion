@@ -194,3 +194,20 @@ def test_el_hueco_de_un_companero_no_se_pinta_si_cae_fuera_de_la_ventana(monkeyp
     items = api._encolar('empleado', ocupado, HASTA, AHORA, {(1, 10): (1, 1)}, MEDIAS)
 
     assert [i['recurso_id'] for i in items] == ['2']
+
+
+def test_la_cola_no_presenta_la_media_de_la_maquina_como_fiable(monkeypatch):
+    """Una misma maquina hace piezas muy distintas: su media sirve para
+    dimensionar la barra, no como ritmo del que fiarse. Las barras abiertas ya
+    lo avisaban y la cola las pintaba en verde, como una estimacion buena."""
+    monkeypatch.setattr(api, '_leer_cola', lambda: [bono()])
+    solo_maquina = {'articulo': {}, 'trabajo': {},
+                    'maquina': {'M1': {'n': 10, 'minutos': 100.0, 'piezas': 100.0}}}
+    items = api._encolar('empleado', {}, HASTA, AHORA, {}, solo_maquina)
+
+    assert len(items) == 1
+    assert items[0]['origen_estimado'] == 'media_maquina'
+    assert items[0]['estado'] == 'sin-estimar'
+    # El aviso no encoge la barra: la cola se sigue encadenando con su tamaño.
+    assert items[0]['min_restantes'] > 0
+    assert items[0]['sin_tiempo'] is False

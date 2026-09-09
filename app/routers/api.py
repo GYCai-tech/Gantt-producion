@@ -1009,11 +1009,18 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 continue
             sin_tiempo, min_pieza = tarea["sin_tiempo"], tarea["min_pieza"]
             semaforo = tarea["semaforo"]
+            # La media de la máquina DIMENSIONA la barra pero no es un ritmo
+            # del que fiarse: una misma máquina hace piezas muy distintas. La
+            # 018 da 0,673 min/pieza de media y el artículo que corre ahora en
+            # ella, 0,350 — casi el doble. Las barras abiertas ya lo avisaban
+            # (ver `_proyectar`); la cola las pintaba en verde como si la
+            # estimación fuera buena. Mismo origen, mismo aviso.
+            sin_ritmo = sin_tiempo or tarea["origen"] == "media_maquina"
             items.append({
                 "id": f"P-{b['idorden']}-{b['idbono']}-{b['matricula']}-{rid}",
                 "recurso_id": rid,
                 "tipo": "programado",
-                "estado": ("sin-estimar" if sin_tiempo else
+                "estado": ("sin-estimar" if sin_ritmo else
                            "parada" if semaforo == "bloqueada" else "disponible"),
                 "semaforo": semaforo,
                 "semaforo_asignacion": asignado["semaforo"],
