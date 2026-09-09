@@ -477,7 +477,11 @@ const App = (() => {
     if (it.prev) rows.push(`<div class="tip__row">Prevista <span>${fmtDate(it.prev)}</span></div>`);
     const MARK = { real: '▶ ', trabajado: '✓ ', parcial: '⏸ ' };
     const badge = `<span style="color:${ST_COLOR[it.estado] || '#79859a'}">●</span> ${ST_LABEL[it.estado] || it.estado_label}`;
-    tip.innerHTML = `<b>${MARK[it.tipo] || ''}${esc(it.idorden)}</b> — ${esc(it.art || '')}<hr>${rows.join('')}` +
+    // El codigo va en la cabecera junto a la descripcion: en la barra no cabe
+    // -- son 8 digitos fijos y se cortaba a la mitad, que es peor que no
+    // ponerlo-- y aqui identifica el articulo sin robarle sitio a nada.
+    const art = [it.art_id, it.art].filter(Boolean).map(esc).join(' · ');
+    tip.innerHTML = `<b>${MARK[it.tipo] || ''}${esc(it.idorden)}</b>${art ? ' — ' + art : ''}<hr>${rows.join('')}` +
                     `<div class="tip__row" style="margin-top:6px">Estado <span>${badge}</span></div>`;
     tip.classList.add('is-visible');
     moveTip(e);
@@ -512,7 +516,7 @@ const App = (() => {
       `<dl class="dl">
         <dt>Operario</dt><dd>${esc(grp ? grp.nombre : it.recurso_id)}</dd>
         <dt>Bono</dt><dd>${it.idbono || '—'}${it.operacion ? ' · ' + esc(it.operacion) : ''}</dd>
-        <dt>Artículo</dt><dd>${esc(it.art || '—')}</dd>
+        <dt>Artículo</dt><dd>${esc([it.art_id, it.art].filter(Boolean).join(' · ') || '—')}</dd>
         <dt>Inicio</dt><dd>${fmtDt(it.start)}</dd>
         <dt>Fin</dt><dd>${fmtDt(it.end)}${it.estimado ? ' <span style="color:var(--ink-3)">(est.)</span>' : ''}</dd>
         ${it.progreso != null ? `<dt>Progreso</dt><dd>${it.progreso}%</dd>` : ''}

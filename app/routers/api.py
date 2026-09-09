@@ -637,6 +637,7 @@ def get_items(
             "idorden":    l["idorden"],
             "idbono":     l["idbono"],
             "art":        l["descrip_salida"],
+            "art_id":     l["idarticulo_salida"],
             # En la vista de operarios interesa saber la máquina; en la de
             # máquinas, quién estaba en ella. Solo el nombre de la máquina: la
             # matrícula delante comía sitio en una barra que suele ser estrecha
@@ -1027,7 +1028,7 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 "en_curso": False, "estimado": True,
                 "start": inicio, "end": fin,
                 "idorden": b["idorden"], "idbono": b["idbono"],
-                "art": b["descrip_salida"],
+                "art": b["descrip_salida"], "art_id": b["idarticulo_salida"],
                 "operacion": (b["descrip_maquina"] if vista == "empleado" else empleados),
                 "operarios": empleados,
                 "piezas": b["piezas_a_fabricar"], "min_real": None,
