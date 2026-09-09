@@ -668,3 +668,75 @@ button { font-family: inherit; }
 .fiab__cob-num { font-size: 26px; font-weight: 700; line-height: 1.1; color: var(--fb); font-variant-numeric: tabular-nums; }
 .fiab__cob-lbl { font-size: 13px; font-weight: 600; margin-top: 2px; }
 .fiab__cob-pct { font-size: 11.5px; color: var(--ink-3); margin-top: 1px; }
+
+/* ============================================================
+   Planificacion de la produccion (/planificacion)
+   Rejilla personas x dias. Comparte tokens con /fiabilidad.
+   ============================================================ */
+.plan { overflow: auto; align-items: center; }
+.plan > * { width: 100%; max-width: 1180px; }
+
+.plan__intro { margin: 14px 0 6px; }
+.plan__intro h1 { font-size: 21px; margin: 0 0 6px; letter-spacing: -.01em; }
+.plan__intro p  { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.55; max-width: 84ch; }
+.plan__intro a  { color: var(--accent); }
+
+.plan__leyenda { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 16px 0 10px; }
+.plan__lg { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+.plan__lg--fin { margin-left: auto; color: var(--ink-3); }
+.plan__sw { width: 13px; height: 13px; border-radius: 4px; display: inline-block; }
+
+/* El mismo semaforo en la leyenda, la celda y su barra */
+.is-libre   { --pl: #dfe4ec; --pl-bg: var(--surface); }
+.is-holgado { --pl: #6f9fe0; --pl-bg: #eff5fd; }
+.is-lleno   { --pl: var(--verde); --pl-bg: var(--verde-bg); }
+.is-pasado  { --pl: var(--ambar); --pl-bg: var(--ambar-bg); }
+.plan__sw.is-libre { background: var(--surface); border: 1px solid var(--line); }
+.plan__sw:not(.is-libre) { background: var(--pl); }
+
+.plan__wrap {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow-1); overflow-x: auto;
+}
+.plan__tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
+.plan__tabla th {
+  text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--ink-3);
+  padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.plan__tabla thead th span {
+  display: block; font-size: 11px; font-weight: 500; text-transform: none;
+  letter-spacing: 0; color: var(--ink-3); margin-top: 2px;
+}
+.plan__tabla thead th.is-hoy { color: var(--accent); }
+/* La columna de nombres se queda fija: con 15 dias la tabla desborda y sin
+   esto se pierde de vista de quien es la fila que se esta mirando. */
+.plan__pers {
+  position: sticky; left: 0; z-index: 2; background: var(--surface);
+  min-width: 210px; border-right: 1px solid var(--line);
+}
+tbody .plan__pers { font-weight: 400; text-transform: none; letter-spacing: 0; padding: 8px 12px; }
+tbody .plan__pers b { display: block; font-size: 13px; font-weight: 600; color: var(--ink); }
+tbody .plan__pers span {
+  display: block; font-size: 11px; color: var(--ink-3); margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px;
+}
+.plan__tabla tbody tr { border-bottom: 1px solid var(--line-2); }
+.plan__tabla tbody tr:last-child { border-bottom: 0; }
+/* Quien no tiene nada en toda la ventana: se ve, pero apagado. */
+.plan__tabla tr.is-vacia .plan__pers b { color: var(--ink-3); font-weight: 500; }
+
+.plan__c { padding: 8px 10px; min-width: 92px; vertical-align: middle; background: var(--pl-bg); }
+.plan__c.is-libre { background: transparent; }
+.plan__vacio { color: var(--ink-3); opacity: .5; }
+.plan__barra { height: 6px; border-radius: 3px; background: rgba(20,30,50,.07); overflow: hidden; }
+.plan__barra i { display: block; height: 100%; background: var(--pl); border-radius: 3px; }
+.plan__cifra { margin-top: 4px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.plan__cifra span { font-weight: 400; color: var(--ink-3); margin-left: 5px; font-size: 11px; }
+.plan__c[data-p] { cursor: help; }
+/* Un bono bloqueado o sin estimacion fiable dentro del dia: la carga es la
+   misma pero lo que se puede prometer, no. */
+.plan__c.tiene-dudoso { box-shadow: inset 0 -3px 0 var(--ambar); }
+.plan__c.tiene-parada { box-shadow: inset 0 -3px 0 var(--rojo); }
+
+.tip__sub { font-size: 11.5px; color: var(--ink-3); margin: -2px 0 7px; line-height: 1.45; }

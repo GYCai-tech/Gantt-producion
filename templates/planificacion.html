@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}GYC · Planificación de la producción{% endblock %}
+
+{% block navbar_extra %}
+<div class="segmented" id="plan-dias">
+  <button class="is-active" onclick="Plan.setDias(5)">5 días</button>
+  <button onclick="Plan.setDias(10)">10 días</button>
+  <button onclick="Plan.setDias(15)">15 días</button>
+</div>
+<button class="btn-refresh" onclick="Plan.cargar()" title="Volver a proyectar con los datos del ERP">
+  <svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+  <span id="refresh-label">Actualizar</span>
+</button>
+<span class="topbar__clock fiab-clock" id="generado"></span>
+{% endblock %}
+
+{% block body %}
+<div class="app">
+  <main class="panel plan">
+
+    <header class="plan__intro">
+      <h1>Planificación de la producción</h1>
+      <p>
+        Quién tiene trabajo cada día y quién se queda sin nada. Es la misma cola del
+        Gantt —misma estimación y mismo encadenado—, repartida por jornada.
+        <b>Es una proyección:</b> el primer día es sólido porque casi todo es trabajo ya
+        empezado; a partir del tercero son estimaciones encadenadas sobre estimaciones.
+        <a href="/fiabilidad">Cuánto se puede fiar uno</a>.
+      </p>
+    </header>
+
+    <div id="plan-cargando" class="fiab__estado">Proyectando la carga…</div>
+    <div id="plan-error" class="fiab__estado fiab__estado--error" hidden></div>
+
+    <div id="plan-cuerpo" hidden>
+      <div class="plan__leyenda" id="leyenda"></div>
+      <div class="plan__wrap">
+        <table class="plan__tabla" id="tabla"></table>
+      </div>
+    </div>
+
+  </main>
+</div>
+<div class="tip" id="tip"></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/planificacion.js?v={{ static_v }}"></script>
+{% endblock %}
