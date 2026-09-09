@@ -170,3 +170,27 @@ def test_cambiar_la_ventana_no_reordena_la_prevision():
     corto = plan(cola, ocupado, hasta=AHORA.replace(hour=15))
     largo = plan(cola, ocupado)
     assert corto == [t for t in largo if t['start'] < AHORA.replace(hour=15)]
+
+
+def test_un_companero_ocupado_no_vacia_la_cola_del_otro():
+    """El caso de ETT2: sus cuatro bonos los comparte con José Luís, que
+    estaba fichado él solo en otra máquina hasta el día siguiente. Esperando a
+    que coincidieran los dos, ETT2 aparecía sin nada que hacer con su máquina
+    parada todo el día."""
+    ocupado = {('empleado', '1'): datetime(2026, 9, 8, 10, 23)}
+    tareas = plan([bono(1, 1, 'M1'), bono(1, 2, 'M1')], ocupado)
+
+    assert len(tareas) == 1
+    assert tareas[0]['huecos']['2'][0] == AHORA        # el que está libre, ya
+    assert tareas[0]['huecos']['1'][0] == datetime(2026, 9, 8, 10, 23)
+    # La máquina se reserva una vez, con el primero que puede cogerla.
+    assert tareas[0]['start'] == AHORA
+
+
+def test_el_hueco_de_un_companero_no_se_pinta_si_cae_fuera_de_la_ventana(monkeypatch):
+    cola = [bono(1, 1, 'M1'), bono(1, 2, 'M1')]
+    monkeypatch.setattr(api, '_leer_cola', lambda: cola)
+    ocupado = {('empleado', '1'): datetime(2026, 9, 14, 8)}   # más allá de HASTA
+    items = api._encolar('empleado', ocupado, HASTA, AHORA, {(1, 10): (1, 1)}, MEDIAS)
+
+    assert [i['recurso_id'] for i in items] == ['2']

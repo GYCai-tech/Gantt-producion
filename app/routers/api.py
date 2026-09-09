@@ -913,10 +913,22 @@ def _ocupacion_actual(items: list[dict], hasta: datetime, ahora: datetime) -> di
 
 def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
                      ahora: datetime, teoricos, medias) -> list[dict]:
-    """Una previsión común que reserva a la vez máquinas y operarios.
+    """Una previsión de la cola pendiente, con un hueco propio por operario.
 
-    Un bono con varios asignados es una única tarea compartida. Se conservan
-    todos los asignados y no se infiere una ganancia de velocidad por su número.
+    Un bono con varios asignados NO espera a que coincidan todos. El ERP los
+    lista para decir quién *puede* hacerlo, no que tengan que hacerlo juntos:
+    José Luís tiene fichado él solo el 6629/10 en la INYECCION mientras
+    comparte otros tres bonos con ETT2, sin empezarlos. Encadenándolos entre
+    sí, ETT2 se quedaba con la cola vacía —sus cuatro bonos los comparte con
+    José Luís, ocupado hasta el día siguiente en otra máquina— aunque él
+    quedara libre a las 10:09 y su máquina estuviera parada todo el día.
+
+    Así que cada asignado recibe su hueco en `huecos`, calculado con su propia
+    ocupación y la de la máquina. La máquina se reserva una sola vez —el bono
+    se fabrica una vez— con el primer hueco, el del operario que antes queda
+    libre. Se conservan todos los asignados y no se infiere una ganancia de
+    velocidad por su número.
+
     La prioridad es semáforo, secuencia manual y orden/bono; el cálculo es
     conservador y no intenta optimizar huecos ni reasignar trabajo del ERP.
     """
@@ -928,8 +940,8 @@ def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
     tareas = []
     for asignados in agrupados.values():
         filas = sorted(asignados.values(), key=lambda b: str(b["idempleado"]))
-        # Todos los asignados se reservan juntos. Si alguno está bloqueado,
-        # el conjunto es condicional y va detrás del trabajo disponible.
+        # Si algún asignado está bloqueado, el bono es condicional y va
+        # detrás del trabajo disponible.
         semaforo = max((b["semaforo"] for b in filas), key=_PRIO_SEMAFORO.get)
         secuencias = [b["ordenar"] for b in filas if b["ordenar"] > 0]
         tareas.append((filas, semaforo, min(secuencias) if secuencias else None))
@@ -941,19 +953,26 @@ def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
     plan = []
     for asignados, semaforo, secuencia in tareas:
         b = asignados[0]
-        recursos = [("empleado", str(a["idempleado"])) for a in asignados]
-        if b["matricula"]:
-            recursos.append(("maquina", b["matricula"]))
-        inicio = _siguiente_hueco(max([ahora] + [ocupado.get(r, ahora) for r in recursos]))
         min_pieza, setup, origen = _estimar(b, teoricos, medias)
         pendientes = max(0.0, b["piezas_a_fabricar"] - b["fabricadas"])
         if pendientes <= 0:
             continue
         sin_tiempo = not min_pieza or min_pieza <= 0
         dur = _MIN_BLOQUE_SIN_TIEMPO if sin_tiempo else setup + pendientes * min_pieza
-        fin = _sumar_laborables(inicio, dur)
-        for r in recursos:
-            ocupado[r] = fin
+
+        maquina = ("maquina", b["matricula"]) if b["matricula"] else None
+        libre_maquina = ocupado.get(maquina, ahora) if maquina else ahora
+        huecos = {}
+        for a in asignados:
+            clave = ("empleado", str(a["idempleado"]))
+            arranque = _siguiente_hueco(
+                max(ahora, libre_maquina, ocupado.get(clave, ahora)))
+            ocupado[clave] = _sumar_laborables(arranque, dur)
+            huecos[str(a["idempleado"])] = (arranque, ocupado[clave])
+
+        inicio, fin = min(huecos.values())
+        if maquina:
+            ocupado[maquina] = fin
         # Las reservas se calculan incluso fuera de la ventana: de lo
         # contrario cambiar de Día a Semana cambiaría el orden de la cola.
         if inicio >= hasta_dt:
@@ -961,6 +980,7 @@ def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
         plan.append({
             "bono": b, "asignados": asignados, "semaforo": semaforo,
             "secuencia": secuencia, "start": inicio, "end": fin,
+            "huecos": huecos,
             "pendientes": pendientes, "sin_tiempo": sin_tiempo,
             "min_pieza": min_pieza, "origen": origen, "duracion": dur,
         })
@@ -980,6 +1000,13 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
             [(b["matricula"], b)] if b["matricula"] else []
         )
         for rid, asignado in filas:
+            # Cada operario arranca cuando queda libre él: un compañero
+            # ocupado no le vacía la cola. La máquina va con el primer hueco,
+            # que es el que ya trae la tarea.
+            inicio, fin = (tarea["huecos"][rid] if vista == "empleado"
+                           else (tarea["start"], tarea["end"]))
+            if inicio >= hasta_dt:
+                continue
             sin_tiempo, min_pieza = tarea["sin_tiempo"], tarea["min_pieza"]
             semaforo = tarea["semaforo"]
             items.append({
@@ -991,7 +1018,7 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 "semaforo": semaforo,
                 "semaforo_asignacion": asignado["semaforo"],
                 "en_curso": False, "estimado": True,
-                "start": tarea["start"], "end": tarea["end"],
+                "start": inicio, "end": fin,
                 "idorden": b["idorden"], "idbono": b["idbono"],
                 "art": b["descrip_salida"],
                 "operacion": (b["descrip_maquina"] if vista == "empleado" else empleados),
