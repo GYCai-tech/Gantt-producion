@@ -473,7 +473,12 @@ const App = (() => {
       rows.push(`<div class="tip__row">Segun <span>${fuente}</span></div>`);
     }
     rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}</span></div>`);
-    rows.push(`<div class="tip__row">Fin <span>${fmtDt(it.end)}${it.estimado ? ' ~' : ''}</span></div>`);
+    // Sin estimacion fiable o pasado de presupuesto, `end` es donde quedo la
+    // barra al no poder proyectar -- casi siempre "ahora"-- y darlo como hora
+    // de fin dice justo lo contrario de lo que pasa.
+    rows.push(it.fin_indeterminado
+      ? `<div class="tip__row">Fin <span class="tip__indet">Indeterminado</span></div>`
+      : `<div class="tip__row">Fin <span>${fmtDt(it.end)}${it.estimado ? ' ~' : ''}</span></div>`);
     if (it.prev) rows.push(`<div class="tip__row">Prevista <span>${fmtDate(it.prev)}</span></div>`);
     const MARK = { real: '▶ ', trabajado: '✓ ', parcial: '⏸ ' };
     const badge = `<span style="color:${ST_COLOR[it.estado] || '#79859a'}">●</span> ${ST_LABEL[it.estado] || it.estado_label}`;
@@ -518,7 +523,8 @@ const App = (() => {
         <dt>Bono</dt><dd>${it.idbono || '—'}${it.operacion ? ' · ' + esc(it.operacion) : ''}</dd>
         <dt>Artículo</dt><dd>${esc([it.art_id, it.art].filter(Boolean).join(' · ') || '—')}</dd>
         <dt>Inicio</dt><dd>${fmtDt(it.start)}</dd>
-        <dt>Fin</dt><dd>${fmtDt(it.end)}${it.estimado ? ' <span style="color:var(--ink-3)">(est.)</span>' : ''}</dd>
+        <dt>Fin</dt><dd>${it.fin_indeterminado ? '<span class="dd-indet">Indeterminado</span>'
+          : fmtDt(it.end) + (it.estimado ? ' <span style="color:var(--ink-3)">(est.)</span>' : '')}</dd>
         ${it.progreso != null ? `<dt>Progreso</dt><dd>${it.progreso}%</dd>` : ''}
         ${it.min_real != null ? `<dt>Tiempo real</dt><dd>${Math.round(it.min_real)} min</dd>` : ''}
         ${it.piezas  != null ? `<dt>Piezas</dt><dd>${it.piezas}</dd>` : ''}

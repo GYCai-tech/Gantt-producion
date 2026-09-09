@@ -219,3 +219,49 @@ def test_proyeccion_fuera_de_jornada_empieza_el_siguiente_laborable():
     _proyectar(item, _linea(100), AHORA.replace(hour=16), {}, _medias(1),
                _avance(minutos=10, piezas=10))
     assert item['fin_estimado'] == datetime(2026, 9, 7, 8, 30)
+
+
+def test_sin_estimacion_el_fin_no_se_da_por_bueno():
+    """`end` se queda en "ahora" porque no hay nada que proyectar. Darlo como
+    hora de fin decia que el bono termina ya, de un bono del que se acaba de
+    reconocer que no se sabe cuanto dura."""
+    item = _item()
+    vacias = {"articulo": {}, "trabajo": {}, "maquina": {}}
+    _proyectar(item, _linea(600), AHORA, {}, vacias, _avance(minutos=100, piezas=0))
+
+    assert item["estado"] == "sin-estimar"
+    assert item["end"] == AHORA               # la barra sigue acabando aqui
+    assert item["fin_indeterminado"] is True  # pero la hora no se muestra
+
+
+def test_pasado_de_presupuesto_el_fin_tampoco_se_da_por_bueno():
+    item = _item()
+    _proyectar(item, _linea(100), AHORA, {}, _medias(10.0), _avance(minutos=1200, piezas=0))
+
+    assert item["min_exceso"] == 200
+    assert item["fin_indeterminado"] is True
+
+
+def test_con_las_piezas_hechas_el_fin_si_se_sabe():
+    """Aqui el trabajo SI ha terminado; lo unico que falta es cerrar el
+    fichaje. No es lo mismo que no saber cuando acaba."""
+    item = _item()
+    _proyectar(item, _linea(100), AHORA, {}, _medias(1),
+               _avance(minutos=500, piezas=100, montaje=60))
+
+    assert item["estado"] == "pendiente-cierre"
+    assert "fin_indeterminado" not in item
+
+
+def test_la_media_de_la_maquina_no_promete_una_hora_de_fin():
+    """Si la etiqueta ya dice "sin datos fiables", una hora al minuto se
+    contradice con ella."""
+    item = _item()
+    solo_maquina = {"articulo": {}, "trabajo": {},
+                    "maquina": {"015": {"n": 10, "minutos": 1000.0, "piezas": 1000.0}}}
+    _proyectar(item, _linea(600), AHORA, {}, solo_maquina, _avance(minutos=100, piezas=10))
+
+    assert item["origen_estimado"] == "media_maquina"
+    assert item["estado"] == "sin-estimar"
+    assert "fin_estimado" in item             # la barra conserva su anchura
+    assert item["fin_indeterminado"] is True

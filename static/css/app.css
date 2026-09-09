@@ -326,6 +326,10 @@ button { font-family: inherit; }
 .bar__id { font-weight: 700; flex-shrink: 0; }
 .bar__bono { font-weight: 400; opacity: .75; font-size: .85em; }
 .bar__sub { font-weight: 500; opacity: .8; overflow: hidden; text-overflow: ellipsis; }
+/* "Indeterminado" donde iria una hora: en cursiva y apagado para que se lea
+   como la ausencia de un dato y no como un valor mas. */
+.tip__indet { font-style: italic; opacity: .75; }
+.dd-indet   { font-style: italic; color: var(--ink-3); }
 /* Cuanto se ha pasado del teorico. Va en el flujo de la barra y pegado a la
    derecha: el tramo rojo acaba en "ahora", o sea en mitad de la barra, y una
    etiqueta dentro de el caia encima del nombre del bono. */

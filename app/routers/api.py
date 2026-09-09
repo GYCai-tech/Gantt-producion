@@ -1023,6 +1023,7 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 "tipo": "programado",
                 "estado": ("sin-estimar" if sin_ritmo else
                            "parada" if semaforo == "bloqueada" else "disponible"),
+                "fin_indeterminado": sin_ritmo,
                 "semaforo": semaforo,
                 "semaforo_asignacion": asignado["semaforo"],
                 "en_curso": False, "estimado": True,
@@ -1138,15 +1139,20 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
     min_pieza, setup, origen = _estimar(linea, teoricos, medias)
     item["origen_estimado"] = origen
 
+    # `end` se queda en "ahora" porque no hay nada que proyectar, no porque el
+    # bono vaya a terminar ahora. Sin avisarlo, el tooltip decía "Fin 09:51" de
+    # un bono del que justo se acaba de reconocer que no se sabe cuánto dura.
     if not min_pieza or min_pieza <= 0:
         item["sin_tiempo"] = True
         item["estado"] = "sin-estimar"
+        item["fin_indeterminado"] = True
         return
 
     gasto = avance.get((linea["idorden"], linea["idbono"]))
     if gasto is None:
         item["sin_tiempo"] = True
         item["estado"] = "sin-estimar"
+        item["fin_indeterminado"] = True
         return
     objetivo  = float(linea["piezas_a_fabricar"] or 0)
     hechas    = min(gasto["piezas"], objetivo) if objetivo else gasto["piezas"]
@@ -1232,6 +1238,18 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
     # que sí fue dentro de presupuesto: la barra iba ámbar → rojo → ámbar y el
     # mismo ámbar significaba "esto iba bien" a la izquierda y "esto aún no ha
     # pasado" a la derecha.
+
+    # Cuándo acaba esto no se sabe, y hay que decirlo en vez de dar una hora:
+    #   · "sin datos fiables" ya declara que el ritmo no vale, así que una hora
+    #     de fin al minuto se contradice con su propia etiqueta;
+    #   · agotado el presupuesto, lo que queda por delante es justo lo que el
+    #     modelo no supo prever, y el fin cae en "ahora", que se lee como
+    #     "termina ya" cuando es lo contrario: lleva rato pasado de tiempo.
+    # `pendiente-cierre` queda fuera a propósito: ahí las piezas están hechas y
+    # el trabajo SÍ ha terminado; lo único que falta es cerrar el fichaje.
+    if item["estado"] == "sin-estimar" or (item.get("min_exceso")
+                                           and item["estado"] != "pendiente-cierre"):
+        item["fin_indeterminado"] = True
 
     # Los minutos son minutos-HOMBRE. Para llevarlos al eje de tiempo se
     # reparten entre los operarios que tienen el bono abierto ahora mismo;
