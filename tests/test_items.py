@@ -90,3 +90,30 @@ def test_navegar_al_futuro_no_devuelve_barras_que_ya_terminaron(monkeypatch):
     monkeypatch.setattr(api, '_leer_cola', lambda: [])
     assert api.get_items(vista='empleado', desde=datetime(2026, 9, 8),
                          hasta=datetime(2026, 9, 9)) == []
+
+
+def test_el_area_de_una_barra_es_la_de_su_bono_no_la_de_quien_lo_hace(monkeypatch):
+    """Javier Atanes tiene 799 lineas de CHAPA y 8 de ESTRUCTURAS en 90 dias,
+    asi que el filtro por areas del OPERARIO le colaba en ESTRUCTURAS la barra
+    del bono 6552/60, que es de CHAPA. El area viaja con la barra."""
+    monkeypatch.setattr(api, 'datetime', Reloj)
+    monkeypatch.setattr(api, 'date', Fecha)
+    abierta = dict(bono(), idlinea=1, idoperacion=0, abierta=True, area='CHAPA',
+                   fecha=AHORA, inicio=AHORA.replace(hour=11), fin=None)
+    monkeypatch.setattr(api, '_leer_lineas', lambda *a: [])
+    monkeypatch.setattr(api, '_leer_abiertas', lambda *a: [abierta])
+    monkeypatch.setattr(api, '_cargar_estimaciones', lambda: ({(1, 10): (1, 5)}, MEDIAS))
+    monkeypatch.setattr(api, '_avance_por_bono', lambda *a: {
+        (1, 10): {'minutos': 10, 'min_produccion': 10, 'min_montaje': 0,
+                  'piezas': 99, 'operarios': 1},     # casi terminada: deja hueco hoy
+    })
+    monkeypatch.setattr(api, '_leer_cola', lambda: [dict(bono(2), cantidad=5, area='ESTRUCTURAS')])
+
+    items = api.get_items(vista='empleado')
+    real = next(i for i in items if i['tipo'] == 'real')
+    cola = next(i for i in items if i['tipo'] == 'programado')
+
+    # Mismo operario, dos areas distintas: cada barra lleva la suya.
+    assert real['recurso_id'] == cola['recurso_id']
+    assert real['area'] == 'CHAPA'
+    assert cola['area'] == 'ESTRUCTURAS'

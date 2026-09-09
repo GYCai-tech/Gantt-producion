@@ -14,6 +14,10 @@ def bono(orden=1, empleado=1, maquina='M1', cantidad=100, semaforo='disponible',
         'empleado': f'Operario {empleado}', 'matricula': maquina,
         'descrip_maquina': f'Maquina {maquina}', 'idtrabajo': 1,
         'descrip_salida': 'Articulo', 'idarticulo_salida': 'A',
+        # El area es la de la maquina del bono; el ERP no la deja nunca a NULL
+        # (0 de 212 filas en PersVTrazaordenesOperarios), asi que el fixture
+        # tampoco: si el item la pierde, es un fallo que hay que ver.
+        'area': 'CHAPA',
         'piezas_a_fabricar': cantidad, 'fabricadas': 0,
         'ordenar': secuencia, 'semaforo': semaforo,
     }

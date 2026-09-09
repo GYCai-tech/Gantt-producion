@@ -159,24 +159,41 @@ const App = (() => {
     items = await (await fetch(url)).json();
     itemMap.clear();
     items.forEach(i => itemMap.set(String(i.id), i));
+    // Las áreas salen de las barras, así que se recalculan con cada carga.
+    renderAreas();
+    applyArea();
     render();
     updateSummary();
   }
 
   // ── Áreas ──────────────────────────────────────────────────────────
-  // Un grupo puede pertenecer a varias áreas a la vez (ej. operario que
-  // atiende máquinas de dos áreas en paralelo); vista=maquina sigue
-  // mandando un único `area`, por eso se admiten ambas formas.
-  const gruposAreas = g => (g.areas && g.areas.length) ? g.areas : [g.area || 'Sin área'];
+  // El área es del BONO, no de la persona: viene con cada barra y es la de su
+  // máquina, igual que `PersVTrazaordenesOperarios.Area` (212 de 212 filas
+  // coinciden). Antes se filtraba por las áreas del OPERARIO —las máquinas
+  // que hubiera tocado en 90 días— y eso colaba barras ajenas: Javier Atanes
+  // tiene 799 líneas de CHAPA y 8 de ESTRUCTURAS, así que al filtrar por
+  // ESTRUCTURAS salía su fila entera y con ella el bono 6552/60, de CHAPA.
+  const enArea = lista =>
+    areaActive === 'todos' ? lista : lista.filter(i => i.area === areaActive);
+
   function renderAreas() {
-    const areas = ['todos', ...new Set(allGrupos.flatMap(gruposAreas))];
+    // Las áreas que de verdad tienen trabajo en la ventana, no el historial de
+    // la plantilla: un área sin bonos no es un filtro que sirva de nada.
+    const areas = ['todos', ...[...new Set(items.map(i => i.area).filter(Boolean))].sort()];
+    // Si al cambiar de ventana el área elegida se queda sin barras, el filtro
+    // dejaría la pantalla en blanco sin decir por qué.
+    if (!areas.includes(areaActive)) areaActive = 'todos';
     $('areas').innerHTML = areas.map(a =>
       `<button class="area-pill ${a === areaActive ? 'is-active' : ''}" onclick="App.setArea('${a.replace(/'/g,"\\'")}')">${a === 'todos' ? 'Todas las áreas' : a}</button>`
     ).join('');
   }
   function setArea(a) { areaActive = a; renderAreas(); applyArea(); render(); }
   function applyArea() {
-    grupos = areaActive === 'todos' ? allGrupos : allGrupos.filter(g => gruposAreas(g).includes(areaActive));
+    if (areaActive === 'todos') { grupos = allGrupos; return; }
+    // Solo las filas que tengan alguna barra DE ESA ÁREA. Quien no tiene nada
+    // ahí no aparece, aunque sepa trabajar en esa sección.
+    const conBarras = new Set(enArea(items).map(i => String(i.recurso_id)));
+    grupos = allGrupos.filter(g => conBarras.has(String(g.id)));
   }
 
   // ── Render principal ───────────────────────────────────────────────
@@ -258,7 +275,7 @@ const App = (() => {
       return;
     }
     // El contador "sin tiempo" de la cabecera filtra a solo esos bonos.
-    const visibles = soloSinTiempo ? items.filter(i => i.sin_tiempo) : items;
+    const visibles = enArea(soloSinTiempo ? items.filter(i => i.sin_tiempo) : items);
     const byRes = new Map();
     visibles.forEach(i => {
       const k = String(i.recurso_id);

@@ -638,6 +638,10 @@ def get_items(
             "idbono":     l["idbono"],
             "art":        l["descrip_salida"],
             "art_id":     l["idarticulo_salida"],
+            # El área es del BONO —la de su máquina—, no de quien lo hace. Un
+            # operario que toca tres secciones no convierte en ESTRUCTURAS un
+            # bono de CHAPA. Coincide con `PersVTrazaordenesOperarios.Area`.
+            "area":       l["area"],
             # En la vista de operarios interesa saber la máquina; en la de
             # máquinas, quién estaba en ella. Solo el nombre de la máquina: la
             # matrícula delante comía sitio en una barra que suele ser estrecha
@@ -1030,6 +1034,7 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 "start": inicio, "end": fin,
                 "idorden": b["idorden"], "idbono": b["idbono"],
                 "art": b["descrip_salida"], "art_id": b["idarticulo_salida"],
+                "area": b["area"],
                 "operacion": (b["descrip_maquina"] if vista == "empleado" else empleados),
                 "operarios": empleados,
                 "piezas": b["piezas_a_fabricar"], "min_real": None,
