@@ -404,16 +404,22 @@ const App = (() => {
     // por detras y pintaba una astilla roja en bonos que no se han pasado.
     if (it.fin_teorico && it.min_exceso) {
       const xTeorico = workX(new Date(it.fin_teorico));
-      if (xTeorico < lx + w - 1) {
+      // El exceso llega hasta AHORA, no hasta el final de la barra: en una
+      // barra abierta el final es el fin PROYECTADO, y pintar de rojo trabajo
+      // que aun no ha ocurrido hacia que el tramo midiera 155 min mientras la
+      // etiqueta decia "+18". Ahora el largo del rojo y la cifra coinciden.
+      const xAhora = Math.min(lx + w, workX(new Date()));
+      if (xTeorico < xAhora - 1) {
         const ex = document.createElement('div');
         ex.className = 'bar__exceso';
         const desde = clamp((xTeorico - lx) / w, 0, 1);
+        const hasta = clamp((xAhora   - lx) / w, 0, 1);
         ex.style.left  = (100 * desde) + '%';
-        ex.style.width = (100 * (1 - desde)) + '%';
-        // El cuanto, dentro del propio tramo: sin esto la barra dice que se ha
-        // pasado pero hay que abrir el tooltip para saber de cuanto. Solo si
-        // cabe, que si no se sale del tramo y se lee peor que nada.
-        if (w * (1 - desde) > 58) ex.textContent = '+' + fmtMin(it.min_exceso);
+        ex.style.width = (100 * (hasta - desde)) + '%';
+        // El cuanto, dentro del propio tramo. Se exige holgura tambien en la
+        // barra entera: en una estrecha, el texto se montaba sobre el numero
+        // de orden y no se leia ninguno de los dos.
+        if (w * (hasta - desde) > 64 && w > 150) ex.textContent = '+' + fmtMin(it.min_exceso);
         bar.appendChild(ex);
       }
     }
