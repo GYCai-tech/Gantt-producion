@@ -1,2 +1,7 @@
 -r requirements.txt
 pytest==8.3.3
+# `fastapi.testclient.TestClient` lo necesita por dentro (starlette lo importa
+# de forma perezosa y avisa en tiempo de ejecucion, no al instalar). Sin
+# declararlo, los tests pasaban en local -- donde estaba instalado de arrastre
+# -- y reventaban en CI con el entorno limpio.
+httpx==0.27.2
