@@ -903,17 +903,42 @@ def _ocupacion_actual(items: list[dict], hasta: datetime, ahora: datetime) -> di
     dimensionarlo— y entonces se reserva la ventana entera: ignorar cuánto
     queda no es estar libre. Es distinto de saber que ya no queda trabajo,
     que es un `libre_desde` en `ahora` y suelta el recurso.
+
+    Devuelve INTERVALOS `(inicio, fin)` por recurso, no un "libre a partir de".
+    La diferencia importa: con un solo instante, reservar la máquina 004
+    mañana de 07:09 a 07:41 la marcaba ocupada desde ahora mismo, y a José
+    Ramón —libre hoy a las 11:47, con sus dos bonos en esa máquina— se le iba
+    todo a mañana por un trabajo que ni siquiera empieza hoy.
     """
-    ocupado = {}
+    ocupado: dict = {}
     for it in items:
         fin = it.get("libre_desde")
         if fin is None:
             fin = max(hasta, ahora)
         for tipo, rid in (("empleado", it["idempleado"]), ("maquina", it["matricula"])):
-            if rid:
-                clave = (tipo, str(rid))
-                ocupado[clave] = max(ocupado.get(clave, ahora), fin)
+            if rid and fin > ahora:
+                ocupado.setdefault((tipo, str(rid)), []).append((ahora, fin))
     return ocupado
+
+
+def _hueco_para(intervalos: list, desde: datetime, dur: float) -> tuple:
+    """El primer momento desde `desde` en que caben `dur` minutos seguidos.
+
+    Busca HUECOS en vez de ponerse a la cola detrás de todo: si un recurso
+    está reservado mañana por la mañana, hoy por la tarde sigue libre y hay
+    que poder usarlo. Con la ocupación como un único "libre a partir de" eso
+    era imposible de expresar.
+
+    El bucle avanza siempre —cada choque devuelve un fin posterior al instante
+    probado— así que termina.
+    """
+    t = _siguiente_hueco(desde)
+    while True:
+        fin = _sumar_laborables(t, dur)
+        choque = max((b for a, b in intervalos if a < fin and t < b), default=None)
+        if choque is None:
+            return t, fin
+        t = _siguiente_hueco(choque)
 
 
 def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
@@ -933,6 +958,15 @@ def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
     se fabrica una vez— con el primer hueco, el del operario que antes queda
     libre. Se conservan todos los asignados y no se infiere una ganancia de
     velocidad por su número.
+
+    Y se buscan HUECOS, no el final de la cola. Con la ocupación como un único
+    "libre a partir de", un bono que arrancaba mañana dejaba su máquina
+    inservible hoy: ETT4 tiene 1,8 jornadas de cola, así que su bono 6534/30
+    caía mañana a las 07:09 y con él reservaba la 004; José Ramón, libre hoy a
+    las 11:47 y con sus dos bonos en esa misma máquina, se iba entero a mañana
+    por un trabajo que ni siquiera empieza hoy. El orden de prioridad no
+    cambia —semáforo, secuencia, orden—: lo que cambia es que una tarea puede
+    caer ANTES que otra ya colocada si le cabe en un hueco que aquella dejó.
 
     La prioridad es semáforo, secuencia manual y orden/bono; el cálculo es
     conservador y no intenta optimizar huecos ni reasignar trabajo del ERP.
@@ -966,18 +1000,21 @@ def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
         dur = _MIN_BLOQUE_SIN_TIEMPO if sin_tiempo else setup + pendientes * min_pieza
 
         maquina = ("maquina", b["matricula"]) if b["matricula"] else None
-        libre_maquina = ocupado.get(maquina, ahora) if maquina else ahora
+        # Foto de la máquina ANTES de colocar este bono: los asignados compiten
+        # por ella entre sí, pero el bono se fabrica una vez, así que cada uno
+        # se mide contra la misma disponibilidad.
+        ocupa_maquina = list(ocupado.get(maquina, ())) if maquina else []
         huecos = {}
         for a in asignados:
             clave = ("empleado", str(a["idempleado"]))
-            arranque = _siguiente_hueco(
-                max(ahora, libre_maquina, ocupado.get(clave, ahora)))
-            ocupado[clave] = _sumar_laborables(arranque, dur)
-            huecos[str(a["idempleado"])] = (arranque, ocupado[clave])
+            arranque, remate = _hueco_para(
+                list(ocupado.get(clave, ())) + ocupa_maquina, ahora, dur)
+            ocupado.setdefault(clave, []).append((arranque, remate))
+            huecos[str(a["idempleado"])] = (arranque, remate)
 
         inicio, fin = min(huecos.values())
         if maquina:
-            ocupado[maquina] = fin
+            ocupado.setdefault(maquina, []).append((inicio, fin))
         # Las reservas se calculan incluso fuera de la ventana: de lo
         # contrario cambiar de Día a Semana cambiaría el orden de la cola.
         if inicio >= hasta_dt:

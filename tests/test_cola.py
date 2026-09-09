@@ -104,7 +104,7 @@ def test_sin_secuencia_va_detras_de_cualquier_secuencia_explicita():
 
 
 def test_un_recurso_ocupado_no_oculta_trabajo_de_otro_libre():
-    tareas = plan([bono(1), bono(2, 2, 'M2')], {('maquina', 'M1'): HASTA})
+    tareas = plan([bono(1), bono(2, 2, 'M2')], {('maquina', 'M1'): [(AHORA, HASTA)]})
     assert [t['bono']['idorden'] for t in tareas] == [2]
 
 
@@ -170,7 +170,7 @@ def test_la_preparacion_reserva_tambien_la_produccion_que_viene_despues(monkeypa
 
 def test_cambiar_la_ventana_no_reordena_la_prevision():
     cola = [bono(1, 1, 'M1'), bono(2, 1, 'M2')]
-    ocupado = {('maquina', 'M1'): datetime(2026, 9, 8, 12)}
+    ocupado = {('maquina', 'M1'): [(AHORA, datetime(2026, 9, 8, 12))]}
     corto = plan(cola, ocupado, hasta=AHORA.replace(hour=15))
     largo = plan(cola, ocupado)
     assert corto == [t for t in largo if t['start'] < AHORA.replace(hour=15)]
@@ -181,7 +181,7 @@ def test_un_companero_ocupado_no_vacia_la_cola_del_otro():
     estaba fichado él solo en otra máquina hasta el día siguiente. Esperando a
     que coincidieran los dos, ETT2 aparecía sin nada que hacer con su máquina
     parada todo el día."""
-    ocupado = {('empleado', '1'): datetime(2026, 9, 8, 10, 23)}
+    ocupado = {('empleado', '1'): [(AHORA, datetime(2026, 9, 8, 10, 23))]}
     tareas = plan([bono(1, 1, 'M1'), bono(1, 2, 'M1')], ocupado)
 
     assert len(tareas) == 1
@@ -194,7 +194,7 @@ def test_un_companero_ocupado_no_vacia_la_cola_del_otro():
 def test_el_hueco_de_un_companero_no_se_pinta_si_cae_fuera_de_la_ventana(monkeypatch):
     cola = [bono(1, 1, 'M1'), bono(1, 2, 'M1')]
     monkeypatch.setattr(api, '_leer_cola', lambda: cola)
-    ocupado = {('empleado', '1'): datetime(2026, 9, 14, 8)}   # más allá de HASTA
+    ocupado = {('empleado', '1'): [(AHORA, datetime(2026, 9, 14, 8))]}  # más allá de HASTA
     items = api._encolar('empleado', ocupado, HASTA, AHORA, {(1, 10): (1, 1)}, MEDIAS)
 
     assert [i['recurso_id'] for i in items] == ['2']
@@ -215,3 +215,32 @@ def test_la_cola_no_presenta_la_media_de_la_maquina_como_fiable(monkeypatch):
     # El aviso no encoge la barra: la cola se sigue encadenando con su tamaño.
     assert items[0]['min_restantes'] > 0
     assert items[0]['sin_tiempo'] is False
+
+
+def test_un_bono_que_arranca_manana_no_inutiliza_su_maquina_hoy():
+    """El caso de Jose Ramon. ETT4 tiene 1,8 jornadas de cola, asi que su bono
+    de la maquina 004 cae manana por la manana; con la ocupacion como un unico
+    "libre a partir de", esa reserva dejaba la 004 inservible HOY, y a Jose
+    Ramon —libre a las 11:47 y con sus dos bonos en esa maquina— se le iba
+    todo a manana por un trabajo que ni siquiera empieza hoy."""
+    ocupado = {('empleado', '1'): [(AHORA, datetime(2026, 9, 8, 9))]}
+    # El 1 esta ocupado hasta manana; el 2 esta libre. Los dos van a M1.
+    tareas = plan([bono(1, 1, 'M1'), bono(2, 2, 'M1')], ocupado)
+
+    porbono = {t['bono']['idorden']: t for t in tareas}
+    assert porbono[1]['start'] == datetime(2026, 9, 8, 9)     # espera a su operario
+    # Y el 2 entra HOY, en el hueco que el otro deja delante.
+    assert porbono[2]['start'] == AHORA
+    assert porbono[2]['end'] < porbono[1]['start']
+
+
+def test_el_hueco_solo_se_usa_si_el_trabajo_cabe_entero():
+    """Colar una tarea en un hueco que no le llega la solaparia con lo que ya
+    esta reservado detras."""
+    # M1 libre solo de 12:00 a 12:30; el bono necesita 101 min. La ventana se
+    # alarga para poder ver DONDE cae: con la corta se saldria y no se pintaria,
+    # que es cierto pero no distingue "no cabe" de "no se intento".
+    ocupado = {('maquina', 'M1'): [(AHORA.replace(hour=12, minute=30), HASTA)]}
+    tareas = plan([bono(1, 1, 'M1')], ocupado, hasta=datetime(2026, 9, 18, 15))
+
+    assert tareas[0]['start'] >= HASTA          # no se cuela en los 30 min
