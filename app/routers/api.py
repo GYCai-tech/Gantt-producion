@@ -674,7 +674,11 @@ def get_items(
 
     inicio_ventana = datetime.combine(d0, datetime.min.time())
     fin_ventana = datetime.combine(d1 + timedelta(days=1), datetime.min.time())
-    return [it for it in _fundir_montaje(items) + cola
+    # `_continuar` va sobre la lista ya fundida y siempre se llama: es lo que
+    # pinta la reserva de un bono en montaje y, de paso, lo que limpia la clave
+    # interna que `_proyectar` deja en esas barras.
+    visibles = _fundir_montaje(items)
+    return [it for it in visibles + _continuar(visibles, ahora) + cola
             if it["end"] > inicio_ventana and it["start"] < fin_ventana]
 
 
@@ -763,6 +767,24 @@ _SEMAFORO = {
 #  Orden en que se sirve la cola. Lo que se puede hacer va primero; dentro de
 #  cada grupo sigue mandando la secuencia manual del ERP.
 _PRIO_SEMAFORO = {'en_curso': 0, 'disponible': 1, 'bloqueada': 2}
+
+#  A partir de cuántos asignados un bono se trata como CUADRILLA: trabajan a la
+#  vez y el tiempo estimado —que son minutos-HOMBRE— se reparte entre ellos.
+#
+#  Medido sobre los bonos cerrados que conservan su asignación, mirando si dos
+#  fichajes del mismo bono se solapan en el tiempo:
+#
+#      asignados   bonos   media que llegan a ficharlo   solapan
+#          1       11.819            1,02                  0%
+#          2        2.678            1,47                 28%
+#          3          281            2,20                 54%
+#          4          158            3,86                 95%
+#
+#  Con DOS, "asignado" significa casi siempre "que lo coja quien pueda": el 72%
+#  de las veces acaba haciéndolo una sola persona, y repartir el tiempo entre
+#  dos partiría por la mitad 2.678 bonos que nadie hace en pareja. Con tres ya
+#  es mayoría y con cuatro es la norma.
+_MIN_CUADRILLA = 3
 
 #  La función se evalúa fila a fila: la consulta pasa de 12 ms a ~360 ms. Se
 #  cachea porque el color cambia cuando llega material o alguien coge un bono
@@ -999,18 +1021,42 @@ def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
         sin_tiempo = not min_pieza or min_pieza <= 0
         dur = _MIN_BLOQUE_SIN_TIEMPO if sin_tiempo else setup + pendientes * min_pieza
 
+        # `dur` son minutos-HOMBRE: tanto el escandallo como la media histórica
+        # suman las líneas de TODOS los operarios del bono. El eje del Gantt es
+        # un reloj, así que una cuadrilla de cuatro ocupa la cuarta parte de
+        # tiempo. Sin esto, 6595/70 —60 piezas a 5,18 min/pieza, cuatro
+        # asignados— pintaba 331 minutos a cada uno cuando entre los cuatro son
+        # 83 de reloj.
+        cuadrilla = len(asignados) >= _MIN_CUADRILLA
+        dur_reloj = dur / len(asignados) if cuadrilla else dur
+
         maquina = ("maquina", b["matricula"]) if b["matricula"] else None
         # Foto de la máquina ANTES de colocar este bono: los asignados compiten
         # por ella entre sí, pero el bono se fabrica una vez, así que cada uno
         # se mide contra la misma disponibilidad.
         ocupa_maquina = list(ocupado.get(maquina, ())) if maquina else []
         huecos = {}
-        for a in asignados:
-            clave = ("empleado", str(a["idempleado"]))
-            arranque, remate = _hueco_para(
-                list(ocupado.get(clave, ())) + ocupa_maquina, ahora, dur)
-            ocupado.setdefault(clave, []).append((arranque, remate))
-            huecos[str(a["idempleado"])] = (arranque, remate)
+        if cuadrilla:
+            # Trabajan JUNTOS, así que hace falta un hueco en el que estén
+            # libres todos a la vez. Es lo contrario del caso de abajo y por
+            # eso convive con él: ahí "asignado" significa "que lo coja quien
+            # pueda" y esperar a los demás vaciaba colas enteras.
+            intervalos = ocupa_maquina + [
+                iv for a in asignados
+                for iv in ocupado.get(("empleado", str(a["idempleado"])), ())
+            ]
+            arranque, remate = _hueco_para(intervalos, ahora, dur_reloj)
+            for a in asignados:
+                clave = ("empleado", str(a["idempleado"]))
+                ocupado.setdefault(clave, []).append((arranque, remate))
+                huecos[str(a["idempleado"])] = (arranque, remate)
+        else:
+            for a in asignados:
+                clave = ("empleado", str(a["idempleado"]))
+                arranque, remate = _hueco_para(
+                    list(ocupado.get(clave, ())) + ocupa_maquina, ahora, dur_reloj)
+                ocupado.setdefault(clave, []).append((arranque, remate))
+                huecos[str(a["idempleado"])] = (arranque, remate)
 
         inicio, fin = min(huecos.values())
         if maquina:
@@ -1024,7 +1070,11 @@ def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
             "secuencia": secuencia, "start": inicio, "end": fin,
             "huecos": huecos,
             "pendientes": pendientes, "sin_tiempo": sin_tiempo,
-            "min_pieza": min_pieza, "origen": origen, "duracion": dur,
+            "min_pieza": min_pieza, "origen": origen, "duracion": dur_reloj,
+            # Los minutos-hombre y cuántos lo hacen: sin esto, el tooltip de un
+            # bono de cuadrilla dice "83 min" para 60 piezas a 5,18 min/pieza y
+            # no hay forma de cuadrar la cuenta.
+            "min_hombre": dur, "a_la_vez": len(asignados) if cuadrilla else 1,
         })
     return plan
 
@@ -1082,6 +1132,8 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 "piezas_pendientes": tarea["pendientes"],
                 "min_pieza": round(min_pieza, 3) if min_pieza else None,
                 "min_restantes": round(tarea["duracion"]),
+                "min_hombre": round(tarea["min_hombre"]),
+                "a_la_vez": tarea["a_la_vez"],
                 "base_estimacion": "piezas",
             })
     return items
@@ -1135,6 +1187,90 @@ def _fundir_montaje(items: list[dict]) -> list[dict]:
     return [it for it in items if id(it) not in absorbidos]
 
 
+# ─────────────────────────────────────────────────────────────────────
+#  CONTINUACIÓN: lo que queda por fabricar del bono que se está montando
+# ─────────────────────────────────────────────────────────────────────
+#  Un bono recién arrancado solo tiene fichada la PREPARACIÓN, así que su
+#  única barra real acaba con el montaje. Pero `_proyectar` reserva al
+#  operario y a la máquina hasta terminar de fabricarlo (`libre_desde`), que
+#  es lo correcto: el siguiente bono no puede empezar antes.
+#
+#  Esa reserva no la pintaba nadie, y era un agujero grande. La cola no la
+#  recoge —filtra por `IdEstado = 0` y un bono arrancado ya está en 1, sobre
+#  el supuesto de que "ya sale como barra real de su propio fichaje", que es
+#  falso mientras lo único fichado sea el montaje— y la barra real tampoco,
+#  porque el fichaje de producción todavía no existe. Medido en 6589/20:
+#  Elías quedaba ocupado hasta el día 15 (1.200 piezas a 1,63 min/pieza)
+#  mientras la pantalla lo enseñaba libre a las 13:16, y sus bonos en cola
+#  aparecían a seis días vista sin nada que lo explicara.
+#
+#  La barra es una proyección, como las de la cola, y va del fin del montaje
+#  al fin de la reserva. Se distingue en que este bono YA está arrancado: no
+#  tiene semáforo que consultar, lleva estado propio.
+# ─────────────────────────────────────────────────────────────────────
+
+def _continuar(items: list[dict], ahora: datetime) -> list[dict]:
+    """Las barras de fabricación pendiente de los montajes abiertos.
+
+    Consume `_pendiente`, que `_proyectar` deja en la barra de montaje. Se
+    llama SIEMPRE, aunque no haya nada que dibujar, porque además de generar
+    las barras es lo que saca esa clave interna del payload.
+
+    Se corre sobre la lista ya fundida: si el montaje enlazó con su barra de
+    producción, esa barra tiene su propia proyección y aquí no hay nada que
+    añadir."""
+    barras = []
+    for it in items:
+        p = it.pop("_pendiente", None)
+        if not p:
+            continue
+        minutos = p["minutos"]
+        # Dimensionada en cero: las piezas ya están hechas y lo que queda es
+        # cerrar el fichaje, no fabricar. Distinto de no saber cuánto queda.
+        if minutos is not None and minutos <= 0:
+            continue
+        sin_tiempo = minutos is None
+        inicio = max(it["end"], ahora)
+        # Sin dimensionar, `_ocupacion_actual` reserva la ventana entera. Se
+        # dibuja el bloque nominal de la cola y se avisa de que el fin no se
+        # sabe: una barra de días enteros diría una precisión que no hay.
+        fin = (_sumar_laborables(inicio, _MIN_BLOQUE_SIN_TIEMPO) if sin_tiempo
+               else it.get("libre_desde") or _sumar_laborables(inicio, minutos))
+        # Misma regla que en la cola: la media de la máquina dimensiona la
+        # barra pero no es un ritmo del que fiarse.
+        sin_ritmo = sin_tiempo or p["origen"] == "media_maquina"
+        barras.append({
+            "id":          f"C-{it['idorden']}-{it['idbono']}-{it['recurso_id']}",
+            "recurso_id":  it["recurso_id"],
+            "tipo":        "programado",
+            "estado":      "sin-estimar" if sin_ritmo else "continuacion",
+            "continuacion": True,
+            "fin_indeterminado": sin_ritmo,
+            "en_curso":    False,
+            "estimado":    True,
+            "start":       inicio,
+            "end":         fin,
+            "idorden":     it["idorden"],
+            "idbono":      it["idbono"],
+            "art":         it["art"],
+            "art_id":      it["art_id"],
+            "area":        it["area"],
+            "operacion":   it["operacion"],
+            "operarios":   it["operarios"],
+            "piezas":      it["piezas"],
+            "min_real":    None,
+            "sin_tiempo":  sin_tiempo,
+            "origen_estimado":   p["origen"],
+            "piezas_objetivo":   p["objetivo"] or None,
+            "piezas_hechas":     p["hechas"],
+            "piezas_pendientes": max(0.0, p["objetivo"] - p["hechas"]),
+            "min_pieza":     round(p["min_pieza"], 3) if p["min_pieza"] else None,
+            "min_restantes": round(minutos) if minutos is not None else None,
+            "base_estimacion": "piezas",
+        })
+    return barras
+
+
 def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avance) -> None:
     """Estira la barra abierta hasta su fin estimado, o la marca sin tiempo.
 
@@ -1165,9 +1301,10 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
             item["end"] = item["fin_estimado"] = _sumar_laborables(ahora, restante)
         # Al terminar el montaje aún queda fabricar el bono. Reservar solo
         # hasta el fin de preparación adelantaría el siguiente bono.
-        ritmo, _, _ = _estimar(linea, teoricos, medias)
+        ritmo, _, origen = _estimar(linea, teoricos, medias)
         gasto = avance.get((linea["idorden"], linea["idbono"]))
         objetivo = float(linea["piezas_a_fabricar"] or 0)
+        produccion = None
         # Sin `restante > 0`: que la preparación se haya pasado de su media no
         # quita que detrás siga habiendo un bono que fabricar. Lo que no se
         # puede dimensionar es la producción, y eso ya lo dice el `if`.
@@ -1176,6 +1313,15 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
                           if gasto["piezas"] > 0 else
                           max(0.0, objetivo * ritmo - gasto["min_produccion"]))
             item["libre_desde"] = _sumar_laborables(ahora, restante + produccion)
+        # Lo que acabamos de reservar tiene que verse: `_continuar` lo convierte
+        # en barra propia. La clave se consume ahí y no llega al frontend.
+        item["_pendiente"] = {
+            "minutos":   produccion,
+            "min_pieza": ritmo,
+            "origen":    origen,
+            "objetivo":  objetivo,
+            "hechas":    min(gasto["piezas"], objetivo) if gasto and objetivo else 0.0,
+        }
         return
 
     min_pieza, setup, origen = _estimar(linea, teoricos, medias)

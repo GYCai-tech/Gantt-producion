@@ -33,6 +33,10 @@ const App = (() => {
     parada: 'Bloqueada', pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
     programado: 'En espera', disponible: 'Disponible',
     'pendiente-cierre': 'Pendiente de cerrar',
+    // Lo que queda por fabricar de un bono del que solo esta fichada la
+    // preparacion. No es cola: el bono ya esta arrancado y ese tiempo ya
+    // tiene reservados al operario y a la maquina.
+    continuacion: 'Fabricación pendiente',
   };
   const ST_COLOR = {
     plazo: '#128fa6', completado: '#6b7689',
@@ -40,6 +44,7 @@ const App = (() => {
     parada: '#9a4b52', pausada: '#5b6b8a', parcial: '#c77b1f',
     programado: '#5b63b0', disponible: '#1f9254',
     'pendiente-cierre': '#3f7d9e',
+    continuacion: '#128fa6',
   };
 
   // De donde ha salido el tiempo estimado de un bono (ver /api/items).
@@ -456,6 +461,8 @@ const App = (() => {
     if (it.operacion) rows.push(`<div class="tip__row">Operación <span>${esc(it.operacion)}</span></div>`);
     rows.push(`<div class="tip__row">Bono <span>${it.idbono || '—'}</span></div>`);
     if (it.es_montaje) rows.push(`<div class="tip__row">Tipo <span>⚙ Montaje de utillaje</span></div>`);
+    // Por que hay una barra proyectada de un bono que ya esta en marcha.
+    if (it.continuacion) rows.push(`<div class="tip__row">Tipo <span>⏭ Sigue a la preparación en curso</span></div>`);
     if (it.min_montaje) rows.push(`<div class="tip__row">Preparación <span>${fmtMin(it.min_montaje)} · ${it.pct_montaje}% de la barra</span></div>`);
     // El teorico contra lo que de verdad esta costando, que es la lectura que
     // pide el tramo rojo de la barra.
@@ -487,6 +494,10 @@ const App = (() => {
         rows.push(`<div class="tip__row">Producción consumida <span>${it.min_consumidos} min${it.excedido ? ' · se ha pasado' : ''}</span></div>`);
       }
       if (it.min_restantes != null) rows.push(`<div class="tip__row">Le queda <span>${fmtMin(it.min_restantes)}</span></div>`);
+      // Sin esto la cuenta no cuadra a la vista: 60 piezas a 5,18 min/pieza
+      // son 331 minutos y la barra mide 83, porque el tiempo estimado son
+      // minutos-HOMBRE y el eje es un reloj.
+      if (it.a_la_vez > 1) rows.push(`<div class="tip__row">Cuadrilla <span>${it.a_la_vez} operarios a la vez · ${fmtMin(it.min_hombre)} de trabajo</span></div>`);
       rows.push(`<div class="tip__row">Segun <span>${fuente}</span></div>`);
     }
     rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}</span></div>`);
@@ -533,8 +544,11 @@ const App = (() => {
       trabajado: `✓ Completado`,
       parcial:   `⏸ Sesión cerrada · el bono sigue abierto, continúa en la cola`,
     };
+    const aviso = it.continuacion
+      ? '⏭ Queda por fabricar · el bono está arrancado y de momento solo tiene fichada la preparación'
+      : (AVISO[it.tipo] || '');
     $('d-body').innerHTML =
-      `<div class="notice">${AVISO[it.tipo] || ''}</div>` +
+      `<div class="notice">${aviso}</div>` +
       `<dl class="dl">
         <dt>Operario</dt><dd>${esc(grp ? grp.nombre : it.recurso_id)}</dd>
         <dt>Bono</dt><dd>${it.idbono || '—'}${it.operacion ? ' · ' + esc(it.operacion) : ''}</dd>
