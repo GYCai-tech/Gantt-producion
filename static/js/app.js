@@ -30,6 +30,28 @@ const App = (() => {
   const ZOOM_PASO = 1.5, ZOOM_MAX = 8;
   let _escala = 1;
 
+  // Escalones de rejilla en minutos, de grueso a fino. Se coge el MAS FINO que
+  // deje al menos `MIN_PX_LINEA` pixeles entre lineas, asi que la rejilla se
+  // afina sola segun se acerca: a 70 px/hora sale de 10 en 10 minutos y al
+  // 800% de minuto en minuto, sin que haya que elegir nada a mano.
+  const PASOS_REJILLA = [60, 30, 15, 10, 5, 2, 1];
+  const MIN_PX_LINEA  = 9;
+  // Las etiquetas del eje piden mucho mas sitio que una linea: "07:30" ocupa
+  // unos 30 px y hay que dejarlas respirar o se pisan.
+  const PASOS_ETIQUETA = [240, 120, 60, 30, 15, 10, 5];
+  const MIN_PX_ETIQUETA = 42;
+
+  function _paso(escalones, minPx) {
+    const pxMin = pph() / 60;
+    let elegido = null;
+    for (const p of escalones) if (p * pxMin >= minPx) elegido = p;
+    return elegido;
+  }
+  const pasoRejilla  = () => _paso(PASOS_REJILLA, MIN_PX_LINEA);
+  // Si no cabe ni el escalon mas grueso, la ventana ancha conserva su paso
+  // fijo: en 2 semanas son las 07 y las 11, que es lo que habia.
+  const pasoEtiqueta = () => _paso(PASOS_ETIQUETA, MIN_PX_ETIQUETA) || cfg().tick * 60;
+
   // "disponible" viene del semáforo per-operario del ERP (verde) cuando hay
   // dato; "parada" ahora también cubre el rojo de ese mismo semáforo (antes
   // se pintaba como un punto aparte -- un bono bloqueado para ESE operario
@@ -95,20 +117,38 @@ const App = (() => {
     _pph = Math.max(MIN_PPH, avail / horas) * _escala;
   }
 
-  function setEscala(factor) {
+  // `anclaX` es el punto de la ventana que NO se debe mover, en pixeles desde
+  // el borde izquierdo del Gantt. Con la rueda es el cursor —lo natural es que
+  // se acerque hacia donde se esta mirando— y con los botones, el centro.
+  function setEscala(factor, anclaX) {
     const nueva = Math.min(ZOOM_MAX, Math.max(1, factor));
-    if (nueva === _escala) return;
-    // Se conserva el instante que hay en el centro de la pantalla: sin esto,
-    // acercar te deja mirando un sitio distinto del que estabas mirando.
+    if (Math.abs(nueva - _escala) < 1e-9) return;
     const g = $('gantt');
-    const centro = (g.scrollLeft + (g.clientWidth - RAIL) / 2) / Math.max(1, timelineW());
+    const vx = anclaX != null ? anclaX : (RAIL + (g.clientWidth - RAIL) / 2);
+    // Punto de la linea de tiempo que hay ahora bajo ese pixel, en tanto por
+    // uno del ancho total. El carril de nombres es sticky y se descuenta.
+    const prop = (g.scrollLeft + vx - RAIL) / Math.max(1, timelineW());
     _escala = nueva;
     render();
-    g.scrollLeft = centro * timelineW() - (g.clientWidth - RAIL) / 2;
+    g.scrollLeft = prop * timelineW() - vx + RAIL;
     renderEscala();
   }
   const zoomIn  = () => setEscala(_escala * ZOOM_PASO);
   const zoomOut = () => setEscala(_escala / ZOOM_PASO);
+
+  // Ctrl/Cmd + rueda hace zoom; la rueda sola sigue desplazando las filas, que
+  // son 25 y hay que poder recorrerlas. `passive: false` es obligatorio para
+  // poder cancelar el zoom del navegador.
+  function montarRueda() {
+    $('gantt').addEventListener('wheel', e => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const r = $('gantt').getBoundingClientRect();
+      // Un paso mas suave que el de los botones: la rueda dispara muchos
+      // eventos seguidos y con 1,5 por golpe se pasa de largo enseguida.
+      setEscala(_escala * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX - r.left);
+    }, { passive: false });
+  }
 
   function renderEscala() {
     const b = $('zoom-nivel');
@@ -162,6 +202,7 @@ const App = (() => {
     buildDays();
     renderZoom();
     renderEscala();
+    montarRueda();
     tickClock(); setInterval(tickClock, 30000);
     loadGrupos()
       .then(() => loadItems())
@@ -261,13 +302,17 @@ const App = (() => {
       cell.innerHTML = dayWidth() > 60 ? `${wdName} ${day.getDate()}${mon}` : `${day.getDate()}`;
       ax.appendChild(cell);
 
-      const tick = cfg().tick;
-      if (tick > 0) {
-        for (let h = WORK_INI; h < WORK_FIN; h += tick) {
+      // Las horas del eje siguen el mismo escalon que la rejilla, redondeado a
+      // lo que cabe escrito: una rejilla de minutos sin ninguna referencia
+      // numerica no dice donde estas.
+      const paso = pasoEtiqueta();
+      if (paso > 0) {
+        for (let m = 0; m < VIS_MIN; m += paso) {
           const t = document.createElement('div');
-          t.className = 'axis__tick';
-          t.style.left = (left + (h - WORK_INI) * pph()) + 'px';
-          t.textContent = pad(h);
+          t.className = 'axis__tick' + (m % 60 === 0 ? '' : ' is-min');
+          t.style.left = (left + (m / 60) * pph()) + 'px';
+          const h = WORK_INI + Math.floor(m / 60);
+          t.textContent = paso >= 60 ? pad(h) : `${pad(h)}:${pad(m % 60)}`;
           ax.appendChild(t);
         }
       }
@@ -283,14 +328,15 @@ const App = (() => {
       const ln = document.createElement('div');
       ln.className = 'bg-dayline'; ln.style.left = left + 'px';
       bg.appendChild(ln);
-      // Rejilla horaria. Se dibuja siempre que haya sitio para leerla: por
-      // debajo de 18 px por hora las lineas se tocan y ensucian mas que ayudan.
-      if (pph() >= 18) {
-        for (let h = WORK_INI + 1; h < WORK_FIN; h++) {
-          const hl = document.createElement('div');
-          hl.className = 'bg-hourline';
-          hl.style.left = (left + (h - WORK_INI) * pph()) + 'px';
-          bg.appendChild(hl);
+      // Rejilla. El paso se afina al acercarse; la hora en punto se marca mas
+      // fuerte que sus divisiones para no perder la referencia gruesa.
+      const paso = pasoRejilla();
+      if (paso) {
+        for (let m = paso; m < VIS_MIN; m += paso) {
+          const ln = document.createElement('div');
+          ln.className = m % 60 === 0 ? 'bg-hourline' : 'bg-minline';
+          ln.style.left = (left + (m / 60) * pph()) + 'px';
+          bg.appendChild(ln);
         }
       }
       const br = document.createElement('div');

@@ -272,6 +272,9 @@ button { font-family: inherit; }
   font-size: 10px; color: var(--ink-3); padding-left: 4px; padding-top: 4px;
   font-variant-numeric: tabular-nums;
 }
+/* Los minutos dentro de la hora: se leen si hacen falta, pero no compiten con
+   la hora en punto, que es la que se busca de un vistazo. */
+.axis__tick.is-min { color: var(--ink-3); opacity: .55; border-left-color: transparent; }
 
 /* --- Cuerpo --- */
 .gantt__main { position: relative; }
@@ -284,9 +287,11 @@ button { font-family: inherit; }
   border-left: 1px dashed #c7cfdb; border-right: 1px dashed #c7cfdb;
 }
 .bg-dayline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line); }
-/* Rejilla horaria: mas floja que la linea del dia, que es la que estructura.
-   Si pesan lo mismo, el ojo deja de distinguir donde acaba una jornada. */
+/* Rejilla, en tres pesos: dia > hora > division de la hora. Si pesan lo mismo
+   el ojo deja de distinguir donde acaba una jornada, que es la referencia que
+   de verdad estructura el Gantt. */
 .bg-hourline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-2); }
+.bg-minline  { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(99,110,130,.055); }
 .bg-now {
   position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); z-index: 6;
 }
