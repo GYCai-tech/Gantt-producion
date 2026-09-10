@@ -212,7 +212,11 @@ def get_grupos(vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
             "area":   (r["area"] or "").strip() or "Sin área",
         } for r in filas]
 
-    # Operarios: el censo completo, sin depender de fechas.
+    # Operarios: el censo completo, sin depender de fechas. Solo los de
+    # PRODUCCIÓN: `Empleados_Datos.IdDepartamento = 6`. Los otros cuatro que
+    # aparecían tienen fichajes en el histórico pero no son gente de planta
+    # -- Gilberto está en el 3 y es quien mantiene el escandallo -- y ocupaban
+    # fila en el Gantt y en la rejilla de carga sin trabajo que planificar.
     censo = _erp("""
         SELECT DISTINCT
             obl.IdEmpleado AS idempleado,
@@ -220,7 +224,8 @@ def get_grupos(vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
             ed.Apellidos   AS apellidos
         FROM Ordenes_Bonos_Lineas obl
             JOIN Empleados_Datos ed ON obl.IdEmpleado = ed.IdEmpleado
-    """, {})
+        WHERE ed.IdDepartamento = :departamento
+    """, {"departamento": _DEPARTAMENTO_PRODUCCION})
 
     # El área de un operario no es su departamento del ERP sino la de las
     # máquinas en las que trabaja: es lo que agrupa de verdad en planta. Solo
@@ -296,6 +301,10 @@ _MIN_BONOS_MEDIA  = 3     # con menos bonos, la media es ruido
 _FACTOR_ESCANDALLO = 5
 _escandallos_avisados: set = set()
 _HORAS_LINEA_VIVA = 24    # una línea abierta más vieja que esto es fantasma, no trabajo
+
+#  El departamento de planta en `Empleados_Datos`. Es el que separa a los
+#  operarios del resto: 25 de los 29 que salían en el Gantt están aquí.
+_DEPARTAMENTO_PRODUCCION = 6
 
 _SQL_TEORICO = """
 WITH mano_obra AS (
