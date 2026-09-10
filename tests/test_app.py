@@ -16,9 +16,10 @@ def test_la_app_publica_las_rutas_que_consume_el_frontend():
     assert {
         "/", "/api/lineas", "/api/grupos", "/api/items",
         "/api/refrescar", "/api/refrescar/{flow_run_id}",
-        "/fiabilidad", "/api/fiabilidad", "/planificacion", "/api/plan",
+        "/planificacion", "/api/plan",
     }.issubset(_rutas())
 
 
 def test_no_quedan_rutas_de_las_paginas_eliminadas():
-    assert not (_rutas() & {"/historico-produccion", "/consultor-bonos", "/api/bonos"})
+    assert not (_rutas() & {"/historico-produccion", "/consultor-bonos", "/api/bonos",
+                            "/fiabilidad", "/api/fiabilidad"})

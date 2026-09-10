@@ -15,10 +15,10 @@ Dos cosas que la vista enseña y el Gantt no:
     que alguien tiene 320 proyectados dice más que ver tres barras sueltas.
 
 Y una advertencia que la propia página repite: esto es una PROYECCIÓN. Medido
-en `/fiabilidad`, el error típico de una estimación es del 43% y el 46% de las
-barras se apoyan en la media de la máquina, que no sirve como ritmo. El primer
-día es razonable porque casi todo es trabajo ya empezado; a partir del tercero
-es una conjetura encadenada sobre conjeturas.
+sobre los bonos ya cerrados, el error típico de una estimación es del 43% y el
+46% de las barras se apoyan en la media de la máquina, que no sirve como ritmo.
+El primer día es razonable porque casi todo es trabajo ya empezado; a partir
+del tercero es una conjetura encadenada sobre conjeturas.
 """
 from collections import defaultdict
 from datetime import date, datetime, timedelta

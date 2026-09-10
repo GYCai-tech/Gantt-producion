@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import api, fiabilidad, pages, plan
+from app.routers import api, pages, plan
 
 
 class _Encoder(json.JSONEncoder):
@@ -36,5 +36,4 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.include_router(pages.router)
 app.include_router(api.router)
-app.include_router(fiabilidad.router)
 app.include_router(plan.router)

@@ -432,6 +432,10 @@ button { font-family: inherit; }
 .bar.st-pausada { background: #eaeef5; border-color: #bcc8dc; color: #45526e; }
 .bar.st-programado { background: #d3d8f7; border-color: #8a93d8; color: #2f3470; }
 .bar.st-disponible { background: var(--verde-bg); border-color: #a8dcbb; color: #156138; }
+/* Fabricacion pendiente de un bono que solo tiene fichada la preparacion:
+   mismo cian que "en curso" porque el bono LO ESTA, y la trama diagonal de
+   .bar--programado ya dice que el tramo es una proyeccion. */
+.bar.st-continuacion { background: #ddf3f8; border-color: #18b5d0; color: #0f5f6e; }
 /* Todas las piezas hechas y el fichaje aun abierto: no hay nada que corregir
    en planta, solo cerrarlo. Azul informativo, no ambar de aviso. */
 .bar.st-pendiente-cierre { background: #e7f1f6; border-color: #a9cbdc; color: #2c5c74; }
@@ -571,109 +575,15 @@ button { font-family: inherit; }
   background-color: #f8fafc;
 }
 /* ============================================================
-   Fiabilidad de las estimaciones (/fiabilidad)
-   Pagina de lectura, no de operacion: ancho contenido y mucho
-   aire, al reves que el Gantt, que pelea por cada pixel.
-   ============================================================ */
-.fiab { overflow-y: auto; align-items: center; }
-/* El reloj de la navbar va capitalizado para los nombres de dia del Gantt
-   ("Martes 9"); aqui la frase es una oracion y salia "Calculado A Las 09:15". */
-.fiab-clock { text-transform: none; }
-.fiab > * { width: 100%; max-width: 1080px; }
-
-.fiab__intro { margin: 14px 0 6px; }
-.fiab__intro h1 { font-size: 21px; margin: 0 0 6px; letter-spacing: -.01em; }
-.fiab__intro p  { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.55; max-width: 76ch; }
-
-.fiab__estado { padding: 28px 2px; color: var(--ink-2); font-size: 13.5px; }
-.fiab__estado--error { color: var(--rojo); }
-
-.fiab__bloque { margin-top: 26px; }
-.fiab__bloque h2 { font-size: 15px; margin: 0 0 4px; }
-.fiab__nota { margin: 0 0 12px; color: var(--ink-2); font-size: 12.5px; line-height: 1.55; max-width: 82ch; }
-
-/* Semaforo compartido por toda la pagina */
-.is-bien    { --fb: var(--verde); --fb-bg: var(--verde-bg); }
-.is-regular { --fb: var(--ambar); --fb-bg: var(--ambar-bg); }
-.is-mal     { --fb: var(--rojo);  --fb-bg: var(--rojo-bg); }
-.is-nulo    { --fb: var(--gris);  --fb-bg: var(--gris-bg); }
-
-/* ── Titular ── */
-.fiab__titular-card {
-  display: flex; align-items: center; gap: 20px;
-  background: var(--surface); border: 1px solid var(--line);
-  border-left: 5px solid var(--fb, var(--gris));
-  border-radius: var(--radius); box-shadow: var(--shadow-1);
-  padding: 18px 22px;
-}
-.fiab__titular-num {
-  font-size: 40px; font-weight: 700; line-height: 1;
-  color: var(--fb); font-variant-numeric: tabular-nums; flex-shrink: 0;
-}
-.fiab__titular-txt { font-size: 13.5px; line-height: 1.6; color: var(--ink-2); }
-.fiab__titular-txt b { color: var(--ink); }
-.fiab__titular-pie { margin-top: 8px; font-size: 12.5px; color: var(--ink-3); }
-
-/* ── Tablas ── */
-.fiab__tabla-wrap {
-  background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--radius); box-shadow: var(--shadow-1); overflow-x: auto;
-}
-.fiab__tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
-.fiab__tabla th {
-  text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: .04em; color: var(--ink-3);
-  padding: 11px 14px; border-bottom: 1px solid var(--line); white-space: nowrap;
-}
-.fiab__tabla td { padding: 11px 14px; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
-.fiab__tabla tbody tr:last-child td { border-bottom: 0; }
-.fiab__tabla .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-/* El detalle debajo del nombre: contexto sin gastar una columna. */
-.fiab__tabla td span { display: block; font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
-.fiab__tabla tr.is-vacio td { color: var(--ink-3); font-style: italic; }
-
-.fiab__chip {
-  display: inline-block; padding: 3px 9px; border-radius: 99px;
-  font-size: 11.5px; font-weight: 600; white-space: nowrap;
-  background: var(--fb-bg); color: var(--fb);
-}
-
-/* ── Histogramas ── */
-.fiab__hists { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 12px; }
-.fiab__hist {
-  margin: 0; background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--radius); box-shadow: var(--shadow-1); padding: 14px 16px 10px;
-}
-.fiab__hist figcaption { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
-.fiab__hist figcaption span { float: right; font-weight: 400; color: var(--ink-3); font-size: 11.5px; }
-.fiab__hbars { display: flex; align-items: flex-end; gap: 4px; }
-.fiab__hbar { flex: 1; min-width: 0; text-align: center; }
-.fiab__hbar-col { height: 76px; display: flex; align-items: flex-end; }
-.fiab__hbar-col i { display: block; width: 100%; background: #cbd4e2; border-radius: 3px 3px 0 0; min-height: 2px; }
-/* Los dos tramos que rodean el 1x son "acertar": se destacan para que la
-   forma de la distribucion se lea de un vistazo. */
-.fiab__hbar.is-centro .fiab__hbar-col i { background: var(--verde); }
-.fiab__hbar-pct { font-size: 11px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
-.fiab__hbar-lbl { font-size: 10px; color: var(--ink-3); margin-top: 1px; white-space: nowrap; }
-
-/* ── Cobertura de hoy ── */
-.fiab__cobertura { display: flex; flex-wrap: wrap; gap: 10px; }
-.fiab__cobertura .fiab__nota { flex-basis: 100%; margin: 2px 0 0; }
-.fiab__cob {
-  background: var(--surface); border: 1px solid var(--line);
-  border-top: 3px solid var(--fb, var(--gris));
-  border-radius: var(--radius); box-shadow: var(--shadow-1);
-  padding: 12px 16px; min-width: 168px; flex: 1;
-}
-.fiab__cob-num { font-size: 26px; font-weight: 700; line-height: 1.1; color: var(--fb); font-variant-numeric: tabular-nums; }
-.fiab__cob-lbl { font-size: 13px; font-weight: 600; margin-top: 2px; }
-.fiab__cob-pct { font-size: 11.5px; color: var(--ink-3); margin-top: 1px; }
-
-/* ============================================================
    Planificacion de la produccion (/planificacion)
-   Rejilla personas x dias. Comparte tokens con /fiabilidad.
+   Rejilla personas x dias.
    ============================================================ */
 .plan { overflow: auto; align-items: center; }
+/* El reloj de la navbar va capitalizado para los nombres de dia del Gantt
+   ("Martes 9"); aqui la frase es una oracion y saldria "Proyectado A Las". */
+.plan-clock { text-transform: none; }
+.plan__estado { padding: 28px 2px; color: var(--ink-2); font-size: 13.5px; }
+.plan__estado--error { color: var(--rojo); }
 .plan > * { width: 100%; max-width: 1180px; }
 
 .plan__intro { margin: 14px 0 6px; }

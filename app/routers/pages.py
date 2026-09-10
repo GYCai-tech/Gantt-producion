@@ -41,12 +41,6 @@ def index(request: Request):
     )
 
 
-@router.get("/fiabilidad", response_class=HTMLResponse)
-def fiabilidad(request: Request):
-    return templates.TemplateResponse(
-        request, "fiabilidad.html", {"current_page": "fiabilidad", "static_v": _static_v()}
-    )
-
 
 @router.get("/planificacion", response_class=HTMLResponse)
 def planificacion(request: Request):
