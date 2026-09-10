@@ -621,6 +621,15 @@ button { font-family: inherit; }
 .is-holgado { --pl: #6f9fe0; --pl-bg: #eff5fd; }
 .is-lleno   { --pl: var(--verde); --pl-bg: var(--verde-bg); }
 .is-pasado  { --pl: var(--ambar); --pl-bg: var(--ambar-bg); }
+/* Dos fichajes en marcha a la vez. No es mas carga --una persona no esta al
+   200%-- pero si algo que mirar: o atiende una maquina automatica mientras
+   hace otra cosa, o hay un fichaje que nadie cerro. */
+.plan__sw.is-simultaneo { background: var(--ambar); }
+.plan__c.es-simultaneo::after {
+  content: ""; position: absolute; top: 6px; right: 6px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--ambar);
+}
+.plan__c { position: relative; }
 .plan__sw.is-libre { background: var(--surface); border: 1px solid var(--line); }
 .plan__sw:not(.is-libre) { background: var(--pl); }
 

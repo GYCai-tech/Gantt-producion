@@ -79,19 +79,49 @@ def test_el_trabajo_ya_hecho_no_ocupa_jornada(monkeypatch):
     assert len(d['personas'][0]['dias'][0]['bonos']) == 1
 
 
-def test_dos_bonos_solapados_pasan_del_cien_por_cien(monkeypatch):
-    """No se recorta: que un dia sume mas que la jornada es la senal de que
-    ese reparto no cabe, y taparlo con un min(100) la esconde."""
+def test_lo_que_se_hace_a_la_vez_cuenta_una_sola_vez(monkeypatch):
+    """El caso de ETT4: tenia abiertos a la vez el 6479/10 en la INYECTORA
+    --que trabaja sola-- y el 6479/40 en Manual INYECCION, y sumando los dos
+    salia al 200%. Una persona no esta el 200% ocupada: esta ocupada, y hace
+    dos cosas."""
     get_plan = montar(monkeypatch, [
         item('1', datetime(2026, 9, 9, 7), datetime(2026, 9, 9, 15), orden=1),
         item('1', datetime(2026, 9, 9, 7), datetime(2026, 9, 9, 11), orden=2),
     ])
-    d = get_plan(dias=1)
-    celda = d['personas'][0]['dias'][0]
+    celda = get_plan(dias=1)['personas'][0]['dias'][0]
 
-    assert celda['min'] == 480 + 240
-    assert celda['pct'] == 150
+    assert celda['min'] == 480          # la union, no los 720 de la suma
+    assert celda['pct'] == 100
+    assert celda['min_bonos'] == 720    # lo que suman por separado
+    assert celda['simultaneo'] is True
     assert [b['idorden'] for b in celda['bonos']] == [1, 2]   # el mas largo primero
+
+
+def test_dos_bonos_seguidos_se_suman_enteros(monkeypatch):
+    """Sin solape no hay nada que descontar."""
+    get_plan = montar(monkeypatch, [
+        item('1', datetime(2026, 9, 9, 7), datetime(2026, 9, 9, 11), orden=1),
+        item('1', datetime(2026, 9, 9, 11), datetime(2026, 9, 9, 15), orden=2),
+    ])
+    celda = get_plan(dias=1)['personas'][0]['dias'][0]
+
+    assert celda['min'] == 480
+    assert celda['simultaneo'] is False
+
+
+def test_un_dia_no_pasa_del_cien_porque_lo_que_no_cabe_va_al_siguiente(monkeypatch):
+    """Con la union, la carga de un dia esta acotada por el propio dia. No es
+    una limitacion: la cola esta encadenada, asi que lo que no cabe hoy no
+    desborda, se coloca manana. El desbordamiento se lee en la fila --varios
+    dias seguidos al 100%--, no en una celda al 150%."""
+    get_plan = montar(monkeypatch, [
+        item('1', datetime(2026, 9, 9, 13), datetime(2026, 9, 9, 15), orden=1),
+        item('1', datetime(2026, 9, 10, 7), datetime(2026, 9, 10, 15), orden=2),
+    ], ahora=datetime(2026, 9, 9, 13))
+    dias = get_plan(dias=2)['personas'][0]['dias']
+
+    assert [c['pct'] for c in dias] == [100, 100]
+    assert dias[0]['disponible'] == 120
 
 
 def test_los_mas_cargados_van_primero(monkeypatch):
@@ -174,3 +204,17 @@ def test_la_carga_tambien_se_puede_ver_por_maquina(monkeypatch):
     assert pedido['vista'] == 'maquina'
     assert d['vista'] == 'maquina'
     assert d['personas'][0]['areas'] == ['EMBALAJE']
+
+
+def test_un_solape_de_un_minuto_no_se_marca(monkeypatch):
+    """Dos barras encadenadas que se tocan dejan un minuto de diferencia entre
+    la suma y la union solo por el redondeo. Marcarlas llenaria la rejilla de
+    avisos que no dicen nada."""
+    get_plan = montar(monkeypatch, [
+        item('1', datetime(2026, 9, 9, 7), datetime(2026, 9, 9, 11), orden=1),
+        item('1', datetime(2026, 9, 9, 10, 59), datetime(2026, 9, 9, 13), orden=2),
+    ])
+    celda = get_plan(dias=1)['personas'][0]['dias'][0]
+
+    assert celda['min_bonos'] - celda['min'] == 1
+    assert celda['simultaneo'] is False

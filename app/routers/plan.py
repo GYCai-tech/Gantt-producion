@@ -43,6 +43,12 @@ _DIA = ("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")
 #  pasado —ya no ocupan a nadie— y `completado` igual.
 _TIPOS = ("real", "programado")
 
+#  Minutos de solape a partir de los cuales se considera que hay dos cosas en
+#  marcha a la vez. Por debajo es ruido: dos barras encadenadas que se tocan
+#  dejan uno o dos minutos de diferencia entre la suma y la union solo por el
+#  redondeo, y marcarlas llenaria la rejilla de avisos que no dicen nada.
+_SOLAPE_MIN = 5
+
 
 def _dias_laborables(desde: date, n: int) -> list[date]:
     dias, d = [], desde
@@ -68,17 +74,36 @@ def _ventana_del_dia(dia: date, ahora: datetime) -> tuple:
     return (max(apertura, min(ahora, cierre)) if dia == ahora.date() else apertura), cierre
 
 
-def _minutos_del_dia(item: dict, ventana: tuple) -> float:
-    """Cuánto de esta barra cae DENTRO de esa ventana.
+def _tramo_del_dia(item: dict, ventana: tuple):
+    """El trozo de esta barra que cae DENTRO de esa ventana, o None.
 
     Una barra puede cruzar varios días —de hoy 10:09 a mañana 07:54— y
-    repartirla es justo lo que convierte un Gantt en una carga por jornada. Se
-    mide con el mismo calendario que la proyección, así que la noche, el fin de
-    semana y el descanso no suman.
+    recortarla es justo lo que convierte un Gantt en una carga por jornada.
     """
     desde, hasta = ventana
     ini, fin = max(item["start"], desde), min(item["end"], hasta)
-    return _minutos_laborables_entre(ini, fin) if fin > ini else 0.0
+    return (ini, fin) if fin > ini else None
+
+
+def _minutos_union(tramos: list) -> float:
+    """Los minutos que el recurso está ocupado, contando UNA vez lo simultáneo.
+
+    Sumar los tramos daba cargas imposibles: ETT4 tenía abiertos a la vez el
+    6479/10 en la INYECTORA DEU 5000 y el 6479/40 en Manual INYECCION —carga la
+    máquina, que trabaja sola, y mientras hace el manual de la misma orden— y
+    con los dos ocupando lo que quedaba de jornada salía al 200%. Una persona
+    no está el 200% ocupada: está ocupada, y hace dos cosas.
+
+    Se mide con el mismo calendario que la proyección, así que ni la noche ni
+    el fin de semana suman; los tramos ya vienen recortados a un solo día.
+    """
+    total, tope = 0.0, None
+    for ini, fin in sorted(tramos):
+        arranque = ini if tope is None or ini > tope else tope
+        if fin > arranque:
+            total += _minutos_laborables_entre(arranque, fin)
+        tope = fin if tope is None or fin > tope else tope
+    return total
 
 
 @router.get("/api/plan")
@@ -101,16 +126,19 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
         hasta=datetime.combine(fechas[-1] + timedelta(days=1), datetime.min.time()),
     )
 
-    carga = defaultdict(lambda: defaultdict(lambda: {"min": 0.0, "bonos": []}))
+    carga = defaultdict(lambda: defaultdict(lambda: {"tramos": [], "bonos": []}))
     for it in items:
         if it["tipo"] not in _TIPOS:
             continue
         for dia in fechas:
-            minutos = _minutos_del_dia(it, ventanas[dia])
+            tramo = _tramo_del_dia(it, ventanas[dia])
+            if tramo is None:
+                continue
+            minutos = _minutos_laborables_entre(*tramo)
             if minutos <= 0:
                 continue
             celda = carga[it["recurso_id"]][dia]
-            celda["min"] += minutos
+            celda["tramos"].append(tramo)
             celda["bonos"].append({
                 "idorden": it["idorden"], "idbono": it["idbono"],
                 "art_id": it.get("art_id"), "art": it.get("art"),
@@ -125,14 +153,21 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
         celdas = []
         for dia in fechas:
             c = carga.get(g["id"], {}).get(dia)
-            minutos = round(c["min"]) if c else 0
+            minutos = round(_minutos_union(c["tramos"])) if c else 0
             queda = disponible[dia]
+            # Lo que sumarían los bonos por separado. La diferencia con la
+            # unión es tiempo que se hace a la vez, y merece decirse: son dos
+            # trabajos en marcha, no el doble de trabajo.
+            suma = round(sum(b["min"] for b in c["bonos"])) if c else 0
             celdas.append({
                 "fecha": dia,
                 "min": minutos,
+                "min_bonos": suma,
+                "simultaneo": suma - minutos >= _SOLAPE_MIN,
                 "disponible": round(queda),
-                # Puede pasar del 100%: dos bonos solapados en el mismo día son
-                # una señal de sobrecarga, no un error que haya que recortar.
+                # Aun con la unión puede pasar del 100%: un dia entero de cola
+                # encadenada no cabe en lo que queda de jornada, y eso es una
+                # señal de sobrecarga, no un error que haya que recortar.
                 "pct": round(100 * minutos / queda) if queda > 0 else 0,
                 "bonos": sorted(c["bonos"], key=lambda b: -b["min"]) if c else [],
             })

@@ -8,15 +8,11 @@ const Plan = (() => {
                             : `${m}m`;
 
   // La carga como tramos, no como degradado: lo que se busca de un vistazo es
-  // "este esta libre / este va justo / este no cabe en el dia".
-  const nivel = pct => pct === 0 ? 'libre' : pct <= 60 ? 'holgado'
-             : pct <= 100 ? 'lleno' : 'pasado';
-  const NIVEL_TXT = {
-    libre:   'Sin trabajo proyectado',
-    holgado: 'Con hueco en la jornada',
-    lleno:   'Jornada completa',
-    pasado:  'Mas trabajo que jornada',
-  };
+  // "este esta libre / este va justo / este no tiene hueco".
+  // No hay tramo por encima del 100%: la carga de un dia es la UNION de lo
+  // ocupado dentro de ese dia, asi que esta acotada por el propio dia. Lo que
+  // no cabe hoy no desborda, se coloca manana, y eso se lee en la fila.
+  const nivel = pct => pct === 0 ? 'libre' : pct <= 60 ? 'holgado' : 'lleno';
   const ST_LABEL = {
     plazo: 'En curso', disponible: 'En espera', parada: 'Bloqueada',
     'sin-estimar': 'Sin datos fiables', riesgo: 'En riesgo',
@@ -31,7 +27,7 @@ const Plan = (() => {
       `<span class="plan__lg"><i class="plan__sw is-libre"></i>Libre</span>` +
       `<span class="plan__lg"><i class="plan__sw is-holgado"></i>Con hueco</span>` +
       `<span class="plan__lg"><i class="plan__sw is-lleno"></i>Jornada completa</span>` +
-      `<span class="plan__lg"><i class="plan__sw is-pasado"></i>Sobrecargado</span>` +
+      `<span class="plan__lg"><i class="plan__sw is-simultaneo"></i>Dos cosas a la vez</span>` +
       `<span class="plan__lg plan__lg--fin">${d.plantilla}
         ${vista === 'maquina' ? 'máquinas' : 'operarios en plantilla'} ·
         jornada de ${fmtH(d.jornada_min)}</span>`;
@@ -44,7 +40,10 @@ const Plan = (() => {
     // la carga es la misma pero lo que se puede prometer no.
     const aviso = c.bonos.some(b => b.estado === 'parada') ? ' tiene-parada'
                 : c.bonos.some(b => b.estado === 'sin-estimar') ? ' tiene-dudoso' : '';
-    return `<td class="plan__c is-${n}${aviso}" data-p="${esc(p.id)}" data-f="${c.fecha}">
+    // Dos fichajes en marcha a la vez: puede ser una maquina automatica
+    // atendida mientras se hace otra cosa, o un fichaje que nadie cerro.
+    const simult = c.simultaneo ? ' es-simultaneo' : '';
+    return `<td class="plan__c is-${n}${aviso}${simult}" data-p="${esc(p.id)}" data-f="${c.fecha}">
       <div class="plan__barra"><i style="width:${Math.min(100, c.pct)}%"></i></div>
       <div class="plan__cifra">${c.pct}%<span>${c.bonos.length} bono${c.bonos.length > 1 ? 's' : ''}</span></div>
     </td>`;
@@ -86,7 +85,11 @@ const Plan = (() => {
     if (!td) return ocultarTip();
     const bonos = bonosDe(td.dataset.p, td.dataset.f);
     if (!bonos.length) return ocultarTip();
-    $('tip').innerHTML = bonos.map(b =>
+    const c = datos.personas.find(x => x.id === td.dataset.p)
+                   .dias.find(x => x.fecha === td.dataset.f);
+    $('tip').innerHTML = (c.simultaneo
+      ? `<div class="tip__sub"><b>${bonos.length} a la vez</b> · ${fmtH(c.min_bonos)} de trabajo
+           en ${fmtH(c.min)} de reloj</div>` : '') + bonos.map(b =>
       `<div class="tip__row"><b>${esc(b.idorden)}·${esc(b.idbono)}</b>
          <span>${fmtH(b.min)}</span></div>
        <div class="tip__sub">${esc(b.art_id || '')} ${esc((b.art || '').slice(0, 34))}<br>
