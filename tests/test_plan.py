@@ -11,6 +11,10 @@ from app.routers import plan as pl
 
 
 HOY = date(2026, 9, 9)          # miercoles
+#  La hora importa: para HOY la carga se mide sobre lo que QUEDA de jornada, no
+#  sobre las 8 horas. A las 07:00 quedan las 8 enteras, que es lo que esperan
+#  los tests que no hablan del reloj.
+AHORA = datetime(2026, 9, 9, 7, 0)
 
 
 def item(recurso, ini, fin, tipo='programado', estado='disponible', orden=1):
@@ -19,11 +23,13 @@ def item(recurso, ini, fin, tipo='programado', estado='disponible', orden=1):
             'art_id': 'A1', 'art': 'Articulo', 'operacion': 'Maquina M1'}
 
 
-def montar(monkeypatch, items, grupos=None):
+def montar(monkeypatch, items, grupos=None, ahora=AHORA):
     monkeypatch.setattr(pl, 'get_items', lambda **kw: items)
     monkeypatch.setattr(pl, 'get_grupos', lambda **kw: grupos or
                         [{'id': '1', 'nombre': 'Operario 1', 'areas': ['CHAPA']}])
     monkeypatch.setattr(pl, 'date', type('D', (date,), {'today': classmethod(lambda c: HOY)}))
+    monkeypatch.setattr(pl, 'datetime',
+                        type('R', (datetime,), {'now': classmethod(lambda c, tz=None: ahora)}))
     return pl.get_plan
 
 
@@ -103,3 +109,68 @@ def test_la_ventana_tiene_topes(dias):
     from fastapi.testclient import TestClient
     from app.main import app
     assert TestClient(app).get(f'/api/plan?dias={dias}').status_code == 422
+
+
+def test_hoy_la_carga_se_mide_sobre_lo_que_queda_de_jornada(monkeypatch):
+    """Segun avanza el dia, lo ya hecho deja de contar en el numerador --es
+    pasado, no ocupa a nadie-- y con las 8 horas fijas de denominador la carga
+    se desmoronaba sola: a las 13:00, un operario con la tarde entera ocupada
+    aparecia al 25%."""
+    # Son las 13:00: quedan 2 horas de jornada y las dos estan ocupadas.
+    get_plan = montar(monkeypatch,
+                      [item('1', datetime(2026, 9, 9, 13), datetime(2026, 9, 9, 15))],
+                      ahora=datetime(2026, 9, 9, 13))
+    celda = get_plan(dias=1)['personas'][0]['dias'][0]
+
+    assert celda['disponible'] == 120
+    assert celda['min'] == 120
+    assert celda['pct'] == 100          # con las 8 horas fijas habria dado 25%
+
+
+def test_lo_que_ya_paso_hoy_no_cuenta_como_carga(monkeypatch):
+    """Un bono abierto desde las 08:00 solo ocupa lo que le queda por delante."""
+    get_plan = montar(monkeypatch,
+                      [item('1', datetime(2026, 9, 9, 8), datetime(2026, 9, 9, 12), tipo='real')],
+                      ahora=datetime(2026, 9, 9, 11))
+    celda = get_plan(dias=1)['personas'][0]['dias'][0]
+
+    assert celda['min'] == 60           # de 11:00 a 12:00, no las 4 horas
+    assert celda['disponible'] == 240   # de 11:00 a 15:00
+    assert celda['pct'] == 25
+
+
+def test_los_dias_futuros_siguen_midiendose_sobre_la_jornada_entera(monkeypatch):
+    get_plan = montar(monkeypatch,
+                      [item('1', datetime(2026, 9, 10, 7), datetime(2026, 9, 10, 11))],
+                      ahora=datetime(2026, 9, 9, 13))
+    dias = get_plan(dias=2)['personas'][0]['dias']
+
+    assert dias[0]['disponible'] == 120      # hoy quedan 2 horas
+    assert dias[1]['disponible'] == 480      # manana, la jornada entera
+    assert dias[1]['pct'] == 50
+
+
+def test_con_la_jornada_acabada_no_se_divide_entre_cero(monkeypatch):
+    get_plan = montar(monkeypatch, [], ahora=datetime(2026, 9, 9, 16))
+    celda = get_plan(dias=1)['personas'][0]['dias'][0]
+
+    assert celda['disponible'] == 0
+    assert celda['pct'] == 0
+
+
+def test_la_carga_tambien_se_puede_ver_por_maquina(monkeypatch):
+    """En la vista de maquinas el grupo trae un `area` suelto en vez de la
+    lista que trae el operario."""
+    pedido = {}
+    monkeypatch.setattr(pl, 'get_items', lambda **kw: pedido.update(kw) or [])
+    monkeypatch.setattr(pl, 'get_grupos', lambda **kw: [
+        {'id': '044', 'nombre': 'Retractiladora GARPER', 'sub': 'Matrícula 044', 'area': 'EMBALAJE'}])
+    monkeypatch.setattr(pl, 'date', type('D', (date,), {'today': classmethod(lambda c: HOY)}))
+    monkeypatch.setattr(pl, 'datetime',
+                        type('R', (datetime,), {'now': classmethod(lambda c, tz=None: AHORA)}))
+
+    d = pl.get_plan(dias=1, vista='maquina')
+
+    assert pedido['vista'] == 'maquina'
+    assert d['vista'] == 'maquina'
+    assert d['personas'][0]['areas'] == ['EMBALAJE']

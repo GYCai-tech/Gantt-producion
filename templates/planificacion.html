@@ -1,7 +1,11 @@
 {% extends "base.html" %}
-{% block title %}GYC · Planificación de la producción{% endblock %}
+{% block title %}GYC · Carga de trabajo{% endblock %}
 
 {% block navbar_extra %}
+<div class="zoom" id="plan-vista">
+  <button class="is-active" data-v="empleado" onclick="Plan.setVista('empleado')">Operarios</button>
+  <button data-v="maquina" onclick="Plan.setVista('maquina')">Máquinas</button>
+</div>
 <div class="segmented" id="plan-dias">
   <button class="is-active" onclick="Plan.setDias(5)">5 días</button>
   <button onclick="Plan.setDias(10)">10 días</button>
@@ -19,10 +23,12 @@
   <main class="panel plan">
 
     <header class="plan__intro">
-      <h1>Planificación de la producción</h1>
+      <h1>Carga de trabajo</h1>
       <p>
         Quién tiene trabajo cada día y quién se queda sin nada. Es la misma cola del
         Gantt —misma estimación y mismo encadenado—, repartida por jornada.
+        <b>Hoy se mide sobre lo que queda de jornada</b>, no sobre las 8 horas: lo ya
+        hecho no ocupa a nadie.
         <b>Es una proyección:</b> el primer día es sólido porque casi todo es trabajo ya
         empezado; a partir del tercero son estimaciones encadenadas sobre estimaciones.
       </p>

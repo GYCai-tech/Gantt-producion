@@ -53,30 +53,50 @@ def _dias_laborables(desde: date, n: int) -> list[date]:
     return dias
 
 
-def _minutos_del_dia(item: dict, dia: date) -> float:
-    """Cuánto de esta barra cae DENTRO de ese día laborable.
+def _ventana_del_dia(dia: date, ahora: datetime) -> tuple:
+    """De cuándo a cuándo se mide ese día.
 
-    Una barra puede cruzar varios días —6585/60 va de hoy 10:09 a mañana
-    07:54— y repartirla es justo lo que convierte un Gantt en una carga por
-    jornada. Se mide con el mismo calendario que la proyección, así que la
-    noche, el fin de semana y el descanso no suman.
+    HOY empieza en `ahora`, no a las 07:00. Si no, la carga se desmorona sola
+    según avanza la jornada: lo ya hecho deja de contar en el numerador —es
+    pasado, no ocupa a nadie— mientras el denominador sigue siendo la jornada
+    entera, y a las 13:00 un operario con la tarde llena aparecía al 25%. La
+    pregunta útil no es "qué parte del día tiene ocupada" sino "qué parte de lo
+    que le QUEDA de día".
     """
     apertura = datetime.combine(dia, datetime.min.time()).replace(hour=JORNADA_INICIO)
     cierre   = datetime.combine(dia, datetime.min.time()).replace(hour=JORNADA_FIN)
-    ini, fin = max(item["start"], apertura), min(item["end"], cierre)
+    return (max(apertura, min(ahora, cierre)) if dia == ahora.date() else apertura), cierre
+
+
+def _minutos_del_dia(item: dict, ventana: tuple) -> float:
+    """Cuánto de esta barra cae DENTRO de esa ventana.
+
+    Una barra puede cruzar varios días —de hoy 10:09 a mañana 07:54— y
+    repartirla es justo lo que convierte un Gantt en una carga por jornada. Se
+    mide con el mismo calendario que la proyección, así que la noche, el fin de
+    semana y el descanso no suman.
+    """
+    desde, hasta = ventana
+    ini, fin = max(item["start"], desde), min(item["end"], hasta)
     return _minutos_laborables_entre(ini, fin) if fin > ini else 0.0
 
 
 @router.get("/api/plan")
-def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS)):
+def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
+             vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
     hoy = date.today()
+    ahora = datetime.now()
     fechas = _dias_laborables(hoy, dias)
+    # Lo que queda de cada jornada. Para hoy encoge con el reloj; para el resto
+    # es la jornada entera.
+    ventanas = {d: _ventana_del_dia(d, ahora) for d in fechas}
+    disponible = {d: _minutos_laborables_entre(*v) for d, v in ventanas.items()}
 
     # Una sola lectura para toda la ventana: pedir día a día recalcularía la
     # cola desde cero en cada uno y daría planes distintos, porque la
     # ocupación de hoy es la que empuja lo de mañana.
     items = get_items(
-        vista="empleado",
+        vista=vista,
         desde=datetime.combine(fechas[0], datetime.min.time()),
         hasta=datetime.combine(fechas[-1] + timedelta(days=1), datetime.min.time()),
     )
@@ -86,7 +106,7 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS)):
         if it["tipo"] not in _TIPOS:
             continue
         for dia in fechas:
-            minutos = _minutos_del_dia(it, dia)
+            minutos = _minutos_del_dia(it, ventanas[dia])
             if minutos <= 0:
                 continue
             celda = carga[it["recurso_id"]][dia]
@@ -101,21 +121,26 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS)):
             })
 
     personas = []
-    for g in get_grupos(vista="empleado"):
+    for g in get_grupos(vista=vista):
         celdas = []
         for dia in fechas:
             c = carga.get(g["id"], {}).get(dia)
             minutos = round(c["min"]) if c else 0
+            queda = disponible[dia]
             celdas.append({
                 "fecha": dia,
                 "min": minutos,
+                "disponible": round(queda),
                 # Puede pasar del 100%: dos bonos solapados en el mismo día son
                 # una señal de sobrecarga, no un error que haya que recortar.
-                "pct": round(100 * minutos / JORNADA_MIN),
+                "pct": round(100 * minutos / queda) if queda > 0 else 0,
                 "bonos": sorted(c["bonos"], key=lambda b: -b["min"]) if c else [],
             })
+        # En la vista de máquinas el grupo trae un `area` suelto en vez de la
+        # lista que trae el operario.
+        areas = g.get("areas") or ([g["area"]] if g.get("area") else [])
         personas.append({
-            "id": g["id"], "nombre": g["nombre"], "areas": g.get("areas") or [],
+            "id": g["id"], "nombre": g["nombre"], "areas": areas,
             "dias": celdas,
             "total_min": sum(c["min"] for c in celdas),
             "dias_con_trabajo": sum(1 for c in celdas if c["min"] > 0),
@@ -130,12 +155,14 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS)):
         "fecha": dia,
         "etiqueta": f"{_DIA[dia.weekday()]} {dia.day}",
         "hoy": dia == hoy,
+        "disponible": round(disponible[dia]),
         "personas": sum(1 for p in personas if p["dias"][i]["min"] > 0),
         "min": sum(p["dias"][i]["min"] for p in personas),
     } for i, dia in enumerate(fechas)]
 
     return {
-        "generado": datetime.now(),
+        "generado": ahora,
+        "vista": vista,
         "jornada_min": JORNADA_MIN,
         "plantilla": len(personas),
         "dias": resumen,

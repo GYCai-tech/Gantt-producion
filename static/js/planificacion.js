@@ -24,7 +24,7 @@ const Plan = (() => {
     continuacion: 'Fabricación pendiente',
   };
 
-  let dias = 5, datos = null;
+  let dias = 5, vista = 'empleado', datos = null;
 
   function leyenda(d) {
     $('leyenda').innerHTML =
@@ -32,7 +32,8 @@ const Plan = (() => {
       `<span class="plan__lg"><i class="plan__sw is-holgado"></i>Con hueco</span>` +
       `<span class="plan__lg"><i class="plan__sw is-lleno"></i>Jornada completa</span>` +
       `<span class="plan__lg"><i class="plan__sw is-pasado"></i>Sobrecargado</span>` +
-      `<span class="plan__lg plan__lg--fin">${d.plantilla} operarios en plantilla ·
+      `<span class="plan__lg plan__lg--fin">${d.plantilla}
+        ${vista === 'maquina' ? 'máquinas' : 'operarios en plantilla'} ·
         jornada de ${fmtH(d.jornada_min)}</span>`;
   }
 
@@ -54,7 +55,8 @@ const Plan = (() => {
     leyenda(d);
     const cab = d.dias.map(x =>
       `<th class="${x.hoy ? 'is-hoy' : ''}">${esc(x.etiqueta)}
-         <span>${x.personas} pers · ${fmtH(x.min)}</span></th>`).join('');
+         <span>${x.personas} ${vista === 'maquina' ? 'máq' : 'pers'} · ${fmtH(x.min)}
+           ${x.hoy && x.disponible < d.jornada_min ? `· quedan ${fmtH(x.disponible)}` : ''}</span></th>`).join('');
     const filas = d.personas.map(p => {
       const vacio = p.dias_con_trabajo === 0 ? ' is-vacia' : '';
       return `<tr class="${vacio}">
@@ -64,7 +66,8 @@ const Plan = (() => {
       </tr>`;
     }).join('');
     $('tabla').innerHTML =
-      `<thead><tr><th class="plan__pers">Operario</th>${cab}</tr></thead><tbody>${filas}</tbody>`;
+      `<thead><tr><th class="plan__pers">${vista === 'maquina' ? 'Máquina' : 'Operario'}</th>`
+      + `${cab}</tr></thead><tbody>${filas}</tbody>`;
     const g = new Date(d.generado);
     $('generado').textContent = 'Proyectado a las ' +
       g.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
@@ -104,7 +107,7 @@ const Plan = (() => {
     $('plan-error').hidden = true;
     if (!datos) $('plan-cargando').hidden = false;
     try {
-      const r = await fetch(`/api/plan?dias=${dias}`);
+      const r = await fetch(`/api/plan?dias=${dias}&vista=${vista}`);
       if (!r.ok) throw new Error('El ERP respondió ' + r.status);
       pintar(await r.json());
     } catch (e) {
@@ -112,6 +115,13 @@ const Plan = (() => {
       $('plan-error').hidden = false;
       $('plan-error').textContent = 'No se pudo proyectar: ' + e.message;
     }
+  }
+
+  function setVista(v) {
+    vista = v;
+    [...$('plan-vista').children].forEach(b => b.classList.toggle('is-active', b.dataset.v === v));
+    datos = null;                 // el censo cambia entero: se recarga de cero
+    cargar();
   }
 
   function setDias(n) {
@@ -127,5 +137,5 @@ const Plan = (() => {
     });
     cargar();
   });
-  return { cargar, setDias };
+  return { cargar, setDias, setVista };
 })();

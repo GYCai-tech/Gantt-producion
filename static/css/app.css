@@ -602,7 +602,9 @@ button { font-family: inherit; }
 .plan-clock { text-transform: none; }
 .plan__estado { padding: 28px 2px; color: var(--ink-2); font-size: 13.5px; }
 .plan__estado--error { color: var(--rojo); }
-.plan > * { width: 100%; max-width: 1180px; }
+/* Sin tope estrecho: con 15 dias y 25 filas, cada pixel de ancho es una
+   columna que se lee sin scroll. */
+.plan > * { width: 100%; max-width: 1720px; }
 
 .plan__intro { margin: 14px 0 6px; }
 .plan__intro h1 { font-size: 21px; margin: 0 0 6px; letter-spacing: -.01em; }
@@ -641,9 +643,9 @@ button { font-family: inherit; }
    esto se pierde de vista de quien es la fila que se esta mirando. */
 .plan__pers {
   position: sticky; left: 0; z-index: 2; background: var(--surface);
-  min-width: 210px; border-right: 1px solid var(--line);
+  min-width: 240px; border-right: 1px solid var(--line);
 }
-tbody .plan__pers { font-weight: 400; text-transform: none; letter-spacing: 0; padding: 8px 12px; }
+tbody .plan__pers { font-weight: 400; text-transform: none; letter-spacing: 0; padding: 11px 14px; }
 tbody .plan__pers b { display: block; font-size: 13px; font-weight: 600; color: var(--ink); }
 tbody .plan__pers span {
   display: block; font-size: 11px; color: var(--ink-3); margin-top: 1px;
@@ -654,12 +656,12 @@ tbody .plan__pers span {
 /* Quien no tiene nada en toda la ventana: se ve, pero apagado. */
 .plan__tabla tr.is-vacia .plan__pers b { color: var(--ink-3); font-weight: 500; }
 
-.plan__c { padding: 8px 10px; min-width: 92px; vertical-align: middle; background: var(--pl-bg); }
+.plan__c { padding: 11px 14px; min-width: 104px; vertical-align: middle; background: var(--pl-bg); }
 .plan__c.is-libre { background: transparent; }
 .plan__vacio { color: var(--ink-3); opacity: .5; }
-.plan__barra { height: 6px; border-radius: 3px; background: rgba(20,30,50,.07); overflow: hidden; }
+.plan__barra { height: 9px; border-radius: 3px; background: rgba(20,30,50,.07); overflow: hidden; }
 .plan__barra i { display: block; height: 100%; background: var(--pl); border-radius: 3px; }
-.plan__cifra { margin-top: 4px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.plan__cifra { margin-top: 6px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .plan__cifra span { font-weight: 400; color: var(--ink-3); margin-left: 5px; font-size: 11px; }
 .plan__c[data-p] { cursor: help; }
 /* Un bono bloqueado o sin estimacion fiable dentro del dia: la carga es la
