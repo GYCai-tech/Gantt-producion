@@ -16,12 +16,19 @@ const App = (() => {
   const BREAK    = { ini: 11 * 60, fin: 11 * 60 + 15 };
 
   const ZOOM = [
-    { key: 'Día',     days: 1, tick: 1 },
-    { key: '3 días',  days: 3, tick: 2 },
-    { key: 'Semana',  days: 5, tick: 2 },
+    { key: 'Día',       days:  1, tick: 1 },
+    { key: '3 días',    days:  3, tick: 2 },
+    { key: 'Semana',    days:  5, tick: 2 },
+    { key: '2 semanas', days: 10, tick: 4 },
   ];
   const MIN_PPH = 8;
   let _pph = 70;
+  // Cuanto se agranda la escala sobre el ancho que cabe en pantalla. 1 es
+  // "que entre entero"; por encima, el Gantt desborda y se navega con scroll.
+  // Hace falta porque en 2 semanas cada dia queda en ~90 px y una barra de 20
+  // minutos mide 4: se ve que hay algo pero no que es.
+  const ZOOM_PASO = 1.5, ZOOM_MAX = 8;
+  let _escala = 1;
 
   // "disponible" viene del semáforo per-operario del ERP (verde) cuando hay
   // dato; "parada" ahora también cubre el rojo de ese mismo semáforo (antes
@@ -85,7 +92,30 @@ const App = (() => {
   function computePph() {
     const avail = $('gantt').clientWidth - RAIL - 1;
     const horas = cfg().days * (WORK_FIN - WORK_INI);
-    _pph = Math.max(MIN_PPH, avail / horas);
+    _pph = Math.max(MIN_PPH, avail / horas) * _escala;
+  }
+
+  function setEscala(factor) {
+    const nueva = Math.min(ZOOM_MAX, Math.max(1, factor));
+    if (nueva === _escala) return;
+    // Se conserva el instante que hay en el centro de la pantalla: sin esto,
+    // acercar te deja mirando un sitio distinto del que estabas mirando.
+    const g = $('gantt');
+    const centro = (g.scrollLeft + (g.clientWidth - RAIL) / 2) / Math.max(1, timelineW());
+    _escala = nueva;
+    render();
+    g.scrollLeft = centro * timelineW() - (g.clientWidth - RAIL) / 2;
+    renderEscala();
+  }
+  const zoomIn  = () => setEscala(_escala * ZOOM_PASO);
+  const zoomOut = () => setEscala(_escala / ZOOM_PASO);
+
+  function renderEscala() {
+    const b = $('zoom-nivel');
+    if (!b) return;
+    b.querySelector('[data-z="out"]').disabled = _escala <= 1;
+    b.querySelector('[data-z="in"]').disabled  = _escala >= ZOOM_MAX;
+    b.querySelector('[data-z="pct"]').textContent = Math.round(_escala * 100) + '%';
   }
 
   const $ = id => document.getElementById(id);
@@ -131,6 +161,7 @@ const App = (() => {
     winStart = startOfDay(now);
     buildDays();
     renderZoom();
+    renderEscala();
     tickClock(); setInterval(tickClock, 30000);
     loadGrupos()
       .then(() => loadItems())
@@ -252,6 +283,16 @@ const App = (() => {
       const ln = document.createElement('div');
       ln.className = 'bg-dayline'; ln.style.left = left + 'px';
       bg.appendChild(ln);
+      // Rejilla horaria. Se dibuja siempre que haya sitio para leerla: por
+      // debajo de 18 px por hora las lineas se tocan y ensucian mas que ayudan.
+      if (pph() >= 18) {
+        for (let h = WORK_INI + 1; h < WORK_FIN; h++) {
+          const hl = document.createElement('div');
+          hl.className = 'bg-hourline';
+          hl.style.left = (left + (h - WORK_INI) * pph()) + 'px';
+          bg.appendChild(hl);
+        }
+      }
       const br = document.createElement('div');
       br.className = 'bg-break';
       br.style.left = (left + (BREAK.ini / 60 - WORK_INI) * pph()) + 'px';
@@ -599,8 +640,12 @@ const App = (() => {
   function setZoom(i) {
     zi = i;
     winStart = days[0];
+    // La escala vuelve a 1: se acaba de pedir otra ventana, y conservar un
+    // 400% de la anterior deja la pantalla en un sitio que nadie ha pedido.
+    _escala = 1;
     buildDays();
     renderZoom();
+    renderEscala();
     loadItems();
   }
   function renderZoom() {
@@ -716,7 +761,7 @@ const App = (() => {
 
   return {
     setArea, setCarga, setVista, setSearch, nav, today, setZoom, refrescar, openModal, closeModal, init,
-    toggleSinTiempo,
+    toggleSinTiempo, zoomIn, zoomOut,
   };
 })();
 

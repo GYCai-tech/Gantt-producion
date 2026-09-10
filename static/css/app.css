@@ -284,6 +284,9 @@ button { font-family: inherit; }
   border-left: 1px dashed #c7cfdb; border-right: 1px dashed #c7cfdb;
 }
 .bg-dayline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line); }
+/* Rejilla horaria: mas floja que la linea del dia, que es la que estructura.
+   Si pesan lo mismo, el ojo deja de distinguir donde acaba una jornada. */
+.bg-hourline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-2); }
 .bg-now {
   position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); z-index: 6;
 }
@@ -309,6 +312,16 @@ button { font-family: inherit; }
 .row__sub  { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row__track { position: relative; height: 100%; border-bottom: 1px solid var(--line-2); flex-shrink: 0; transition: background .12s; }
 .row__track.is-drop-target { background: rgba(47,111,235,.08) !important; box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* Escala del eje. El porcentaje va DENTRO del control y con ancho fijo para
+   que los botones no bailen al pasar de 100% a 337%. */
+.zoom--escala { align-items: center; }
+.zoom--escala span {
+  min-width: 46px; text-align: center; font-size: 12px; font-weight: 600;
+  color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
+.zoom--escala button { font-size: 15px; line-height: 1; padding: 0 10px; }
+.zoom--escala button:disabled { opacity: .35; cursor: default; }
 
 .gantt__empty { padding: 60px; text-align: center; color: var(--ink-3); font-size: 14px; }
 

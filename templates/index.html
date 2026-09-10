@@ -34,6 +34,11 @@
         <button class="btn" onclick="App.today()">Hoy</button>
         <div class="sep"></div>
         <div class="zoom" id="zoom"></div>
+        <div class="zoom zoom--escala" id="zoom-nivel">
+          <button data-z="out" onclick="App.zoomOut()" title="Alejar" aria-label="Alejar">−</button>
+          <span data-z="pct">100%</span>
+          <button data-z="in" onclick="App.zoomIn()" title="Acercar" aria-label="Acercar">+</button>
+        </div>
         <div class="sep"></div>
         <div class="zoom" id="carga">
           <button onclick="App.setCarga('todos')">Todos</button>
