@@ -265,3 +265,37 @@ def test_la_media_de_la_maquina_no_promete_una_hora_de_fin():
     assert item["estado"] == "sin-estimar"
     assert "fin_estimado" in item             # la barra conserva su anchura
     assert item["fin_indeterminado"] is True
+
+
+def test_un_escandallo_disparatado_no_se_cree_y_cae_al_historico():
+    """El trabajo 1932 dice 345 min/pieza y sus 7 bonos cerrados dan 5,86:
+    alguien puso el total de la operacion en vez del tiempo unitario, y 6585/60
+    pintaba una barra de 13 dias."""
+    item = _item()
+    teoricos = {(6372, 30): (0.0, 345.0)}
+    _proyectar(item, _linea(50), AHORA, teoricos, _medias(5.86), _avance(minutos=0, piezas=0))
+
+    assert item["origen_estimado"] == "media_articulo"
+    assert item["min_pieza"] == 5.86
+
+
+def test_un_escandallo_razonable_sigue_ganando_a_la_media():
+    """El margen es amplio a proposito: el escandallo puede diferir del
+    historico sin estar mal. De los 7 bonos vivos con escandallo, seis caen
+    entre 0,9x y 1,5x del historico."""
+    item = _item()
+    teoricos = {(6372, 30): (0.0, 7.55)}          # 1,45x sobre 5,2
+    _proyectar(item, _linea(50), AHORA, teoricos, _medias(5.2), _avance(minutos=0, piezas=0))
+
+    assert item["origen_estimado"] == "teorico"
+    assert item["min_pieza"] == 7.55
+
+
+def test_sin_historico_con_que_contrastar_el_escandallo_se_respeta():
+    """No hay con que compararlo, asi que se usa: es mejor dato que ninguno."""
+    item = _item()
+    vacias = {"articulo": {}, "trabajo": {}, "maquina": {}}
+    _proyectar(item, _linea(50), AHORA, {(6372, 30): (0.0, 345.0)}, vacias,
+               _avance(minutos=0, piezas=0))
+
+    assert item["origen_estimado"] == "teorico"

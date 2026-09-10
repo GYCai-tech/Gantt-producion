@@ -291,6 +291,10 @@ def _dia_local(dt: datetime) -> date:
 _ESTIMA_TTL_S     = 600   # el escandallo y el histórico no cambian por minutos
 _HIST_MESES       = 18
 _MIN_BONOS_MEDIA  = 3     # con menos bonos, la media es ruido
+#  Cuánto puede apartarse el escandallo del histórico del artículo antes de
+#  dejar de creérselo. Ver `_estimar`.
+_FACTOR_ESCANDALLO = 5
+_escandallos_avisados: set = set()
 _HORAS_LINEA_VIVA = 24    # una línea abierta más vieja que esto es fantasma, no trabajo
 
 _SQL_TEORICO = """
@@ -487,6 +491,19 @@ def _minutos_montaje(linea: dict) -> float:
     return _MONTAJE_POR_DEFECTO_MIN
 
 
+def _avisar_escandallo(linea, teorico, historico, desvio) -> None:
+    """Un escandallo descartado no puede pasar en silencio: es un dato que
+    alguien metió a mano y que hay que corregir en el ERP. Se avisa una vez por
+    trabajo y proceso, no en cada request."""
+    clave = linea["idtrabajo"]
+    if clave in _escandallos_avisados:
+        return
+    _escandallos_avisados.add(clave)
+    print(f"[items] escandallo descartado en el trabajo {clave} "
+          f"({linea['idorden']}/{linea['idbono']}): dice {teorico:.3f} min/pieza y el "
+          f"histórico del artículo da {historico:.3f} ({desvio:.0f}x). Se usa el histórico.")
+
+
 def _estimar(linea: dict, teoricos: dict, medias: dict):
     """(min/pieza, setup en minutos, origen) para el bono, o (None, 0, None).
 
@@ -503,10 +520,30 @@ def _estimar(linea: dict, teoricos: dict, medias: dict):
     # declara se usa lo que suele tardarse en montar esa máquina.
     setup = setup_erp if setup_erp > 0 else _minutos_montaje(linea)
 
+    matricula = (linea["matricula"] or "").strip()
+
+    # Un escandallo mal metido no puede arrastrar al Gantt. El trabajo 1932
+    # dice 345 min/pieza y sus 7 bonos cerrados dan 5,86: alguien puso ahí el
+    # total de la operación en vez del tiempo unitario, y 6585/60 pintaba una
+    # barra de 13 días. Se contrasta contra el histórico del artículo, que es
+    # un dato MEDIDO; si se aparta más de _FACTOR_ESCANDALLO veces en
+    # cualquiera de los dos sentidos, no se usa y se cae al histórico.
+    #
+    # El umbral sale de los datos: de los 7 bonos vivos con escandallo, seis
+    # caen entre 0,9x y 1,5x del histórico y el séptimo en 53x. No hay nada en
+    # medio, así que el corte no es delicado.
+    if min_pieza_erp:
+        acc = medias["articulo"].get(linea["idarticulo_salida"])
+        if acc and acc["n"] >= _MIN_BONOS_MEDIA and acc["piezas"] > 0:
+            hist = acc["minutos"] / acc["piezas"]
+            desvio = min_pieza_erp / hist if hist > 0 else 1.0
+            if not (1 / _FACTOR_ESCANDALLO <= desvio <= _FACTOR_ESCANDALLO):
+                _avisar_escandallo(linea, min_pieza_erp, hist, desvio)
+                min_pieza_erp = None
+
     if min_pieza_erp:
         return min_pieza_erp, setup, "teorico"
 
-    matricula = (linea["matricula"] or "").strip()
     for origen, nivel, clave in (
         ("media_articulo", "articulo", linea["idarticulo_salida"]),
         ("media_trabajo",  "trabajo",  linea["idtrabajo"]),
