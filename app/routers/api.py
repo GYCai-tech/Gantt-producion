@@ -556,6 +556,16 @@ def _avance_por_bono(lineas: list[dict], ahora: datetime) -> dict:
                       AND IdOperacion = 0
                       AND Hinicial BETWEEN :limite AND :ahora
                      THEN IdEmpleado END) AS operarios_activos,
+               -- Los que están MONTANDO. Mientras solo hay preparación fichada
+               -- no existe ninguna línea de producción abierta y el recuento de
+               -- arriba da cero, así que no habría por quién dividir la
+               -- fabricación que viene detrás: en 6469/40 los tres montadores
+               -- recibían cada uno los 453 minutos del bono entero.
+               COUNT(DISTINCT CASE
+                     WHEN Hfinal IS NULL
+                      AND IdOperacion IN (1, 2)
+                      AND Hinicial BETWEEN :limite AND :ahora
+                     THEN IdEmpleado END) AS operarios_montando,
                SUM(ISNULL(TotalPiezas, 0)) AS piezas
         FROM consumo
         GROUP BY IdOrden, IdBono
@@ -576,6 +586,7 @@ def _avance_por_bono(lineas: list[dict], ahora: datetime) -> dict:
             "min_produccion": float(r["min_produccion"] or 0),
             "min_montaje": float(r["min_montaje"] or 0),
             "operarios": max(1, int(r["operarios_activos"] or 0)),
+            "montando":  max(1, int(r["operarios_montando"] or 0)),
             "piezas":    float(r["piezas"] or 0),
         }
         for r in filas
@@ -1312,6 +1323,10 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
             produccion = (max(0.0, objetivo - gasto["piezas"]) * ritmo
                           if gasto["piezas"] > 0 else
                           max(0.0, objetivo * ritmo - gasto["min_produccion"]))
+            # Minutos-HOMBRE a minutos de reloj: los que están montando juntos
+            # son los que van a fabricar juntos. `restante` no se divide, que
+            # es tiempo de preparación ya medido por persona.
+            produccion /= gasto["montando"]
             item["libre_desde"] = _sumar_laborables(ahora, restante + produccion)
         # Lo que acabamos de reservar tiene que verse: `_continuar` lo convierte
         # en barra propia. La clave se consume ahí y no llega al frontend.

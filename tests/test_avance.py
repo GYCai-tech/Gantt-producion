@@ -65,8 +65,11 @@ def test_consumo_y_operarios_separan_preparacion_de_fabricacion(erp):
         dict(empleado=4, operacion=2, inicio='2026-09-07 10:00:00', fin='2026-09-07 10:05:00', piezas=0),
     ])
     avance = api._avance_por_bono([{'idorden': 1}], AHORA)[(1, 10)]
+    # `montando` es 1: el empleado 3 tiene una preparacion abierta. Se cuenta
+    # aparte porque mientras solo hay montaje fichado `operarios` da 0 y no
+    # habria por quien dividir la fabricacion que viene detras.
     assert avance == {'minutos': 95, 'min_produccion': 25, 'min_montaje': 70,
-                      'piezas': 10, 'operarios': 2}
+                      'piezas': 10, 'operarios': 2, 'montando': 1}
 
 
 def test_fichajes_fantasma_futuros_y_duraciones_negativas_no_inflan_consumo(erp):

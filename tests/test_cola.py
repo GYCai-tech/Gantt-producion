@@ -79,7 +79,7 @@ def test_450_minutos_pendientes_no_liberan_manana_a_las_siete():
     item = {'start': AHORA.replace(hour=11), 'end': AHORA, 'estado': 'plazo',
             'sin_tiempo': False, 'idempleado': '1', 'matricula': 'M1', 'es_montaje': False}
     avance = {(1, 10): {'minutos': 70, 'min_produccion': 10, 'min_montaje': 60,
-                        'piezas': 10, 'operarios': 1}}
+                        'piezas': 10, 'operarios': 1, 'montando': 1}}
     api._proyectar(item, linea, AHORA, {(1, 10): (1, 5)}, MEDIAS, avance)
     assert item['min_restantes'] == 450
     assert item['end'] == datetime(2026, 9, 8, 11, 30)
@@ -128,7 +128,7 @@ def test_bono_con_las_piezas_hechas_no_bloquea_la_cola_de_su_operario():
             'sin_tiempo': False, 'idempleado': '1', 'matricula': 'M1',
             'es_montaje': False}
     avance = {(1, 10): {'minutos': 240, 'min_produccion': 240, 'min_montaje': 0,
-                        'piezas': 100, 'operarios': 1}}
+                        'piezas': 100, 'operarios': 1, 'montando': 1}}
     api._proyectar(item, linea, AHORA, {(1, 10): (5, 1)}, MEDIAS, avance)
     assert item['estado'] == 'pendiente-cierre'
     assert item['libre_desde'] == AHORA
@@ -144,7 +144,7 @@ def test_una_preparacion_pasada_de_tiempo_sigue_reservando_su_produccion(monkeyp
             'estado': 'plazo', 'sin_tiempo': False, 'idempleado': '1',
             'matricula': 'M1', 'es_montaje': True}
     avance = {(1, 10): {'minutos': 90, 'min_produccion': 0, 'min_montaje': 90,
-                        'piezas': 0, 'operarios': 1}}
+                        'piezas': 0, 'operarios': 1, 'montando': 1}}
     api._proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, avance)
     assert item['min_restantes'] == 0
     # 100 piezas x 1 min desde ahora, no la ventana entera.
@@ -160,7 +160,7 @@ def test_la_preparacion_reserva_tambien_la_produccion_que_viene_despues(monkeypa
             'estado': 'plazo', 'sin_tiempo': False, 'idempleado': '1',
             'matricula': 'M1', 'es_montaje': True}
     avance = {(1, 10): {'minutos': 30, 'min_produccion': 0, 'min_montaje': 30,
-                        'piezas': 0, 'operarios': 1}}
+                        'piezas': 0, 'operarios': 1, 'montando': 1}}
     api._proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, avance)
     assert item['fin_estimado'] == AHORA.replace(minute=30)
     assert item['libre_desde'] == AHORA.replace(hour=14, minute=10)
@@ -188,7 +188,7 @@ def test_la_reserva_de_la_preparacion_se_pinta_como_barra(monkeypatch):
     monkeypatch.setattr(api, '_minutos_montaje', lambda l: 60)
     item = _montaje()
     avance = {(1, 10): {'minutos': 30, 'min_produccion': 0, 'min_montaje': 30,
-                        'piezas': 0, 'operarios': 1}}
+                        'piezas': 0, 'operarios': 1, 'montando': 1}}
     api._proyectar(item, dict(bono(), idoperacion=1), AHORA,
                    {(1, 10): (60, 1)}, MEDIAS, avance)
     barra, = api._continuar([item], AHORA)
@@ -205,7 +205,7 @@ def test_un_bono_con_las_piezas_hechas_no_deja_barra_de_continuacion(monkeypatch
     monkeypatch.setattr(api, '_minutos_montaje', lambda l: 60)
     item = _montaje()
     avance = {(1, 10): {'minutos': 130, 'min_produccion': 100, 'min_montaje': 30,
-                        'piezas': 100, 'operarios': 1}}
+                        'piezas': 100, 'operarios': 1, 'montando': 1}}
     api._proyectar(item, dict(bono(), idoperacion=1), AHORA,
                    {(1, 10): (60, 1)}, MEDIAS, avance)
     assert api._continuar([item], AHORA) == []
@@ -323,3 +323,35 @@ def test_la_cuadrilla_espera_a_que_esten_libres_todos():
     tareas = plan([bono(1, e, 'M1', cantidad=100) for e in (1, 2, 3)], ocupado)
 
     assert tareas[0]['start'] == datetime(2026, 9, 8, 9)   # el ultimo manda
+
+
+def test_la_fabricacion_que_sigue_al_montaje_se_reparte_entre_la_cuadrilla():
+    """6469/40: tres operarios montando la misma maquina a la vez, y a cada uno
+    se le pintaban los 453 minutos del bono ENTERO. El tiempo estimado son
+    minutos-hombre; si tres montan juntos, tres fabrican juntos."""
+    linea = dict(bono(cantidad=300), idoperacion=1)
+    item = {'start': AHORA.replace(hour=11, minute=30), 'end': AHORA,
+            'estado': 'plazo', 'sin_tiempo': False, 'idempleado': '1',
+            'matricula': 'M1', 'es_montaje': True}
+    avance = {(1, 10): {'minutos': 30, 'min_produccion': 0, 'min_montaje': 30,
+                        'piezas': 0, 'operarios': 1, 'montando': 3}}
+    api._proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, avance)
+
+    # 300 piezas x 1 min = 300 minutos-hombre; entre tres son 100 de reloj.
+    assert item['_pendiente']['minutos'] == 100
+    # Y la reserva del recurso va con el reloj, no con los minutos-hombre: 1
+    # minuto de montaje que falta —la media por defecto son 31 y lleva 30— mas
+    # los 100 de fabricacion.
+    assert item['libre_desde'] == AHORA.replace(hour=13, minute=41)
+
+
+def test_un_solo_montador_no_cambia_nada():
+    linea = dict(bono(cantidad=300), idoperacion=1)
+    item = {'start': AHORA.replace(hour=11, minute=30), 'end': AHORA,
+            'estado': 'plazo', 'sin_tiempo': False, 'idempleado': '1',
+            'matricula': 'M1', 'es_montaje': True}
+    avance = {(1, 10): {'minutos': 30, 'min_produccion': 0, 'min_montaje': 30,
+                        'piezas': 0, 'operarios': 1, 'montando': 1}}
+    api._proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, avance)
+
+    assert item['_pendiente']['minutos'] == 300

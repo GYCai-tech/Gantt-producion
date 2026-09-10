@@ -29,7 +29,7 @@ def test_navegar_a_manana_conserva_el_bono_activo_de_hoy(monkeypatch):
     monkeypatch.setattr(api, '_cargar_estimaciones', lambda: ({(1, 10): (1, 5), (2, 10): (1, 1)}, MEDIAS))
     monkeypatch.setattr(api, '_avance_por_bono', lambda *args: {
         (1, 10): {'minutos': 70, 'min_produccion': 10, 'min_montaje': 60,
-                  'piezas': 10, 'operarios': 1},
+                  'piezas': 10, 'operarios': 1, 'montando': 1},
     })
     monkeypatch.setattr(api, '_leer_cola', lambda: [bono(2)])
     for vista in ('empleado', 'maquina'):
@@ -85,7 +85,7 @@ def test_navegar_al_futuro_no_devuelve_barras_que_ya_terminaron(monkeypatch):
     monkeypatch.setattr(api, '_cargar_estimaciones', lambda: ({(1, 10): (1, 1)}, MEDIAS))
     monkeypatch.setattr(api, '_avance_por_bono', lambda *args: {
         (1, 10): {'minutos': 1, 'min_produccion': 1, 'min_montaje': 0,
-                  'piezas': 1, 'operarios': 1},
+                  'piezas': 1, 'operarios': 1, 'montando': 1},
     })
     monkeypatch.setattr(api, '_leer_cola', lambda: [])
     assert api.get_items(vista='empleado', desde=datetime(2026, 9, 8),
@@ -105,7 +105,7 @@ def test_el_area_de_una_barra_es_la_de_su_bono_no_la_de_quien_lo_hace(monkeypatc
     monkeypatch.setattr(api, '_cargar_estimaciones', lambda: ({(1, 10): (1, 5)}, MEDIAS))
     monkeypatch.setattr(api, '_avance_por_bono', lambda *a: {
         (1, 10): {'minutos': 10, 'min_produccion': 10, 'min_montaje': 0,
-                  'piezas': 99, 'operarios': 1},     # casi terminada: deja hueco hoy
+                  'piezas': 99, 'operarios': 1, 'montando': 1},     # casi terminada: deja hueco hoy
     })
     monkeypatch.setattr(api, '_leer_cola', lambda: [dict(bono(2), cantidad=5, area='ESTRUCTURAS')])
 
