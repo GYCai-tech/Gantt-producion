@@ -21,6 +21,7 @@ const Plan = (() => {
     plazo: 'En curso', disponible: 'En espera', parada: 'Bloqueada',
     'sin-estimar': 'Sin datos fiables', riesgo: 'En riesgo',
     'pendiente-cierre': 'Pendiente de cerrar',
+    continuacion: 'Fabricación pendiente',
   };
 
   let dias = 5, datos = null;
