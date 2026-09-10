@@ -679,3 +679,29 @@ tbody .plan__pers span {
 .plan__c.tiene-parada { box-shadow: inset 0 -3px 0 var(--rojo); }
 
 .tip__sub { font-size: 11.5px; color: var(--ink-3); margin: -2px 0 7px; line-height: 1.45; }
+
+/* ============================================================
+   Ordenes no asignadas (/ordenes-no-asignadas)
+   Reutiliza la tabla de Carga de trabajo; solo cambia el agrupado.
+   ============================================================ */
+.ord__tabla td { vertical-align: top; }
+/* El dato secundario debajo del principal --el area bajo la maquina, la
+   descripcion bajo el codigo-- en vez de pegado a continuacion. */
+.ord__tabla td span { display: block; font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+/* Fila que separa una orden de la siguiente. Va pegajosa para no perder de
+   vista de que orden es el bono que se esta mirando al bajar por la lista. */
+.ord__tabla tr.ord__orden td {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface-2); border-top: 1px solid var(--line);
+  padding: 9px 14px; font-size: 12.5px;
+}
+.ord__tabla tr.ord__orden b { font-size: 14px; color: var(--brand); font-variant-numeric: tabular-nums; }
+.ord__tabla tr.ord__orden span { display: inline; margin-left: 10px; color: var(--ink-2); }
+.ord__tabla tr.ord__orden em { float: right; font-style: normal; color: var(--ink-3); font-size: 12px; }
+.ord__chip {
+  display: inline-block !important; margin-left: 8px; padding: 1px 7px; border-radius: 99px;
+  background: var(--accent-2); color: var(--accent); font-size: 11px; font-weight: 600;
+}
+/* Sin maquina son operaciones de fuera --lacado, zincado--: no es un dato que
+   falte, es que el trabajo no se hace aqui. */
+.ord__fuera { color: var(--ink-3); font-size: 12.5px; }

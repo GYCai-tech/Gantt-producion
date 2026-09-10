@@ -18,6 +18,7 @@
     <nav class="app-navbar__links">
       <a href="/" class="app-nav-link {{ 'active' if current_page == 'planificador' else '' }}">Planificador</a>
       <a href="/planificacion" class="app-nav-link {{ 'active' if current_page == 'planificacion' else '' }}">Carga de trabajo</a>
+      <a href="/ordenes-no-asignadas" class="app-nav-link {{ 'active' if current_page == 'ordenes' else '' }}">Órdenes no asignadas</a>
     </nav>
     <div class="app-navbar__extra">{% block navbar_extra %}{% endblock %}</div>
   </header>

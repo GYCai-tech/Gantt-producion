@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}GYC · Órdenes no asignadas{% endblock %}
+
+{% block navbar_extra %}
+<div class="search-gantt-wrap">
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+  <input id="ord-buscar" type="search" placeholder="Orden, artículo o máquina…" oninput="Ord.setBusqueda(this.value)">
+</div>
+<button class="btn-refresh" onclick="Ord.cargar()" title="Volver a leer el ERP">
+  <svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+  <span id="refresh-label">Actualizar</span>
+</button>
+<span class="topbar__clock plan-clock" id="generado"></span>
+{% endblock %}
+
+{% block body %}
+<div class="app">
+  <main class="panel plan">
+
+    <header class="plan__intro">
+      <h1>Órdenes no asignadas</h1>
+      <p>
+        Bonos que el ERP tiene <b>bloqueados</b> (<code>IdEstado = 3</code>) y que en la
+        práctica es trabajo que todavía no se ha repartido. <b>El Gantt no los enseña:</b>
+        la cola y el semáforo filtran los bonos en espera, así que uno bloqueado no sale
+        en rojo — no existe para la app. Aquí se ven enteros.
+      </p>
+    </header>
+
+    <div id="ord-cargando" class="plan__estado">Leyendo el ERP…</div>
+    <div id="ord-error" class="plan__estado plan__estado--error" hidden></div>
+
+    <div id="ord-cuerpo" hidden>
+      <div class="plan__leyenda">
+        <div class="areas" id="ord-areas"></div>
+        <span class="plan__lg plan__lg--fin" id="ord-resumen"></span>
+      </div>
+      <div class="plan__wrap">
+        <table class="plan__tabla ord__tabla" id="ord-tabla"></table>
+      </div>
+      <p class="plan__vacio" id="ord-sin-resultados" hidden>Sin resultados para ese filtro.</p>
+    </div>
+
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/ordenes.js?v={{ static_v }}"></script>
+{% endblock %}

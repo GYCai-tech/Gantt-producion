@@ -48,3 +48,11 @@ def planificacion(request: Request):
         request, "planificacion.html",
         {"current_page": "planificacion", "static_v": _static_v()},
     )
+
+
+@router.get("/ordenes-no-asignadas", response_class=HTMLResponse)
+def ordenes_no_asignadas(request: Request):
+    return templates.TemplateResponse(
+        request, "ordenes.html",
+        {"current_page": "ordenes", "static_v": _static_v()},
+    )
