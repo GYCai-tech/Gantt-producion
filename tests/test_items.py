@@ -117,3 +117,68 @@ def test_el_area_de_una_barra_es_la_de_su_bono_no_la_de_quien_lo_hace(monkeypatc
     assert real['recurso_id'] == cola['recurso_id']
     assert real['area'] == 'CHAPA'
     assert cola['area'] == 'ESTRUCTURAS'
+
+
+def _trozo(inicio, fin, montaje=False, abierta=False):
+    return dict(bono(), idlinea=hash((inicio, fin)) % 9999, idoperacion=1 if montaje else 0,
+                abierta=abierta, fecha=inicio, inicio=inicio, fin=None if abierta else fin)
+
+
+def _montar(monkeypatch, lineas, abiertas=()):
+    monkeypatch.setattr(api, 'datetime', Reloj)
+    monkeypatch.setattr(api, 'date', Fecha)
+    monkeypatch.setattr(api, '_leer_lineas', lambda *a: list(lineas))
+    monkeypatch.setattr(api, '_leer_abiertas', lambda *a: list(abiertas))
+    monkeypatch.setattr(api, '_cargar_estimaciones', lambda: ({(1, 10): (1, 5)}, MEDIAS))
+    monkeypatch.setattr(api, '_avance_por_bono', lambda *a: {})
+    monkeypatch.setattr(api, '_leer_cola', lambda: [])
+
+
+def test_los_trocitos_seguidos_del_mismo_bono_se_funden(monkeypatch):
+    """6243/70: 30 minutos de produccion y detras dos de UN minuto, pegados. Es
+    la misma sesion partida por el terminal, no tres trabajos."""
+    _montar(monkeypatch, [
+        _trozo(datetime(2026, 9, 7, 7, 50), datetime(2026, 9, 7, 8, 20)),
+        _trozo(datetime(2026, 9, 7, 8, 20), datetime(2026, 9, 7, 8, 21)),
+        _trozo(datetime(2026, 9, 7, 8, 21), datetime(2026, 9, 7, 8, 22)),
+    ])
+    items = api.get_items(vista='empleado')
+
+    assert len(items) == 1
+    assert items[0]['start'] == datetime(2026, 9, 7, 7, 50)
+    assert items[0]['end'] == datetime(2026, 9, 7, 8, 22)
+    assert items[0]['min_real'] == 32          # 30 + 1 + 1
+
+
+def test_un_trocito_lejano_no_se_funde(monkeypatch):
+    """Dos fichajes de un minuto separados por horas son dos visitas al bono,
+    no una sesion: fundirlos pintaria una barra de la que casi todo es hueco."""
+    _montar(monkeypatch, [
+        _trozo(datetime(2026, 9, 7, 8, 0), datetime(2026, 9, 7, 8, 1)),
+        _trozo(datetime(2026, 9, 7, 11, 0), datetime(2026, 9, 7, 11, 1)),
+    ])
+    assert len(api.get_items(vista='empleado')) == 2
+
+
+def test_dos_trabajos_largos_seguidos_no_se_funden(monkeypatch):
+    """La regla es para trocitos. Dos sesiones de media hora son dos barras
+    aunque vayan pegadas."""
+    _montar(monkeypatch, [
+        _trozo(datetime(2026, 9, 7, 8, 0), datetime(2026, 9, 7, 8, 30)),
+        _trozo(datetime(2026, 9, 7, 8, 30), datetime(2026, 9, 7, 9, 0)),
+    ])
+    assert len(api.get_items(vista='empleado')) == 2
+
+
+def test_un_trocito_de_montaje_no_se_traga_la_produccion(monkeypatch):
+    """Fundir preparacion con fabricacion es el otro problema y lo resuelve
+    `_fundir_montaje`, que ademas marca que parte fue preparar."""
+    _montar(monkeypatch, [
+        _trozo(datetime(2026, 9, 7, 7, 40), datetime(2026, 9, 7, 7, 42), montaje=True),
+        _trozo(datetime(2026, 9, 7, 7, 42), datetime(2026, 9, 7, 8, 20)),
+    ])
+    items = api.get_items(vista='empleado')
+
+    assert len(items) == 1
+    assert items[0]['min_montaje'] == 2        # fundida, pero por la otra via
+    assert items[0]['pct_montaje'] > 0

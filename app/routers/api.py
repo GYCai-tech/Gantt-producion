@@ -725,7 +725,7 @@ def get_items(
     # `_continuar` va sobre la lista ya fundida y siempre se llama: es lo que
     # pinta la reserva de un bono en montaje y, de paso, lo que limpia la clave
     # interna que `_proyectar` deja en esas barras.
-    visibles = _fundir_montaje(items)
+    visibles = _fundir_montaje(_fundir_troceados(items))
     return [it for it in visibles + _continuar(visibles, ahora) + cola
             if it["end"] > inicio_ventana and it["start"] < fin_ventana]
 
@@ -1187,10 +1187,73 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
     return items
 
 
+#  Un mismo operario ficha a veces el mismo bono en varios trozos seguidos: en
+#  6243/70 hay 30 minutos de producción y detrás dos de UN minuto, pegados. Son
+#  la misma sesión de trabajo partida por el terminal, no tres trabajos, y en el
+#  Gantt salían como tres barras de las que dos son una raya invisible.
+#
+#  Se funden los trozos consecutivos del mismo bono, operario y tipo de
+#  operación cuando van seguidos y alguno de los dos es un trocito. Que valga
+#  con que lo sea UNO de los dos es lo que permite absorber tanto una raya que
+#  viene detrás de un trabajo largo como una que va delante.
+#
+#  Medido sobre 3 meses: 395 líneas de 6.700 (6%), repartidas en 172 bonos.
+_TROZO_MIN         = 5   # por debajo de esto, un fichaje es un trocito
+_HUECO_TROZO_MIN   = 5   # y se pega al anterior si no dista más que esto
+
 #  Hueco máximo entre el fin del montaje y el inicio de la producción para
 #  considerar que son el mismo trabajo. Medido sobre 6 meses: 4.091 de 4.749
 #  montajes enlazan con su producción en 2 minutos o menos (86%).
 _HUECO_MONTAJE_MIN = 2
+
+
+def _dur_min(it: dict) -> float:
+    return (it["end"] - it["start"]).total_seconds() / 60
+
+
+def _fundir_troceados(items: list[dict]) -> list[dict]:
+    """Une los fichajes que un operario partió en trozos seguidos.
+
+    Va ANTES de `_fundir_montaje` a propósito: así el montaje se encuentra la
+    producción ya entera y no se cuelga del primer trozo. Y por eso el grupo
+    incluye `es_montaje`: fundir preparación con fabricación es el otro
+    problema, tiene otra semántica (`pct_montaje`) y lo resuelve esa función.
+    """
+    grupos: dict = {}
+    for it in items:
+        if it["tipo"] in ("real", "trabajado", "parcial"):
+            clave = (it["idorden"], it["idbono"], it["recurso_id"], it["es_montaje"])
+            grupos.setdefault(clave, []).append(it)
+
+    absorbidos = set()
+    for trozos in grupos.values():
+        if len(trozos) < 2:
+            continue
+        trozos.sort(key=lambda x: x["start"])
+        base = trozos[0]
+        for sig in trozos[1:]:
+            hueco = (sig["start"] - base["end"]).total_seconds() / 60
+            # `_dur_min(base)` se mide sobre lo ya fundido: en cuanto la barra
+            # deja de ser un trocito, la siguiente que no lo sea tampoco se pega.
+            if not (0 <= hueco <= _HUECO_TROZO_MIN
+                    and (_dur_min(sig) < _TROZO_MIN or _dur_min(base) < _TROZO_MIN)):
+                base = sig
+                continue
+            minutos = [x for x in (base.get("min_real"), sig.get("min_real")) if x is not None]
+            base["end"] = max(base["end"], sig["end"])
+            # Los minutos REALES se suman; el ancho de la barra incluye además
+            # el hueco entre trozos, que no se trabajó.
+            base["min_real"] = sum(minutos) if len(minutos) == 2 else None
+            # Si el trozo que se absorbe sigue abierto, manda él: la barra
+            # fundida es trabajo en curso y se queda con su proyección.
+            if sig["tipo"] == "real":
+                for k in ("tipo", "estado", "en_curso", "fin_estimado", "libre_desde",
+                          "min_restantes", "min_hombre", "a_la_vez", "progreso",
+                          "_pendiente", "sin_tiempo", "origen_estimado"):
+                    if k in sig:
+                        base[k] = sig[k]
+            absorbidos.add(id(sig))
+    return [it for it in items if id(it) not in absorbidos]
 
 
 def _fundir_montaje(items: list[dict]) -> list[dict]:
@@ -1314,6 +1377,8 @@ def _continuar(items: list[dict], ahora: datetime) -> list[dict]:
             "piezas_pendientes": max(0.0, p["objetivo"] - p["hechas"]),
             "min_pieza":     round(p["min_pieza"], 3) if p["min_pieza"] else None,
             "min_restantes": round(minutos) if minutos is not None else None,
+            "min_hombre": round(p["min_hombre"]) if p["min_hombre"] is not None else None,
+            "a_la_vez":   p["a_la_vez"],
             "base_estimacion": "piezas",
         })
     return barras
@@ -1369,6 +1434,10 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
         # en barra propia. La clave se consume ahí y no llega al frontend.
         item["_pendiente"] = {
             "minutos":   produccion,
+            # Minutos-hombre y cuántos los reparten, para poder explicar en el
+            # tooltip por qué la barra mide menos que el trabajo que lleva.
+            "min_hombre": produccion * gasto["montando"] if produccion is not None else None,
+            "a_la_vez":   gasto["montando"] if gasto else 1,
             "min_pieza": ritmo,
             "origen":    origen,
             "objetivo":  objetivo,
@@ -1496,6 +1565,8 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
     # en la práctica casi siempre es uno (Ordenes_Bonos.Operarios = 1).
     restante_reloj = restante / gasto["operarios"]
     item["min_restantes"] = round(restante_reloj)
+    item["min_hombre"]    = round(restante)
+    item["a_la_vez"]      = gasto["operarios"]
     if restante_reloj <= 0:
         # Ya no queda trabajo que estimar: es el bono con todas sus piezas
         # hechas y el fichaje sin cerrar. Eso es SABER que el recurso está
