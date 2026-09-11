@@ -412,3 +412,18 @@ def test_el_bono_a_medias_se_pinta_como_fabricacion_pendiente(monkeypatch):
     assert items[0]['estado'] == 'continuacion'
     assert items[0]['reanudado'] is True
     assert items[0]['piezas_pendientes'] == 60
+
+
+def test_el_aviso_de_todo_bloqueado_es_solo_para_quien_esta_parado():
+    """Quien ficha algo ahora no esta atascado, por rojo que tenga el resto."""
+    cola = [bono(orden=1, empleado=1, semaforo='bloqueada'),
+            bono(orden=2, empleado=1, semaforo='bloqueada'),
+            bono(orden=3, empleado=2, semaforo='bloqueada')]
+    assert api._sin_salida(cola, set()) == {'1': 2, '2': 1}
+    assert api._sin_salida(cola, {'1'}) == {'2': 1}
+
+
+def test_con_un_bono_verde_no_hay_aviso():
+    cola = [bono(orden=1, empleado=1, semaforo='bloqueada'),
+            bono(orden=2, empleado=1, semaforo='disponible')]
+    assert api._sin_salida(cola, set()) == {}

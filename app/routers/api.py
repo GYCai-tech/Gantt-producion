@@ -653,7 +653,11 @@ def get_avisos(vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
     Una máquina no "se queda sin poder trabajar" —el semáforo es de la
     persona—, así que en la vista de máquinas no hay nada que avisar.
     """
-    return {"sin_salida": _sin_salida(_leer_cola()) if vista == "empleado" else {}}
+    if vista != "empleado":
+        return {"sin_salida": {}}
+    ahora = datetime.now()
+    trabajando = {str(l["idempleado"]) for l in _leer_abiertas(ahora)}
+    return {"sin_salida": _sin_salida(_leer_cola(), trabajando)}
 
 
 @router.get("/items")
@@ -1214,8 +1218,8 @@ def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
     return plan
 
 
-def _sin_salida(cola: list[dict]) -> dict[str, int]:
-    """{idempleado: nº de bonos} de quien tiene TODA su cola en rojo.
+def _sin_salida(cola: list[dict], trabajando: set[str]) -> dict[str, int]:
+    """{idempleado: nº de bonos} de quien tiene TODA su cola en rojo y está parado.
 
     No es "va justo de trabajo": es que no puede empezar ninguno de los bonos
     que tiene asignados, que es lo que el programa de producción del ERP
@@ -1227,12 +1231,17 @@ def _sin_salida(cola: list[dict]) -> dict[str, int]:
     visible: el aviso es del operario y no debe encenderse o apagarse al
     cambiar de zoom. Medido hoy: 3 de los 19 operarios con cola, uno con 18
     bonos y dos con uno solo.
+
+    Quien está fichando algo AHORA queda fuera aunque su cola entera esté en
+    rojo. No está parado: está produciendo, y una fila roja diciendo que no
+    puede hacer nada contradice su propia barra. El bono que ficha no cuenta
+    para el color porque ya no está en la cola (ver `_COLA_QUERY`).
     """
     por_empleado: dict[str, list[str]] = {}
     for b in cola:
         por_empleado.setdefault(str(b["idempleado"]), []).append(b["semaforo"])
     return {rid: len(s) for rid, s in por_empleado.items()
-            if all(x == "bloqueada" for x in s)}
+            if rid not in trabajando and all(x == "bloqueada" for x in s)}
 
 
 def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
