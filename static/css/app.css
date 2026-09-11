@@ -694,29 +694,158 @@ tbody .plan__pers span {
 .plan__c.tiene-parada { box-shadow: inset 0 -3px 0 var(--rojo); }
 
 .tip__sub { font-size: 11.5px; color: var(--ink-3); margin: -2px 0 7px; line-height: 1.45; }
-
 /* ============================================================
    Ordenes no asignadas (/ordenes-no-asignadas)
-   Reutiliza la tabla de Carga de trabajo; solo cambia el agrupado.
+   Tabla agrupada por orden, con un filtro por valores en cada columna.
    ============================================================ */
-.ord__tabla td { vertical-align: top; }
-/* El dato secundario debajo del principal --el area bajo la maquina, la
-   descripcion bajo el codigo-- en vez de pegado a continuacion. */
-.ord__tabla td span { display: block; font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
-/* Fila que separa una orden de la siguiente. Va pegajosa para no perder de
-   vista de que orden es el bono que se esta mirando al bajar por la lista. */
-.ord__tabla tr.ord__orden td {
-  position: sticky; top: 0; z-index: 1;
-  background: var(--surface-2); border-top: 1px solid var(--line);
-  padding: 9px 14px; font-size: 12.5px;
+
+/* --- Resumen de arriba. Cada azulejo dice el dato con el filtro puesto y, si
+   filtra algo, sobre cuanto: "38 de 216" es la mitad de la informacion. --- */
+.ord__stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 16px 0 12px; }
+.ord__stat {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-1); padding: 11px 14px 12px;
 }
-.ord__tabla tr.ord__orden b { font-size: 14px; color: var(--brand); font-variant-numeric: tabular-nums; }
-.ord__tabla tr.ord__orden span { display: inline; margin-left: 10px; color: var(--ink-2); }
-.ord__tabla tr.ord__orden em { float: right; font-style: normal; color: var(--ink-3); font-size: 12px; }
+.ord__stat span { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); }
+.ord__stat b { display: block; font-size: 23px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin-top: 3px; }
+.ord__stat em { font-style: normal; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ord__stat--ojo b { color: var(--rojo); }
+
+/* --- Barra de herramientas: atajo de asignacion, filtros puestos, cuenta --- */
+.ord__barra { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 10px; }
+.ord__chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ord__chip-f {
+  display: inline-flex; align-items: center; gap: 7px; max-width: 340px;
+  padding: 4px 6px 4px 10px; border-radius: 20px; cursor: pointer;
+  border: 1px solid #cddcf8; background: var(--accent-2); color: var(--brand);
+  font-size: 12px; font-weight: 500; transition: .15s;
+}
+.ord__chip-f i { font-style: normal; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ord__chip-f b { font-weight: 600; }
+.ord__chip-f u { text-decoration: none; color: var(--accent); font-size: 14px; line-height: 1; padding: 0 3px; }
+.ord__chip-f:hover { border-color: var(--accent); }
+.ord__limpiar {
+  border: 0; background: transparent; cursor: pointer; padding: 4px 6px;
+  font-size: 12px; font-weight: 600; color: var(--ink-3); text-decoration: underline;
+}
+.ord__limpiar:hover { color: var(--rojo); }
+.ord__cuenta { margin-left: auto; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+/* --- La tabla --- */
+/* Scrollea ella, no la pagina: es lo que hace que la cabecera --que es donde
+   estan los filtros-- y la orden del grupo se queden de verdad a la vista. */
+.ord__wrap { max-height: calc(100vh - 300px); min-height: 300px; overflow: auto; }
+.ord__tabla td { vertical-align: top; padding: 10px 12px; }
+.ord__tabla tbody tr.ord__bono:hover td { background: var(--surface-2); }
+/* El dato secundario debajo del principal --la descripcion bajo el codigo--
+   en vez de pegado a continuacion. */
+.ord__tabla td span.sub { display: block; font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+.ord__tabla td.num { font-variant-numeric: tabular-nums; }
+.ord__cod { font-variant-numeric: tabular-nums; }
+
+/* Cabecera: cada titulo es el boton que abre el filtro de su columna. */
+.ord__tabla thead th { padding: 0; background: var(--surface); position: sticky; top: 0; z-index: 3; }
+.ord__th {
+  display: inline-flex; align-items: center; gap: 6px; width: 100%;
+  border: 0; background: transparent; cursor: pointer; padding: 10px 12px;
+  font: inherit; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--ink-3); white-space: nowrap; transition: .15s;
+}
+.ord__tabla thead th.num .ord__th { justify-content: flex-end; }
+.ord__th svg { opacity: 0; color: var(--ink-3); transition: .15s; }
+.ord__th:hover { color: var(--brand); }
+.ord__th:hover svg { opacity: .8; }
+.ord__th.is-on { color: var(--accent); }
+.ord__th.is-on svg { opacity: 1; color: var(--accent); }
+.ord__th i {
+  font-style: normal; background: var(--accent); color: #fff;
+  border-radius: 99px; padding: 0 5px; font-size: 10px; line-height: 15px;
+}
+
+/* Fila que separa una orden de la siguiente. Pegajosa bajo la cabecera para no
+   perder de vista de que orden es el bono que se esta mirando al bajar. */
+.ord__tabla tr.ord__orden td {
+  position: sticky; top: 35px; z-index: 2;
+  background: var(--surface-2); border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 12px; font-size: 12.5px;
+}
+.ord__orden b {
+  display: inline-block; background: var(--brand); color: #fff;
+  border-radius: 6px; padding: 2px 8px; font-size: 12px;
+  font-variant-numeric: tabular-nums; letter-spacing: .01em;
+}
+.ord__orden .art { margin-left: 10px; color: var(--ink); font-weight: 600; }
+.ord__orden .art u { text-decoration: none; color: var(--ink-2); font-weight: 400; }
+.ord__orden em { float: right; font-style: normal; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* Los que SI tienen operarios estan bloqueados por otro motivo: se les marca el
+   borde para distinguirlos de los que no tiene nadie, que es el caso normal. */
+.ord__bono td:first-child { box-shadow: inset 3px 0 0 transparent; }
+.ord__bono.tiene-gente td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .ord__chip {
-  display: inline-block !important; margin-left: 8px; padding: 1px 7px; border-radius: 99px;
+  display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 99px;
   background: var(--accent-2); color: var(--accent); font-size: 11px; font-weight: 600;
 }
 /* Sin maquina son operaciones de fuera --lacado, zincado--: no es un dato que
    falte, es que el trabajo no se hace aqui. */
-.ord__fuera { color: var(--ink-3); font-size: 12.5px; }
+.ord__fuera { color: var(--ink-3); font-size: 12.5px; font-style: normal; }
+.ord__area {
+  display: inline-block; padding: 2px 8px; border-radius: 6px;
+  background: var(--gris-bg); color: var(--ink-2); font-size: 11.5px; font-weight: 500; white-space: nowrap;
+}
+/* La cantidad con barra: 4 piezas y 900 se leian igual en una columna de cifras. */
+.ord__q { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 78px; }
+.ord__q b { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ord__q i { display: block; height: 4px; border-radius: 2px; background: #c9d6ea; min-width: 2px; }
+
+/* --- El menu de filtro de una columna --- */
+.fpop {
+  position: fixed; z-index: 60; width: 268px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow-pop); overflow: hidden;
+}
+.fpop header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 10px 9px 12px; border-bottom: 1px solid var(--line-2);
+}
+.fpop header b { font-size: 12px; font-weight: 700; }
+.fpop header button {
+  margin-left: auto; border: 0; background: transparent; cursor: pointer;
+  font-size: 11.5px; font-weight: 600; color: var(--ink-3); text-decoration: underline;
+}
+.fpop header button:hover { color: var(--rojo); }
+.fpop__buscar {
+  width: calc(100% - 20px); margin: 9px 10px 3px; padding: 6px 9px;
+  border: 1px solid var(--line); border-radius: 7px; font: inherit; font-size: 12.5px;
+}
+.fpop__buscar:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
+.fpop__list { max-height: 264px; overflow-y: auto; padding: 5px; }
+.fpop__op {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  border: 0; background: transparent; cursor: pointer; text-align: left;
+  padding: 5px 7px; border-radius: 7px; font: inherit; font-size: 12.5px; color: var(--ink);
+}
+.fpop__op:hover { background: var(--surface-2); }
+.fpop__box {
+  flex: 0 0 auto; width: 14px; height: 14px; border-radius: 4px;
+  border: 1.5px solid #c6cede; background: var(--surface);
+}
+.fpop__op.is-on .fpop__box {
+  border-color: var(--accent); background: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--surface);
+}
+.fpop__v { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fpop__op em { font-style: normal; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.fpop__nada { margin: 0; padding: 14px 10px; text-align: center; font-size: 12px; color: var(--ink-3); }
+.fpop__rango { display: flex; gap: 10px; padding: 11px 12px 13px; }
+.fpop__rango label { flex: 1; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); }
+.fpop__rango input {
+  display: block; width: 100%; margin-top: 4px; padding: 6px 9px;
+  border: 1px solid var(--line); border-radius: 7px; font: inherit; font-size: 13px;
+}
+.fpop__rango input:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
+
+@media (max-width: 900px) {
+  .ord__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

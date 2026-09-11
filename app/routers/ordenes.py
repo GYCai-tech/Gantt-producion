@@ -41,6 +41,12 @@ SELECT
     obs.IdArticulo   AS art_salida,
     asal.Descrip     AS descrip_salida,
     asal.ModeloArticulo AS modelo,
+    -- El ModeloArticulo del articulo que sale esta vacio en los 221 bonos
+    -- bloqueados: en el ERP ese campo solo esta relleno en 54 articulos de
+    -- 25.815, y todos son maquinas y repuestos ("SYNCRO 41", "TruPunch
+    -- 3000"). Por eso se trae tambien el de la maquina del bono, que es el
+    -- unico que tiene algo que enseñar.
+    amaq.ModeloArticulo AS modelo_maquina,
     ob.CantidadTotal AS cantidad,
     (SELECT COUNT(*) FROM Pers_EmpleadosOrdenBono p
       WHERE p.Orden = ob.IdOrden AND p.Bono = ob.IdBono) AS asignados
@@ -81,6 +87,7 @@ def get_no_asignadas():
             "art_salida":     (r["art_salida"] or "").strip(),
             "descrip_salida": (r["descrip_salida"] or "").strip(),
             "modelo":    (r["modelo"] or "").strip(),
+            "modelo_maquina": (r["modelo_maquina"] or "").strip(),
             "cantidad":  float(r["cantidad"] or 0),
             # 16 de los 216 SÍ tienen a alguien: estan bloqueados por otro
             # motivo, y merecen distinguirse de los que no tiene nadie.

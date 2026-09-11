@@ -8,7 +8,7 @@ def fila(orden=6700, bono=10, maquina='903', asignados=0, area='INYECION'):
         'idbono': bono, 'descrip_bono': 'Embolsar', 'matricula': maquina,
         'maquina': 'Manual BOLSAS' if maquina else None, 'area': area,
         'art_salida': '11402062', 'descrip_salida': 'BOLSA PONEDERO 2H',
-        'modelo': None, 'cantidad': 240, 'asignados': asignados,
+        'modelo': None, 'modelo_maquina': None, 'cantidad': 240, 'asignados': asignados,
     }
 
 

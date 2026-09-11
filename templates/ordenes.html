@@ -23,7 +23,8 @@
         Bonos que el ERP tiene <b>bloqueados</b> (<code>IdEstado = 3</code>) y que en la
         práctica es trabajo que todavía no se ha repartido. <b>El Gantt no los enseña:</b>
         la cola y el semáforo filtran los bonos en espera, así que uno bloqueado no sale
-        en rojo — no existe para la app. Aquí se ven enteros.
+        en rojo — no existe para la app. Aquí se ven enteros, y el título de cada columna
+        abre su filtro.
       </p>
     </header>
 
@@ -31,11 +32,15 @@
     <div id="ord-error" class="plan__estado plan__estado--error" hidden></div>
 
     <div id="ord-cuerpo" hidden>
-      <div class="plan__leyenda">
-        <div class="areas" id="ord-areas"></div>
-        <span class="plan__lg plan__lg--fin" id="ord-resumen"></span>
+      <div class="ord__stats" id="ord-stats"></div>
+
+      <div class="ord__barra">
+        <div class="segmented" id="ord-asig"></div>
+        <div class="ord__chips" id="ord-chips"></div>
+        <span class="ord__cuenta" id="ord-resumen"></span>
       </div>
-      <div class="plan__wrap">
+
+      <div class="plan__wrap ord__wrap">
         <table class="plan__tabla ord__tabla" id="ord-tabla"></table>
       </div>
       <p class="plan__vacio" id="ord-sin-resultados" hidden>Sin resultados para ese filtro.</p>
@@ -43,6 +48,10 @@
 
   </main>
 </div>
+
+<!-- El menu de filtro de la columna que este abierta. Va fuera de la tabla:
+     dentro se lo recortaria el scroll de la rejilla. -->
+<div class="fpop" id="ord-pop" hidden></div>
 {% endblock %}
 
 {% block scripts %}
