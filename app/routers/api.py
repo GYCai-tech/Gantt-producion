@@ -1169,8 +1169,14 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 "id": f"P-{b['idorden']}-{b['idbono']}-{b['matricula']}-{rid}",
                 "recurso_id": rid,
                 "tipo": "programado",
-                "estado": ("sin-estimar" if sin_ritmo else
-                           "parada" if semaforo == "bloqueada" else "disponible"),
+                # El bloqueo gana a la falta de estimacion: que no se sepa
+                # cuanto tarda no cambia el plan, que no se pueda empezar si.
+                # 6708/10 esta rojo en el ERP para Jose Manuel y salia ambar
+                # "sin datos fiables" solo porque su ritmo viene de la media de
+                # la maquina. Sobre verde manda el aviso de estimacion: ahi lo
+                # que hay que decir es que el dato no es de fiar.
+                "estado": ("parada" if semaforo == "bloqueada" else
+                           "sin-estimar" if sin_ritmo else "disponible"),
                 "fin_indeterminado": sin_ritmo,
                 "semaforo": semaforo,
                 "semaforo_asignacion": asignado["semaforo"],
