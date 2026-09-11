@@ -779,9 +779,30 @@ _TOLERANCIA_RITMO = 0.15
 #  tabla `Cantidad` es el objetivo y `CantidadTotal` lo ya producido — justo al
 #  revés que en `Ordenes_Bonos`, donde `CantidadTotal` es el objetivo.
 #
-#  Se toma solo `IdEstado = 0` (aún sin arrancar): los de estado 1 ya salen
-#  como barras reales de su propio fichaje.
+#  Entran los bonos SIN ARRANCAR (`IdEstado = 0`) y también los ARRANCADOS
+#  (`1`) que ahora mismo no tiene nadie fichando. Estos últimos son trabajo a
+#  medias: alguien los empezó, fichó la salida al acabar la jornada y quedaron
+#  parados. Sin ellos la planificación mentía — 6479/10 tiene 396 de 1080
+#  piezas por hacer en la INYECTORA DEU 5000 y la máquina figuraba libre —
+#  porque no eran cola (ya arrancados) ni barra (sin fichaje vivo).
+#
+#  Dos condiciones para que un arrancado entre:
+#
+#  · Que nadie lo esté fichando AHORA. Si lo tiene alguien abierto ya sale como
+#    barra real, y meterlo además en la cola lo pintaría dos veces. "Ahora" es
+#    el mismo criterio de siempre (`_HORAS_LINEA_VIVA`): una línea abierta hace
+#    más de un día es un fichaje que nadie cerró, no trabajo en marcha.
+#
+#  · Que se haya tocado en los últimos `_DIAS_BONO_ARRANCADO` días. El ERP no
+#    cierra los bonos que se abandonan: hay uno de mayo con una pieza
+#    pendiente, otro de junio y dos de julio. Sin corte, la cola arrastraría
+#    para siempre trabajo que nadie va a retomar.
 # ─────────────────────────────────────────────────────────────────────
+
+#  Cuántos días sin tocar un bono arrancado antes de darlo por abandonado.
+#  Con 10 entran 14 bonos y quedan fuera 7: cuatro de mayo a julio y tres de
+#  finales de agosto.
+_DIAS_BONO_ARRANCADO = 10
 
 _COLA_QUERY = """
 SELECT
@@ -798,12 +819,30 @@ SELECT
     TRY_CAST(v.PiezasFabricar AS decimal(18,4)) AS objetivo,
     v.Fabricadas                              AS fabricadas,
     ob.IdTrabajo                              AS idtrabajo,
-    obs.IdArticulo                            AS idarticulo_salida
+    ob.IdEstado                               AS idestado,
+    obs.IdArticulo                            AS idarticulo_salida,
+    fich.ultimo                               AS ultimo_fichaje,
+    fich.montajes                             AS montajes
 FROM persV_DatosAsociadoEmpleado v
     JOIN Ordenes_Bonos ob            ON ob.IdOrden  = v.idorden AND ob.IdBono  = v.IdBono
     JOIN Empleados_Datos ed          ON ed.IdEmpleado = v.IdEmpleado
     LEFT JOIN Ordenes_Bonos_Salidas obs ON obs.IdOrden = v.idorden AND obs.IdBono = v.IdBono
-WHERE ob.IdEstado = 0
+    OUTER APPLY (
+        SELECT MAX(l.Fecha) AS ultimo,
+               SUM(CASE WHEN l.IdOperacion IN (1, 2) THEN 1 ELSE 0 END) AS montajes
+        FROM Ordenes_Bonos_Lineas l
+        WHERE l.IdOrden = v.idorden AND l.IdBono = v.IdBono
+    ) fich
+WHERE (
+        ob.IdEstado = 0
+     OR (ob.IdEstado = 1 AND fich.ultimo >= DATEADD(day, :dias_arrancado, GETDATE()))
+    )
+  AND NOT EXISTS (
+        SELECT 1 FROM Ordenes_Bonos_Lineas viva
+        WHERE viva.IdOrden = v.idorden AND viva.IdBono = v.IdBono
+          AND viva.Hfinal IS NULL
+          AND viva.Hinicial >= DATEADD(hour, :horas_viva, GETDATE())
+    )
 """
 
 #  Un bono en cola sin tiempo estimado no se puede dimensionar. Se le da un
@@ -871,7 +910,7 @@ SELECT v.idorden, v.IdBono AS idbono, v.IdEmpleado AS idempleado, col.color
 FROM persV_DatosAsociadoEmpleado v
     JOIN Ordenes_Bonos ob ON ob.IdOrden = v.idorden AND ob.IdBono = v.IdBono
     OUTER APPLY dbo.persFTrazaordenesOperariosColor(v.idorden, v.IdBono, v.IdEmpleado) col
-WHERE ob.IdEstado = 0
+WHERE ob.IdEstado IN (0, 1)
 """
 
 
@@ -955,11 +994,13 @@ def _minutos_laborables_entre(inicio: datetime, fin: datetime) -> float:
 
 
 def _leer_cola() -> list[dict]:
-    """Los bonos asignados y aún sin empezar, deduplicados por (bono, operario).
+    """Los bonos asignados que están por hacer, deduplicados por (bono, operario).
 
-    La vista repite fila cuando un bono declara más de un artículo de salida,
-    igual que la consulta de líneas."""
-    filas = _erp(_COLA_QUERY, {})
+    Son los que nadie ha empezado y los que están a medias sin nadie fichando
+    (ver la cabecera de `_COLA_QUERY`). La vista repite fila cuando un bono
+    declara más de un artículo de salida, igual que la consulta de líneas."""
+    filas = _erp(_COLA_QUERY, {"dias_arrancado": -_DIAS_BONO_ARRANCADO,
+                               "horas_viva": -_HORAS_LINEA_VIVA})
     semaforo = _cargar_semaforo()
     cola, vistas = [], set()
     for r in filas:
@@ -984,6 +1025,13 @@ def _leer_cola() -> list[dict]:
             "idtrabajo":         r["idtrabajo"],
             "piezas_a_fabricar": float(r["objetivo"] or 0),
             "fabricadas":        float(r["fabricadas"] or 0),
+            # Trabajo a medias: el bono ya está arrancado en el ERP.
+            "arrancado":         r["idestado"] == 1,
+            "ultimo_fichaje":    r["ultimo_fichaje"],
+            # Si ya se fichó la preparación, la máquina está montada y ese
+            # tiempo no se vuelve a gastar. Son 23 de los 25 bonos arrancados,
+            # a 31 minutos de montaje por defecto cada uno.
+            "montado":           bool(r["montajes"]),
         })
     return cola
 
@@ -1079,19 +1127,31 @@ def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
         # detrás del trabajo disponible.
         semaforo = max((b["semaforo"] for b in filas), key=_PRIO_SEMAFORO.get)
         secuencias = [b["ordenar"] for b in filas if b["ordenar"] > 0]
-        tareas.append((filas, semaforo, min(secuencias) if secuencias else None))
-    tareas.sort(key=lambda t: (_PRIO_SEMAFORO[t[1]], t[2] is None,
-                              t[2] or 0, t[0][0]["idorden"], t[0][0]["idbono"],
+        # Bono arrancado y con piezas ya declaradas: hay material a medias y la
+        # máquina montada, así que se termina antes de empezar nada nuevo. Va
+        # por delante incluso de la secuencia manual, pero NUNCA por delante
+        # del semáforo: un bono en rojo no se puede continuar por mucho que
+        # tenga piezas hechas.
+        reanudado = filas[0]["arrancado"] and filas[0]["fabricadas"] > 0
+        tareas.append((filas, semaforo, min(secuencias) if secuencias else None,
+                       reanudado))
+    tareas.sort(key=lambda t: (_PRIO_SEMAFORO[t[1]], 0 if t[3] else 1,
+                              t[2] is None, t[2] or 0,
+                              t[0][0]["idorden"], t[0][0]["idbono"],
                               t[0][0]["matricula"]))
 
     ocupado = dict(ocupado_hasta)
     plan = []
-    for asignados, semaforo, secuencia in tareas:
+    for asignados, semaforo, secuencia, reanudado in tareas:
         b = asignados[0]
         min_pieza, setup, origen = _estimar(b, teoricos, medias)
         pendientes = max(0.0, b["piezas_a_fabricar"] - b["fabricadas"])
         if pendientes <= 0:
             continue
+        # La preparación ya fichada no se paga dos veces: la máquina sigue
+        # montada desde que se dejó el bono a medias.
+        if b["montado"]:
+            setup = 0.0
         sin_tiempo = not min_pieza or min_pieza <= 0
         dur = _MIN_BLOQUE_SIN_TIEMPO if sin_tiempo else setup + pendientes * min_pieza
 
@@ -1142,6 +1202,7 @@ def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
         plan.append({
             "bono": b, "asignados": asignados, "semaforo": semaforo,
             "secuencia": secuencia, "start": inicio, "end": fin,
+            "arrancado": b["arrancado"], "reanudado": reanudado,
             "huecos": huecos,
             "pendientes": pendientes, "sin_tiempo": sin_tiempo,
             "min_pieza": min_pieza, "origen": origen, "duracion": dur_reloj,
@@ -1212,9 +1273,17 @@ def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 # 6708/10 esta rojo en el ERP para Jose Manuel y salia ambar
                 # "sin datos fiables" solo porque su ritmo viene de la media de
                 # la maquina. Sobre verde manda el aviso de estimacion: ahi lo
-                # que hay que decir es que el dato no es de fiar.
+                # que hay que decir es que el dato no es de fiar. Y un bono a
+                # medias no es trabajo "disponible": es fabricacion pendiente,
+                # la misma etiqueta que ya usa el bono que se quedo montando.
                 "estado": ("parada" if semaforo == "bloqueada" else
-                           "sin-estimar" if sin_ritmo else "disponible"),
+                           "sin-estimar" if sin_ritmo else
+                           "continuacion" if tarea["arrancado"] else "disponible"),
+                # Trabajo a medias que se retoma, y cuando se toco por ultima
+                # vez: sin esto el tooltip no explica por que hay 396 piezas
+                # pendientes de un bono de 1080 que nadie ha empezado hoy.
+                "reanudado": tarea["arrancado"],
+                "ultimo_fichaje": b["ultimo_fichaje"],
                 "fin_indeterminado": sin_ritmo,
                 "semaforo": semaforo,
                 "semaforo_asignacion": asignado["semaforo"],

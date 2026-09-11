@@ -621,6 +621,13 @@ const App = (() => {
       if (it.a_la_vez > 1) rows.push(`<div class="tip__row">Cuadrilla <span>${it.a_la_vez} operarios a la vez · ${fmtMin(it.min_hombre)} de trabajo</span></div>`);
       rows.push(`<div class="tip__row">Segun <span>${fuente}</span></div>`);
     }
+    // Trabajo a medias: sin esto no se entiende que un bono de 1080 piezas
+    // solo tenga 396 por hacer sin que nadie lo haya empezado hoy.
+    if (it.reanudado) {
+      rows.push(`<div class="tip__row">A medias <span>${
+        it.ultimo_fichaje ? 'ultimo fichaje ' + fmtDate(it.ultimo_fichaje) : 'sin fichaje abierto'
+      }</span></div>`);
+    }
     rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}</span></div>`);
     // Sin estimacion fiable o pasado de presupuesto, `end` es donde quedo la
     // barra al no poder proyectar -- casi siempre "ahora"-- y darlo como hora

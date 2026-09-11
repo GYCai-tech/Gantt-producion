@@ -8,7 +8,8 @@ HASTA = datetime(2026, 9, 11, 15)
 MEDIAS = {'articulo': {}, 'trabajo': {}, 'maquina': {}}
 
 
-def bono(orden=1, empleado=1, maquina='M1', cantidad=100, semaforo='disponible', secuencia=1):
+def bono(orden=1, empleado=1, maquina='M1', cantidad=100, semaforo='disponible',
+         secuencia=1, arrancado=False, hechas=0, montado=False):
     return {
         'idorden': orden, 'idbono': 10, 'idempleado': empleado,
         'empleado': f'Operario {empleado}', 'matricula': maquina,
@@ -18,8 +19,12 @@ def bono(orden=1, empleado=1, maquina='M1', cantidad=100, semaforo='disponible',
         # (0 de 212 filas en PersVTrazaordenesOperarios), asi que el fixture
         # tampoco: si el item la pierde, es un fallo que hay que ver.
         'area': 'CHAPA',
-        'piezas_a_fabricar': cantidad, 'fabricadas': 0,
+        'piezas_a_fabricar': cantidad, 'fabricadas': hechas,
         'ordenar': secuencia, 'semaforo': semaforo,
+        # Trabajo a medias: el bono ya esta arrancado en el ERP y nadie lo
+        # ficha ahora mismo. `montado` dice si ya se ficho la preparacion.
+        'arrancado': arrancado, 'montado': montado,
+        'ultimo_fichaje': datetime(2026, 9, 7, 9) if arrancado else None,
     }
 
 
@@ -355,3 +360,55 @@ def test_un_solo_montador_no_cambia_nada():
     api._proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, avance)
 
     assert item['_pendiente']['minutos'] == 300
+
+
+# ── Trabajo a medias ──────────────────────────────────────────────────
+# Un bono arrancado que nadie ficha ahora mismo no era cola (ya arrancado) ni
+# barra (sin fichaje vivo) y desaparecia del plan: 6479/10 tenia 396 de 1080
+# piezas por hacer en la INYECTORA DEU 5000 y la maquina figuraba libre.
+
+
+def test_un_bono_a_medias_se_planifica_por_lo_que_le_falta():
+    b = bono(cantidad=1080, arrancado=True, hechas=684, montado=True)
+    tarea = plan([b])[0]
+    assert tarea['pendientes'] == 396
+    # 396 piezas a 1 min/pieza y sin volver a cobrar la preparacion.
+    assert tarea['duracion'] == 396
+
+
+def test_la_preparacion_ya_fichada_no_se_cobra_dos_veces():
+    montado = plan([bono(cantidad=100, arrancado=True, hechas=40, montado=True)])[0]
+    sin_montar = plan([bono(cantidad=100, arrancado=True, hechas=40)])[0]
+    # El fixture declara 1 minuto de preparacion en el teorico.
+    assert sin_montar['duracion'] - montado['duracion'] == 1
+
+
+def test_el_trabajo_a_medias_va_antes_que_la_secuencia_manual():
+    a_medias = bono(orden=2, secuencia=99, arrancado=True, hechas=10)
+    tareas = plan([bono(orden=1, secuencia=1), a_medias])
+    assert [t['bono']['idorden'] for t in tareas] == [2, 1]
+
+
+def test_un_bono_arrancado_sin_piezas_no_adelanta_a_nadie():
+    """La prioridad es de las piezas ya fichadas, no de haberlo abierto."""
+    tareas = plan([bono(orden=1, secuencia=1),
+                   bono(orden=2, secuencia=99, arrancado=True)])
+    assert [t['bono']['idorden'] for t in tareas] == [1, 2]
+
+
+def test_el_semaforo_manda_sobre_el_trabajo_a_medias():
+    """Un bono en rojo no se continua por mucho que tenga piezas hechas."""
+    tareas = plan([bono(orden=1, secuencia=9),
+                   bono(orden=2, secuencia=1, semaforo='bloqueada',
+                        arrancado=True, hechas=10)])
+    assert [t['bono']['idorden'] for t in tareas] == [1, 2]
+
+
+def test_el_bono_a_medias_se_pinta_como_fabricacion_pendiente(monkeypatch):
+    cola = [bono(cantidad=100, arrancado=True, hechas=40, montado=True)]
+    monkeypatch.setattr(api, '_leer_cola', lambda: cola)
+    teoricos = {(1, 10): (1, 1)}
+    items = api._encolar('empleado', {}, HASTA, AHORA, teoricos, MEDIAS)
+    assert items[0]['estado'] == 'continuacion'
+    assert items[0]['reanudado'] is True
+    assert items[0]['piezas_pendientes'] == 60
