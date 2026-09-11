@@ -639,6 +639,23 @@ def _avance_por_bono(lineas: list[dict], ahora: datetime) -> dict:
     }
 
 
+@router.get("/avisos")
+def get_avisos(vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
+    """Avisos de FILA: los que no son de un bono sino del recurso entero.
+
+    Va aparte de `/items` a propósito, porque no depende de la ventana visible.
+    La fila de un operario que no puede empezar nada tiene que salir marcada
+    también en un día en el que no se le haya colocado ninguna barra: Juan
+    Carlos tiene un solo bono, bloqueado, y le cae el lunes porque los 18 de
+    José Manuel ocupan antes la misma máquina de ensamblaje. Colgado de las
+    barras, el aviso desaparecía justo en el día en que más falta hace.
+
+    Una máquina no "se queda sin poder trabajar" —el semáforo es de la
+    persona—, así que en la vista de máquinas no hay nada que avisar.
+    """
+    return {"sin_salida": _sin_salida(_leer_cola()) if vista == "empleado" else {}}
+
+
 @router.get("/items")
 def get_items(
     vista: str = Query("empleado", pattern="^(maquina|empleado)$"),
@@ -1134,6 +1151,27 @@ def _planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
             "min_hombre": dur, "a_la_vez": len(asignados) if cuadrilla else 1,
         })
     return plan
+
+
+def _sin_salida(cola: list[dict]) -> dict[str, int]:
+    """{idempleado: nº de bonos} de quien tiene TODA su cola en rojo.
+
+    No es "va justo de trabajo": es que no puede empezar ninguno de los bonos
+    que tiene asignados, que es lo que el programa de producción del ERP
+    muestra como una pantalla entera en rojo. Hace falta decirlo aparte porque
+    bono a bono ya se veía —cada barra sale como "Bloqueada"— y lo que no se
+    veía era que no quedara ni uno verde.
+
+    Se mide sobre la cola COMPLETA, no sobre los bonos que caben en la ventana
+    visible: el aviso es del operario y no debe encenderse o apagarse al
+    cambiar de zoom. Medido hoy: 3 de los 19 operarios con cola, uno con 18
+    bonos y dos con uno solo.
+    """
+    por_empleado: dict[str, list[str]] = {}
+    for b in cola:
+        por_empleado.setdefault(str(b["idempleado"]), []).append(b["semaforo"])
+    return {rid: len(s) for rid, s in por_empleado.items()
+            if all(x == "bloqueada" for x in s)}
 
 
 def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,

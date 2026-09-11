@@ -92,6 +92,10 @@ const App = (() => {
   const itemMap = new Map();
   let areaActive = 'todos', cargaFilter = 'con', selectedId = null, searchTerm = '';
   let soloSinTiempo = false;   // lo enciende el contador de aviso de la cabecera
+  // {idempleado: nº de bonos} de quien tiene TODA su cola bloqueada en el
+  // programa de produccion. Viene de /api/avisos, no de las barras: el aviso
+  // es del operario y no debe depender de lo que quepa en la ventana.
+  let sinSalida = {};
 
   // ── Utilidades de fecha ────────────────────────────────────────────
   const DAY = 86400000;
@@ -233,7 +237,14 @@ const App = (() => {
   async function loadItems() {
     buildDays();
     const url = `/api/items?vista=${vista}&desde=${days[0].toISOString()}&hasta=${winEnd.toISOString()}`;
-    items = await (await fetch(url)).json();
+    // Si el aviso falla, el Gantt se pinta igual: es informacion de mas, no la
+    // pantalla.
+    const [its, avisos] = await Promise.all([
+      fetch(url).then(r => r.json()),
+      fetch(`/api/avisos?vista=${vista}`).then(r => r.json()).catch(() => ({})),
+    ]);
+    items = its;
+    sinSalida = avisos.sin_salida || {};
     itemMap.clear();
     items.forEach(i => itemMap.set(String(i.id), i));
     // Las áreas salen de las barras, así que se recalculan con cada carga.
@@ -385,7 +396,15 @@ const App = (() => {
     if (cargaFilter !== 'todos') {
       lista = grupos.filter(g => {
         const barras = byRes.get(String(g.id)) || [];
-        const has = ventanaIncluyeHoy ? barras.some(i => i.en_curso) : barras.length > 0;
+        // Quien lo tiene todo bloqueado cuenta como "con carga" aunque no
+        // tenga ningun fichaje abierto ni barra ese dia: es precisamente a
+        // quien hay que ver, y el filtro por defecto lo escondia. Solo sin
+        // filtro de area: su bono puede ser de otra seccion y entonces la fila
+        // no pertenece a la que se esta mirando.
+        const atascado = areaActive === 'todos' && !!sinSalida[String(g.id)];
+        const has = ventanaIncluyeHoy
+          ? (barras.some(i => i.en_curso) || atascado)
+          : barras.length > 0;
         return cargaFilter === 'con' ? has : !has;
       });
     }
@@ -438,13 +457,28 @@ const App = (() => {
       const lanes = Math.max(1, laneEnd.length);
       const rowH = ROW_PAD * 2 + lanes * BAR_H + (lanes - 1) * LANE_GAP;
 
+      // Todos los bonos de este operario en rojo en el programa de produccion:
+      // no es que vaya justo, es que no puede empezar ninguno. El numero sale
+      // de la cola entera, no de las barras que se ven.
+      const atascado = sinSalida[String(grp.id)] || 0;
+
       const row = document.createElement('div');
-      row.className = 'row'; row.style.height = rowH + 'px';
+      row.className = 'row' + (atascado ? ' is-sin-salida' : '');
+      row.style.height = rowH + 'px';
 
       const label = document.createElement('div');
       label.className = 'row__label';
+      if (atascado) {
+        label.title = (atascado === 1
+          ? 'El único bono que tiene asignado está bloqueado'
+          : `Sus ${atascado} bonos asignados están bloqueados`)
+          + ' en el programa de producción: ahora mismo no puede empezar nada.';
+      }
       label.innerHTML = `<div class="row__name">${esc(grp.nombre)}</div>` +
-                        `<div class="row__sub">${esc(grp.sub || '')}${lanes > 1 ? ` · ${lanes} paralelos` : ''}</div>`;
+                        `<div class="row__sub">${esc(grp.sub || '')}${lanes > 1 ? ` · ${lanes} paralelos` : ''}</div>` +
+                        (atascado
+                          ? `<div class="row__aviso">Todo bloqueado · ${atascado} bono${atascado > 1 ? 's' : ''}</div>`
+                          : '');
 
       const track = document.createElement('div');
       track.className = 'row__track'; track.style.width = W + 'px';

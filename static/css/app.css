@@ -318,6 +318,21 @@ button { font-family: inherit; }
 .row__track { position: relative; height: 100%; border-bottom: 1px solid var(--line-2); flex-shrink: 0; transition: background .12s; }
 .row__track.is-drop-target { background: rgba(47,111,235,.08) !important; box-shadow: inset 0 0 0 2px var(--accent); }
 
+/* Operario con TODA su cola en rojo en el programa de produccion: no puede
+   empezar nada de lo que tiene asignado. Se tinta la fila entera —rail y
+   pista— porque el aviso es de la persona, no de un bono suyo. */
+.row.is-sin-salida .row__label {
+  background: var(--rojo-bg); box-shadow: inset 3px 0 0 var(--rojo);
+}
+.row.is-sin-salida:hover .row__label { background: #f8dfe1; }
+.row.is-sin-salida .row__name { color: #8f2129; }
+.row.is-sin-salida .row__track,
+.row.is-sin-salida:hover .row__track { background: rgba(216,59,70,.05); }
+.row__aviso {
+  font-size: 11px; font-weight: 700; color: var(--rojo);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* Escala del eje. El porcentaje va DENTRO del control y con ancho fijo para
    que los botones no bailen al pasar de 100% a 337%. */
 .zoom--escala { align-items: center; }
