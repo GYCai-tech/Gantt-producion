@@ -518,8 +518,12 @@ const App = (() => {
                       ? `<span class="bar__setup" title="${it.es_montaje ? 'Montaje de utillaje: preparando la máquina, no fabricando' : 'Incluye ' + it.min_montaje + ' min de montaje de utillaje'}">⚙</span>` : '') +
                     `<span class="bar__id">${esc(it.idorden)}<span class="bar__bono">${esc(bonoLabel)}</span></span>` +
                     (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '') +
-                    (it.min_exceso && w > 150
-                      ? `<span class="bar__exceso-num">+${esc(fmtMin(it.min_exceso))}</span>` : '');
+                    // El numero de la barra es el exceso DE ESTA SESION, no el
+                    // del bono: el del bono puede venir de otro dia y de otra
+                    // persona, y escrito aqui no cuadra con nada de lo que se
+                    // ve. El acumulado va en el tooltip.
+                    (it.min_exceso_barra && w > 150
+                      ? `<span class="bar__exceso-num">+${esc(fmtMin(it.min_exceso_barra))}</span>` : '');
     if (it.tipo === 'real' && it.fin_estimado != null) {
       const p = document.createElement('div');
       p.className = 'bar__prog';
@@ -547,7 +551,7 @@ const App = (() => {
     // Se exige `min_exceso` y no solo que `fin_teorico` caiga dentro: como el
     // fin de una barra abierta es "ahora", el corte teorico queda unos segundos
     // por detras y pintaba una astilla roja en bonos que no se han pasado.
-    if (it.fin_teorico && it.min_exceso) {
+    if (it.fin_teorico && it.min_exceso_barra) {
       const xTeorico = workX(new Date(it.fin_teorico));
       // El exceso llega hasta AHORA, no hasta el final de la barra: en una
       // barra abierta el final es el fin PROYECTADO, y pintar de rojo trabajo
@@ -589,7 +593,14 @@ const App = (() => {
     // pide el tramo rojo de la barra.
     if (it.min_exceso) {
       rows.push(`<div class="tip__row">Teórico <span>${fmtMin(it.min_estimados)}</span></div>`);
-      rows.push(`<div class="tip__row">Real <span style="color:#ff9a9a">${fmtMin(it.min_consumidos)} · ${fmtMin(it.min_exceso)} de más</span></div>`);
+      // "Del bono" y no a secas: estos minutos son de todas sus sesiones, y
+      // pueden ser de otro dia y de otra persona. El "+" de la barra es solo
+      // el de esta sesion, y sin decirlo los dos numeros se leen como uno mal
+      // calculado (6447/180: +23 min en la barra, 4 h 54 el bono).
+      rows.push(`<div class="tip__row">Real <span style="color:#ff9a9a">${fmtMin(it.min_consumidos)} · ${fmtMin(it.min_exceso)} de más en el bono</span></div>`);
+      if (it.min_exceso_barra && it.min_exceso_barra < it.min_exceso) {
+        rows.push(`<div class="tip__row">De esta sesión <span>${fmtMin(it.min_exceso_barra)} de más</span></div>`);
+      }
     }
     if (it.tipo === 'real') {
       if (it.progreso_piezas != null) rows.push(`<div class="tip__row">Progreso <span>${it.progreso_piezas}% de las piezas</span></div>`);

@@ -1649,6 +1649,15 @@ def _proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias, avanc
                                else _sumar_laborables(item["start"], resto))
         if consumido > item["min_estimados"]:
             item["min_exceso"] = round(consumido - item["min_estimados"])
+            # Y cuánto de ese exceso ha ocurrido DENTRO de esta barra. Hacen
+            # falta los dos: `min_exceso` es del bono entero y puede venir de
+            # sesiones de otro día y de otra persona, así que escrito encima de
+            # una barra no cuadra nunca. En 6447/180 el bono lleva 294 minutos
+            # de más, pero 385 de los 407 consumidos se gastaron el 31 de
+            # agosto y los hizo otro operario: la barra de hoy mide 23 minutos
+            # y anunciaba "+4 h 54". El número de la barra es este; el del bono
+            # se queda en el tooltip, que tiene sitio para explicarlo.
+            item["min_exceso_barra"] = round(max(0.0, minutos_barra - max(0.0, resto)))
 
     if objetivo > 0 and hechas >= objetivo:
         # Fabricadas todas las piezas y el fichaje sigue abierto. Y mientras
