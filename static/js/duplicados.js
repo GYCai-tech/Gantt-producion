@@ -51,7 +51,15 @@ const Dup = (() => {
     { f: null,        tit: 'Cantidad', cls: 'num' },
   ];
 
-  let datos = null, filtro = 'todos', busqueda = '';
+  let datos = null, filtro = 'todos', busqueda = '', busquedaBono = '';
+
+  // "6372/30", "6372·30", "6372-30" o "6372 30" son la misma orden y bono: se
+  // escribe como sale en la tabla o como lo diga cada uno. Se compara con la
+  // forma normalizada Y con lo tecleado tal cual, porque un lote como
+  // LOT015312-01 tambien lleva un guion entre cifras y no debe dejar de salir.
+  const aBono = t => t.replace(/(\d)\s*[·.\-\/ ]\s*(\d)/g, '$1/$2');
+  const coincide = g => !busqueda
+    || g.texto.includes(busqueda) || g.texto.includes(busquedaBono);
   const sel = { operacion: new Set(), maquina: new Set(), area: new Set(), estado: new Set() };
   let abierto = null, opsVista = [];
 
@@ -62,7 +70,7 @@ const Dup = (() => {
   // contrario de lo que se viene a ver: al duplicado hay que verle la pareja.
   function pasa(g) {
     if (!FILTROS[filtro].ok(g)) return false;
-    if (busqueda && !g.texto.includes(busqueda)) return false;
+    if (!coincide(g)) return false;
     return Object.keys(COLS).every(c =>
       !sel[c].size || g.bonos.some(b => sel[c].has(COLS[c].val(b))));
   }
@@ -76,7 +84,7 @@ const Dup = (() => {
   function opciones(c) {
     const otros = datos.grupos.filter(g => {
       if (!FILTROS[filtro].ok(g)) return false;
-      if (busqueda && !g.texto.includes(busqueda)) return false;
+      if (!coincide(g)) return false;
       return Object.keys(COLS).every(x =>
         x === c || !sel[x].size || g.bonos.some(b => sel[x].has(COLS[x].val(b))));
     });
@@ -214,7 +222,8 @@ const Dup = (() => {
     // fila, que es lo que uno espera al escribir en la caja de arriba.
     d.grupos.forEach(g => {
       g.texto = [g.articulo, g.descrip, ...g.bonos.flatMap(b => [
-        b.idorden, b.idbono, b.descrip, b.maquina, b.matricula, b.area, b.lote,
+        b.idorden, b.idbono, `${b.idorden}/${b.idbono}`,
+        b.descrip, b.maquina, b.matricula, b.area, b.lote,
       ])].join(' ').toLowerCase();
     });
     cerrar();
@@ -277,7 +286,11 @@ const Dup = (() => {
     if (abierto && !e.target.closest?.('.fpop')) cerrar();
   }, true);
 
-  function setBusqueda(t) { busqueda = t.trim().toLowerCase(); refrescar(); }
+  function setBusqueda(t) {
+    busqueda = t.trim().toLowerCase();
+    busquedaBono = aBono(busqueda);
+    refrescar();
+  }
 
   document.addEventListener('DOMContentLoaded', cargar);
   return { cargar, setBusqueda };
