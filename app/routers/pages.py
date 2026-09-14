@@ -56,3 +56,11 @@ def ordenes_no_asignadas(request: Request):
         request, "ordenes.html",
         {"current_page": "ordenes", "static_v": _static_v()},
     )
+
+
+@router.get("/bonos-duplicados", response_class=HTMLResponse)
+def bonos_duplicados(request: Request):
+    return templates.TemplateResponse(
+        request, "duplicados.html",
+        {"current_page": "duplicados", "static_v": _static_v()},
+    )

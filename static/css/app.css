@@ -802,6 +802,30 @@ tbody .plan__pers span {
 .ord__q b { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .ord__q i { display: block; height: 4px; border-radius: 2px; background: #c9d6ea; min-width: 2px; }
 
+/* ============================================================
+   BONOS DUPLICADOS
+   Reaprovecha la tabla de ordenes no asignadas; solo añade la
+   cabecera sin filtro, la pastilla de estado y la marca de los
+   bonos que ya llevan trabajo hecho.
+   ============================================================ */
+.dup__th {
+  display: inline-block; padding: 10px 12px;
+  font-size: 12px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--ink-3); white-space: nowrap;
+}
+.ord__tabla thead th.num .dup__th { float: right; }
+.dup__estado {
+  display: inline-block; padding: 2px 9px; border-radius: 99px;
+  font-size: 13px; font-weight: 600; white-space: nowrap;
+}
+.dup__estado.is-espera    { background: var(--accent-2); color: var(--accent); }
+.dup__estado.is-activado  { background: var(--verde-bg); color: var(--verde); }
+.dup__estado.is-bloqueado { background: var(--rojo-bg);  color: var(--rojo); }
+/* Un bono con fichajes ya ha costado trabajo: anular ESE duplicado no sale
+   gratis, y conviene que se vea sin abrir nada. */
+.dup__chip-hecho { background: var(--ambar-bg); color: var(--ambar); }
+.dup__bono td { vertical-align: middle; }
+
 /* --- El menu de filtro de una columna --- */
 .fpop {
   position: fixed; z-index: 60; width: 268px;

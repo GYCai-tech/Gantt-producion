@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}GYC · Bonos duplicados{% endblock %}
+
+{% block navbar_extra %}
+<div class="search-gantt-wrap">
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+  <input id="dup-buscar" type="search" placeholder="Artículo, orden o máquina…" oninput="Dup.setBusqueda(this.value)">
+</div>
+<button class="btn-refresh" onclick="Dup.cargar()" title="Volver a leer el ERP">
+  <svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+  <span id="refresh-label">Actualizar</span>
+</button>
+<span class="topbar__clock plan-clock" id="generado"></span>
+{% endblock %}
+
+{% block body %}
+<div class="app">
+  <main class="panel plan">
+
+    <header class="plan__intro">
+      <h1>Bonos duplicados</h1>
+      <p>
+        Artículos que <b>más de un bono vivo</b> está fabricando a la vez. Se miran los
+        bonos en espera, activados y bloqueados; los anulados y los terminados quedan
+        fuera porque ya no compiten por nada. El caso típico es una orden vieja que se
+        quedó a medias y otra nueva lanzada para lo mismo, por eso cada bono viene con la
+        fecha y el lote de su orden.
+      </p>
+    </header>
+
+    <div id="dup-cargando" class="plan__estado">Leyendo el ERP…</div>
+    <div id="dup-error" class="plan__estado plan__estado--error" hidden></div>
+
+    <div id="dup-cuerpo" hidden>
+      <div class="ord__stats" id="dup-stats"></div>
+
+      <div class="ord__barra">
+        <div class="segmented" id="dup-filtros"></div>
+        <div class="ord__chips" id="dup-chips"></div>
+        <span class="ord__cuenta" id="dup-resumen"></span>
+      </div>
+
+      <div class="plan__wrap ord__wrap">
+        <table class="plan__tabla ord__tabla" id="dup-tabla"></table>
+      </div>
+      <p class="plan__vacio" id="dup-sin-resultados" hidden>Sin resultados para ese filtro.</p>
+    </div>
+
+  </main>
+</div>
+
+<!-- El menu de filtro de la columna que este abierta. Va fuera de la tabla:
+     dentro se lo recortaria el scroll de la rejilla. -->
+<div class="fpop" id="dup-pop" hidden></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/duplicados.js?v={{ static_v }}"></script>
+{% endblock %}
