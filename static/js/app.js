@@ -415,6 +415,9 @@ const App = (() => {
         if (String(grp.id).toLowerCase().includes(t)) return true;
         return (byRes.get(String(grp.id)) || []).some(it =>
           String(it.idorden).includes(t) ||
+          // El CODIGO del articulo, no solo su descripcion: en planta se pide
+          // "el 11703101", que es lo que lleva el plano, no "contorno tolva".
+          (it.art_id || '').toLowerCase().includes(t) ||
           (it.art || '').toLowerCase().includes(t) ||
           (it.operacion || '').toLowerCase().includes(t)
         );
