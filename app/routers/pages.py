@@ -64,3 +64,11 @@ def bonos_duplicados(request: Request):
         request, "duplicados.html",
         {"current_page": "duplicados", "static_v": _static_v()},
     )
+
+
+@router.get("/bonos", response_class=HTMLResponse)
+def bonos(request: Request):
+    return templates.TemplateResponse(
+        request, "bonos.html",
+        {"current_page": "bonos", "static_v": _static_v()},
+    )
