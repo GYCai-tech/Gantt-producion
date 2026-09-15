@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import api, duplicados, ordenes, pages, plan
+from app.routers import api, duplicados, necesidades, ordenes, pages, plan
 
 
 class _Encoder(json.JSONEncoder):
@@ -39,3 +39,4 @@ app.include_router(api.router)
 app.include_router(plan.router)
 app.include_router(ordenes.router)
 app.include_router(duplicados.router)
+app.include_router(necesidades.router)
