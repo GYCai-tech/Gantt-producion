@@ -1,16 +1,20 @@
-"""Bonos vivos cuyo artículo tiene el stock libre en negativo.
+"""Bonos vivos de órdenes cuyo artículo tiene el stock libre en negativo.
 
 Es una consulta de Access pasada a SQL Server tal cual. Coge los bonos vivos
 —en espera, activados o bloqueados— y se queda con los de órdenes cuyo
 artículo tiene en el almacén Principal menos stock que reserva.
 
-Dos cosas de la consulta original que se han mantenido a propósito:
+Cada fila junta dos artículos, y conviene no confundirlos:
 
-- El stock es el del artículo de la ORDEN (`Ordenes.IdArticulo`), no el del
-  bono. Todos los bonos de una orden salen con el mismo número aunque cada uno
-  fabrique una pieza distinta.
-- Se resta `StockReservado`, que es la reserva de producción. Lo que se ve es
-  el stock libre, no el físico.
+- El del BONO (`Ordenes_Bonos_Salidas.IdArticulo`): lo que fabrica ese bono,
+  que puede ser una pieza intermedia de Producción, como una varilla cortada.
+- El de la ORDEN (`Ordenes.IdArticulo`): el producto final. Su stock es el
+  que se filtra y se enseña, y por eso todos los bonos de una orden salen con
+  el mismo número. El -20 de la varilla 60007034 es el del frente de jaulón
+  que fabrica su orden, no el de la varilla.
+
+Se resta `StockReservado`, la reserva, y en la última columna también
+`Articulos_Stock.StockMinimo`: cuánto falta para volver al mínimo.
 """
 from datetime import datetime
 
@@ -36,18 +40,23 @@ SELECT ob.IdOrden     AS idorden,
        ob.IdEstado    AS idestado,
        obs.IdArticulo AS idarticulo,
        a.Descrip      AS descrip,
-       ISNULL(s.Stock, 0) - ISNULL(s.StockReservado, 0) AS stock
+       s.IdAlmacen    AS idalmacen,
+       ISNULL(s.Stock, 0) - ISNULL(s.StockReservado, 0) AS stock,
+       ao.Descrip     AS descrip_orden,
+       ISNULL(s.Stock, 0) - ISNULL(s.StockReservado, 0) - ISNULL(s.StockMinimo, 0) AS stock_sobre_minimo
 FROM Ordenes o
     INNER JOIN Ordenes_Bonos ob          ON ob.IdOrden = o.IdOrden
     INNER JOIN Ordenes_Bonos_Salidas obs ON obs.IdOrden = ob.IdOrden
                                         AND obs.IdBono  = ob.IdBono
     INNER JOIN Articulos a               ON a.IdArticulo = obs.IdArticulo
     INNER JOIN Articulos_Stock s         ON s.IdArticulo = o.IdArticulo
+    INNER JOIN Articulos ao              ON ao.IdArticulo = s.IdArticulo
 WHERE ob.IdEstado IN (:espera, :activado, :bloqueado)
   AND s.IdAlmacen = :almacen
   AND ISNULL(s.Stock, 0) - ISNULL(s.StockReservado, 0) < 0
 GROUP BY ob.IdOrden, ob.IdBono, obs.IdArticulo, a.Descrip, ob.IdEstado, s.IdAlmacen,
-         ISNULL(s.Stock, 0) - ISNULL(s.StockReservado, 0)
+         ISNULL(s.Stock, 0) - ISNULL(s.StockReservado, 0), ao.Descrip,
+         ISNULL(s.Stock, 0) - ISNULL(s.StockReservado, 0) - ISNULL(s.StockMinimo, 0)
 ORDER BY a.Descrip
 """
 
@@ -59,13 +68,16 @@ def get_bonos():
     params = dict(zip(("espera", "activado", "bloqueado"), _ESTADOS_VIVOS))
     params["almacen"] = _ALMACEN_PRINCIPAL
     bonos = [{
-        "idorden":      r["idorden"],
-        "idbono":       r["idbono"],
-        "estado":       r["idestado"],
-        "estado_label": _ESTADO_NOMBRE.get(r["idestado"], str(r["idestado"])),
-        "idarticulo":   (r["idarticulo"] or "").strip(),
-        "descrip":      (r["descrip"] or "").strip(),
-        "stock":        float(r["stock"] or 0),
+        "idorden":            r["idorden"],
+        "idbono":             r["idbono"],
+        "estado":             r["idestado"],
+        "estado_label":       _ESTADO_NOMBRE.get(r["idestado"], str(r["idestado"])),
+        "idarticulo":         (r["idarticulo"] or "").strip(),
+        "descrip":            (r["descrip"] or "").strip(),
+        "idalmacen":          r["idalmacen"],
+        "stock":              float(r["stock"] or 0),
+        "descrip_orden":      (r["descrip_orden"] or "").strip(),
+        "stock_sobre_minimo": float(r["stock_sobre_minimo"] or 0),
     } for r in _erp(_SQL, params)]
 
     return {

@@ -4,10 +4,11 @@ from decimal import Decimal
 from app.routers import bonos
 
 
-def fila(orden=6669, bono=30, articulo='12208006 ', descrip='BANDEJA HORIZONTAL ', stock=Decimal('-3'),
-         estado=3):
+def fila(orden=6687, bono=10, articulo='60007034 ', descrip='VARILLA CORTADA ', stock=Decimal('-20'),
+         estado=0, descrip_orden='FRENTE JAULON ', sobre_minimo=Decimal('-25')):
     return {'idorden': orden, 'idbono': bono, 'idestado': estado, 'idarticulo': articulo,
-            'descrip': descrip, 'stock': stock}
+            'descrip': descrip, 'idalmacen': 0, 'stock': stock, 'descrip_orden': descrip_orden,
+            'stock_sobre_minimo': sobre_minimo}
 
 
 def erp(monkeypatch, filas):
@@ -18,8 +19,9 @@ def test_una_fila_por_bono_con_textos_limpios(monkeypatch):
     erp(monkeypatch, [fila()])
     b = bonos.get_bonos()['bonos'][0]
 
-    assert b == {'idorden': 6669, 'idbono': 30, 'estado': 3, 'estado_label': 'Bloqueado',
-                 'idarticulo': '12208006', 'descrip': 'BANDEJA HORIZONTAL', 'stock': -3.0}
+    assert b == {'idorden': 6687, 'idbono': 10, 'estado': 0, 'estado_label': 'En espera',
+                 'idarticulo': '60007034', 'descrip': 'VARILLA CORTADA', 'idalmacen': 0,
+                 'stock': -20.0, 'descrip_orden': 'FRENTE JAULON', 'stock_sobre_minimo': -25.0}
 
 
 def test_totales_cuentan_distintos(monkeypatch):
@@ -52,10 +54,24 @@ def test_consulta_estados_vivos_almacen_principal_y_stock_negativo(monkeypatch):
     assert 'ob.IdEstado    AS idestado' in capturado['q']
     assert 's.IdAlmacen = :almacen' in capturado['q']
     assert 'ISNULL(s.Stock, 0) - ISNULL(s.StockReservado, 0) < 0' in capturado['q']
-    # Como en la consulta de Access: el stock es el del artículo de la orden.
+    # Como en la consulta de Access: el stock, y su descripción, son los del
+    # artículo de la orden, no los del bono.
     assert 's.IdArticulo = o.IdArticulo' in capturado['q']
+    assert 'ao.IdArticulo = s.IdArticulo' in capturado['q']
 
 
-def test_stock_nulo_cuenta_como_cero(monkeypatch):
-    erp(monkeypatch, [fila(stock=None)])
-    assert bonos.get_bonos()['bonos'][0]['stock'] == 0.0
+def test_el_minimo_sale_del_stock_del_almacen(monkeypatch):
+    """`StockMinimo` solo existe en Articulos_Stock: es el mínimo de ese almacén."""
+    capturado = {}
+    monkeypatch.setattr(bonos, '_erp', lambda q, p: capturado.update(q=q) or [])
+    bonos.get_bonos()
+
+    assert ('ISNULL(s.Stock, 0) - ISNULL(s.StockReservado, 0) - ISNULL(s.StockMinimo, 0)'
+            ' AS stock_sobre_minimo') in capturado['q']
+
+
+def test_stocks_nulos_cuentan_como_cero(monkeypatch):
+    erp(monkeypatch, [fila(stock=None, sobre_minimo=None)])
+    b = bonos.get_bonos()['bonos'][0]
+    assert b['stock'] == 0.0
+    assert b['stock_sobre_minimo'] == 0.0

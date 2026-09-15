@@ -1,8 +1,9 @@
 /* ============================================================
    GYC · Bonos
-   Bonos vivos cuyo articulo de orden tiene el stock libre en
+   Bonos vivos de ordenes cuyo articulo tiene el stock libre en
    negativo en el almacen Principal. Una fila por bono, en el
-   orden que trae el ERP (por descripcion).
+   orden que trae el ERP (por descripcion). El stock es el del
+   articulo de la ORDEN, no el de lo que fabrica el bono.
    ============================================================ */
 const Bonos = (() => {
   'use strict';
@@ -56,19 +57,31 @@ const Bonos = (() => {
   }
 
   function tabla(vis) {
+    // Las columnas de la consulta de Access, una a una y en su orden
+    // (IdOrden, IdBono, IdArticulo, Descrip, IdAlmacen, Expr2,
+    // Articulos_1.Descrip, Expr3). El estado va al final: no esta en el
+    // SELECT de Access, pero es lo que filtran los botones.
     const cab = `<tr>
-        <th class="num"><span class="dup__th">Orden · bono</span></th>
-        <th><span class="dup__th">Estado</span></th>
+        <th class="num"><span class="dup__th">Orden</span></th>
+        <th class="num"><span class="dup__th">Bono</span></th>
         <th><span class="dup__th">Artículo</span></th>
         <th><span class="dup__th">Descripción</span></th>
+        <th class="num"><span class="dup__th">Almacén</span></th>
         <th class="num"><span class="dup__th">Stock libre</span></th>
+        <th><span class="dup__th">Artículo de la orden</span></th>
+        <th class="num"><span class="dup__th">Libre − mínimo</span></th>
+        <th><span class="dup__th">Estado</span></th>
       </tr>`;
     const cuerpo = vis.map(b => `<tr class="ord__bono">
-        <td class="num ord__cod"><b>${esc(b.idorden)}</b>·${esc(b.idbono)}</td>
-        <td><span class="dup__estado is-${ESTADO[b.estado] || 'espera'}">${esc(b.estado_label)}</span></td>
+        <td class="num ord__cod"><b>${esc(b.idorden)}</b></td>
+        <td class="num ord__cod">${esc(b.idbono)}</td>
         <td class="ord__cod">${esc(b.idarticulo)}</td>
         <td><b>${esc(b.descrip) || '—'}</b></td>
+        <td class="num ord__cod">${esc(b.idalmacen)}</td>
         <td class="num"><b>${num(b.stock)}</b></td>
+        <td>${esc(b.descrip_orden) || '—'}</td>
+        <td class="num"><b>${num(b.stock_sobre_minimo)}</b></td>
+        <td><span class="dup__estado is-${ESTADO[b.estado] || 'espera'}">${esc(b.estado_label)}</span></td>
       </tr>`).join('');
     $('bon-tabla').innerHTML = `<thead>${cab}</thead><tbody>${cuerpo}</tbody>`;
     $('bon-sin-resultados').hidden = vis.length > 0;
@@ -87,8 +100,8 @@ const Bonos = (() => {
   function pintar(d) {
     datos = d;
     d.bonos.forEach(b => {
-      b.texto = [b.idorden, b.idbono, `${b.idorden}/${b.idbono}`, b.idarticulo, b.descrip]
-        .join(' ').toLowerCase();
+      b.texto = [b.idorden, b.idbono, `${b.idorden}/${b.idbono}`, b.idarticulo, b.descrip,
+                 b.descrip_orden].join(' ').toLowerCase();
     });
     refrescar();
     $('generado').textContent = 'Leído a las ' + new Date(d.generado)
