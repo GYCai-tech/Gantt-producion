@@ -12,7 +12,18 @@ const Bonos = (() => {
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const num = v => Number(v || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 });
 
-  let datos = null, busqueda = '', busquedaBono = '';
+  // Los tres estados vivos del ERP y la clase de su etiqueta (la de duplicados).
+  const ESTADO = { 0: 'espera', 1: 'activado', 3: 'bloqueado' };
+
+  // `e` es el IdEstado que deja pasar cada boton; null, todos.
+  const FILTROS = {
+    todos:     { tit: 'Todos',     e: null },
+    espera:    { tit: 'En espera', e: 0 },
+    activado:  { tit: 'Activado',  e: 1 },
+    bloqueado: { tit: 'Bloqueado', e: 3 },
+  };
+
+  let datos = null, filtro = 'todos', busqueda = '', busquedaBono = '';
 
   // "6372/30", "6372·30", "6372-30" o "6372 30" son la misma orden y bono.
   // Se compara con la forma normalizada Y con lo tecleado tal cual, igual que
@@ -20,6 +31,7 @@ const Bonos = (() => {
   const aBono = t => t.replace(/(\d)\s*[·.\-\/ ]\s*(\d)/g, '$1/$2');
   const coincide = b => !busqueda
     || b.texto.includes(busqueda) || b.texto.includes(busquedaBono);
+  const deEstado = (b, f) => FILTROS[f].e === null || b.estado === FILTROS[f].e;
 
   function stats(vis) {
     const ordenes = new Set(vis.map(b => b.idorden)).size;
@@ -33,15 +45,27 @@ const Bonos = (() => {
           n !== tot ? `<em>de ${num(tot)}</em>` : ''}</div>`).join('');
   }
 
+  // La cuenta de cada boton sale de lo que deja la busqueda: si no, un boton
+  // promete bonos que al pulsarlo no aparecen.
+  function botones() {
+    const buscados = datos.bonos.filter(coincide);
+    $('bon-filtros').innerHTML = Object.entries(FILTROS).map(([k, f]) => {
+      const n = buscados.filter(b => deEstado(b, k)).length;
+      return `<button class="${k === filtro ? 'is-active' : ''}" data-f="${k}">${f.tit} · ${num(n)}</button>`;
+    }).join('');
+  }
+
   function tabla(vis) {
     const cab = `<tr>
         <th class="num"><span class="dup__th">Orden · bono</span></th>
+        <th><span class="dup__th">Estado</span></th>
         <th><span class="dup__th">Artículo</span></th>
         <th><span class="dup__th">Descripción</span></th>
         <th class="num"><span class="dup__th">Stock libre</span></th>
       </tr>`;
     const cuerpo = vis.map(b => `<tr class="ord__bono">
         <td class="num ord__cod"><b>${esc(b.idorden)}</b>·${esc(b.idbono)}</td>
+        <td><span class="dup__estado is-${ESTADO[b.estado] || 'espera'}">${esc(b.estado_label)}</span></td>
         <td class="ord__cod">${esc(b.idarticulo)}</td>
         <td><b>${esc(b.descrip) || '—'}</b></td>
         <td class="num"><b>${num(b.stock)}</b></td>
@@ -51,7 +75,8 @@ const Bonos = (() => {
   }
 
   function refrescar() {
-    const vis = datos.bonos.filter(coincide);
+    const vis = datos.bonos.filter(b => coincide(b) && deEstado(b, filtro));
+    botones();
     stats(vis);
     $('bon-resumen').textContent = vis.length === datos.total_bonos
       ? `${num(vis.length)} bonos`
@@ -91,6 +116,11 @@ const Bonos = (() => {
     busquedaBono = aBono(busqueda);
     if (datos) refrescar();
   }
+
+  document.addEventListener('click', e => {
+    const b = e.target.closest('#bon-filtros [data-f]');
+    if (b && datos) { filtro = b.dataset.f; refrescar(); }
+  });
 
   document.addEventListener('DOMContentLoaded', cargar);
   return { cargar, setBusqueda };

@@ -22,15 +22,18 @@ router = APIRouter()
 
 #  Los estados de bono que siguen vivos: 0 en espera, 1 activado, 3 bloqueado.
 _ESTADOS_VIVOS = (0, 1, 3)
+_ESTADO_NOMBRE = {0: "En espera", 1: "Activado", 3: "Bloqueado"}
 _ALMACEN_PRINCIPAL = 0
 
 #  El GROUP BY viene de la consulta de Access y hace de DISTINCT:
 #  `Ordenes_Bonos_Salidas` repite fila cuando un bono declara el mismo artículo
 #  más de una vez. Las condiciones del HAVING original van al WHERE porque
-#  ninguna es un agregado.
+#  ninguna es un agregado. `IdEstado` ya estaba en el GROUP BY, así que sacarlo
+#  en el SELECT para poder filtrar no cambia las filas.
 _SQL = """
 SELECT ob.IdOrden     AS idorden,
        ob.IdBono      AS idbono,
+       ob.IdEstado    AS idestado,
        obs.IdArticulo AS idarticulo,
        a.Descrip      AS descrip,
        ISNULL(s.Stock, 0) - ISNULL(s.StockReservado, 0) AS stock
@@ -56,11 +59,13 @@ def get_bonos():
     params = dict(zip(("espera", "activado", "bloqueado"), _ESTADOS_VIVOS))
     params["almacen"] = _ALMACEN_PRINCIPAL
     bonos = [{
-        "idorden":    r["idorden"],
-        "idbono":     r["idbono"],
-        "idarticulo": (r["idarticulo"] or "").strip(),
-        "descrip":    (r["descrip"] or "").strip(),
-        "stock":      float(r["stock"] or 0),
+        "idorden":      r["idorden"],
+        "idbono":       r["idbono"],
+        "estado":       r["idestado"],
+        "estado_label": _ESTADO_NOMBRE.get(r["idestado"], str(r["idestado"])),
+        "idarticulo":   (r["idarticulo"] or "").strip(),
+        "descrip":      (r["descrip"] or "").strip(),
+        "stock":        float(r["stock"] or 0),
     } for r in _erp(_SQL, params)]
 
     return {
@@ -69,4 +74,5 @@ def get_bonos():
         "total_bonos":     len(bonos),
         "total_ordenes":   len({b["idorden"] for b in bonos}),
         "total_articulos": len({b["idarticulo"] for b in bonos}),
+        "por_estado":      {e: sum(1 for b in bonos if b["estado"] == e) for e in _ESTADOS_VIVOS},
     }
