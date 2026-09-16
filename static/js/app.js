@@ -488,10 +488,11 @@ const App = (() => {
 
       // Una ausencia PARCIAL no es "no vino": una consulta medica de 07:00 a
       // 10:00 deja media jornada trabajada. Se marca la fila igual, pero sin
-      // rayar la pista y diciendo la franja, o estariamos afirmando que falto
-      // el dia entero.
-      const franja = ausente && ausente.parcial && ausente.hora_ini && ausente.hora_fin
-        ? `${ausente.hora_ini}–${ausente.hora_fin}` : '';
+      // rayar la pista y diciendo COMO afecta a la jornada ("entra a las
+      // 10:00"), no la franja en crudo: lo que hace falta saber es que ese dia
+      // llego mas tarde. La frase viene resuelta del backend, que es quien
+      // tiene el horario de jornada.
+      const franja = (ausente && ausente.cuando) || '';
 
       const row = document.createElement('div');
       row.className = 'row'
@@ -503,7 +504,7 @@ const App = (() => {
       label.className = 'row__label';
       if (ausente) {
         label.title = ausente.motivo
-          + (franja ? ` · de ${franja}` : '')
+          + (franja ? ` · ${franja}` : '')
           + (ausente.desde && ausente.hasta && ausente.desde !== ausente.hasta
              ? ` · del ${fmtDate(ausente.desde)} al ${fmtDate(ausente.hasta)}` : '');
       } else if (atascado) {

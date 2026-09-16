@@ -1359,6 +1359,39 @@ FROM resuelta WHERE rn = 1
 """
 
 
+#  Cómo se LEE una ausencia parcial en planta. Decir "07:00–10:00" describe el
+#  hueco; lo que hace falta saber es que ese día Elías entra a las 10:00.
+#
+#  La frase depende de dónde caiga la franja respecto a la jornada. Medido sobre
+#  las 255 parciales aprobadas, y las cuatro formas son reales:
+#
+#      franja intermedia ....... 109    se marcha antes ..... 97
+#      entra más tarde .........  46    jornada entera ......  3
+#
+#  Esas 3 últimas vienen marcadas como parciales pero cubren de 07:00 a 15:00:
+#  no son parciales de verdad, así que se devuelven como ausencia de día entero
+#  y la fila se raya como cualquier otra. Ninguna de las 255 viene sin horas,
+#  pero se contempla porque son columnas nullable.
+_APERTURA = f"{JORNADA_INICIO:02d}:00"
+_CIERRE   = f"{JORNADA_FIN:02d}:00"
+
+
+def _cuando_falta(hora_ini: str | None, hora_fin: str | None) -> str | None:
+    """Cómo afecta la franja a la jornada, o None si falta el día entero.
+
+    Las horas llegan como texto "HH:MM" con cero delante, así que se comparan
+    como cadenas sin convertirlas."""
+    if not hora_ini or not hora_fin:
+        return None
+    if hora_ini <= _APERTURA and hora_fin >= _CIERRE:
+        return None
+    if hora_ini <= _APERTURA:
+        return f"entra a las {hora_fin}"
+    if hora_fin >= _CIERRE:
+        return f"se marcha a las {hora_ini}"
+    return f"fuera de {hora_ini} a {hora_fin}"
+
+
 def _ausencias(dia: date) -> dict[str, dict]:
     """{idempleado: {motivo, desde, hasta}} de quien no está en planta ese día.
 
@@ -1374,20 +1407,24 @@ def _ausencias(dia: date) -> dict[str, dict]:
     except HTTPException:
         print("[avisos] ausencias no disponibles: ¿faltan permisos en PORTALHR?")
         return {}
-    return {
-        str(r["idempleado"]): {
-            "motivo": (r["motivo"] or "").strip() or "Ausente",
-            "desde":  r["desde"],
-            "hasta":  r["hasta"],
-            # Una ausencia PARCIAL no es "no vino": Elías tiene consulta de 07:00
-            # a 10:00 y trabaja el resto de la jornada. Marcarle el día entero
-            # sería falso, así que la franja viaja hasta el front.
-            "parcial":  bool(r["parcial"]),
-            "hora_ini": (r["hora_ini"] or "").strip() or None,
-            "hora_fin": (r["hora_fin"] or "").strip() or None,
+    ausencias = {}
+    for r in filas:
+        hora_ini = (r["hora_ini"] or "").strip() or None
+        hora_fin = (r["hora_fin"] or "").strip() or None
+        # Una ausencia PARCIAL no es "no vino": Elías tiene consulta de 07:00 a
+        # 10:00 y trabaja el resto de la jornada. Marcarle el día entero sería
+        # falso. `cuando` es la frase ya resuelta —"entra a las 10:00"—, y que
+        # salga None es lo que decide que la ausencia es de día completo: así el
+        # front no tiene que volver a razonar sobre horarios.
+        cuando = _cuando_falta(hora_ini, hora_fin) if r["parcial"] else None
+        ausencias[str(r["idempleado"])] = {
+            "motivo":  (r["motivo"] or "").strip() or "Ausente",
+            "desde":   r["desde"],
+            "hasta":   r["hasta"],
+            "parcial": bool(cuando),
+            "cuando":  cuando,
         }
-        for r in filas
-    }
+    return ausencias
 
 
 def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,

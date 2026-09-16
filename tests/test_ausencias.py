@@ -47,19 +47,35 @@ def test_mapea_por_idempleado_en_texto(monkeypatch):
     fingir_erp(monkeypatch, [fila(17, "Vacaciones")])
     assert api._ausencias(DIA) == {
         "17": {"motivo": "Vacaciones", "desde": DIA, "hasta": DIA,
-               "parcial": False, "hora_ini": None, "hora_fin": None},
+               "parcial": False, "cuando": None},
     }
 
 
-def test_la_franja_de_una_parcial_llega_entera(monkeypatch):
-    """Elias tiene consulta de 07:00 a 10:00 y trabaja el resto de la jornada.
-
-    Sin la franja, el front no puede distinguirlo de quien no vino, y le
-    pintaria el dia entero como ausente."""
+def test_una_parcial_dice_como_afecta_a_la_jornada(monkeypatch):
+    """Elias tiene consulta de 07:00 a 10:00: lo que hay que saber no es la
+    franja en crudo, es que ESE DIA entra a las 10:00."""
     fingir_erp(monkeypatch, [fila(15, "Consulta médica", True, "07:00", "10:00")])
     elias = api._ausencias(DIA)["15"]
     assert elias["parcial"] is True
-    assert (elias["hora_ini"], elias["hora_fin"]) == ("07:00", "10:00")
+    assert elias["cuando"] == "entra a las 10:00"
+
+
+def test_las_cuatro_formas_de_una_parcial():
+    """Medido sobre las 255 parciales aprobadas: 109 franja intermedia, 97 al
+    cierre, 46 a la apertura y 3 que cubren la jornada entera."""
+    assert api._cuando_falta("07:00", "10:00") == "entra a las 10:00"
+    assert api._cuando_falta("13:00", "15:00") == "se marcha a las 13:00"
+    assert api._cuando_falta("09:00", "11:00") == "fuera de 09:00 a 11:00"
+    # Marcada como parcial pero de apertura a cierre: no es parcial de verdad.
+    assert api._cuando_falta("07:00", "15:00") is None
+    assert api._cuando_falta(None, "10:00") is None
+
+
+def test_una_parcial_que_cubre_la_jornada_es_dia_completo(monkeypatch):
+    """Las 3 filas de 07:00 a 15:00 vienen con PartialDay=1 y no lo son. Si se
+    respetara esa marca, la fila saldria sin rayar como si hubiera venido."""
+    fingir_erp(monkeypatch, [fila(9, "Vacaciones", True, "07:00", "15:00")])
+    assert api._ausencias(DIA)["9"]["parcial"] is False
 
 
 def test_una_baja_larga_conserva_su_rango(monkeypatch):
