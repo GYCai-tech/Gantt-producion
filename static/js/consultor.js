@@ -47,20 +47,6 @@ const Consultor = (() => {
   //  Lo dice el ERP en vivo (lineas con Hfinal NULL), no la replica.
   const sinFichar = b => b.estado_bono === 1 && !b.tiene_fichaje_activo;
 
-  function stats(vis) {
-    const ordenes = new Set(vis.map(b => b.idorden)).size;
-    const maquinas = new Set(vis.map(b => b.matricula).filter(Boolean)).size;
-    const parados = vis.filter(sinFichar).length;
-    $('con-stats').innerHTML = [
-      ['Bonos', vis.length, datos.total, ''],
-      ['Órdenes', ordenes, null, ''],
-      ['Máquinas', maquinas, null, ''],
-      ['Sin fichar', parados, null, 'ord__stat--ojo'],
-    ].map(([t, n, tot, cls]) => `<div class="ord__stat ${cls}">
-        <span>${t}</span><b>${num(n)}</b>${
-          tot !== null && n !== tot ? `<em>de ${num(tot)}</em>` : ''}</div>`).join('');
-  }
-
   //  La cuenta de cada boton sale de lo que dejan los OTROS filtros: si no, un
   //  boton promete bonos que al pulsarlo no aparecen.
   function botones() {
@@ -98,21 +84,25 @@ const Consultor = (() => {
         <th><span class="dup__th">Artículo</span></th>
         <th><span class="dup__th">Máquina</span></th>
         <th><span class="dup__th">Área</span></th>
+        <th><span class="dup__th">Cliente</span></th>
         <th><span class="dup__th">Usuario</span></th>
         <th><span class="dup__th">Estado</span></th>
       </tr>`;
+    //  La fila entera va tintada segun su estado: de un vistazo se ve el
+    //  reparto sin tener que leer la ultima columna.
     const cuerpo = vis.map(b => {
       const parado = sinFichar(b);
       const e = parado
         ? { tit: 'Sin fichar', cls: 'sinfichar' }
         : (ESTADO[b.estado_bono] || ESTADO[0]);
-      return `<tr class="ord__bono dup__bono${parado ? ' es-sinfichar' : ''}">
+      return `<tr class="ord__bono dup__bono es-${e.cls}">
         <td class="num ord__cod"><b>${esc(b.idorden)}</b></td>
         <td class="num ord__cod">${esc(b.idbono)}</td>
         <td><b>${esc(b.descrip_articulo) || '—'}</b></td>
         <td>${esc(b.descrip_matricula || b.matricula) || '—'}${
           b.matricula && b.descrip_matricula ? `<span class="sub">${esc(b.matricula)}</span>` : ''}</td>
         <td>${esc(b.area) || '—'}</td>
+        <td>${esc(b.idcliente) || '—'}</td>
         <td>${esc(b.usuario) || '—'}</td>
         <td><span class="dup__estado is-${e.cls}">${e.tit}</span></td>
       </tr>`;
@@ -125,7 +115,6 @@ const Consultor = (() => {
     const vis = datos.bonos.filter(b => coincide(b) && deEstado(b, filtro) && deMaquina(b));
     botones();
     selectorMaquinas();
-    stats(vis);
     $('con-resumen').textContent = vis.length === datos.total
       ? `${num(vis.length)} bonos`
       : `${num(vis.length)} de ${num(datos.total)} bonos`;
@@ -136,7 +125,8 @@ const Consultor = (() => {
     datos = d;
     d.bonos.forEach(b => {
       b.texto = [b.idorden, b.idbono, `${b.idorden}/${b.idbono}`, b.descrip_articulo,
-                 b.matricula, b.descrip_matricula, b.area, b.usuario].join(' ').toLowerCase();
+                 b.matricula, b.descrip_matricula, b.area, b.idcliente,
+                 b.usuario].join(' ').toLowerCase();
     });
     refrescar();
     $('generado').textContent = 'Leído a las ' + new Date()

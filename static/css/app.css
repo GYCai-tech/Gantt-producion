@@ -83,6 +83,10 @@ button { font-family: inherit; }
   background: var(--surface); color: var(--brand);
   box-shadow: var(--shadow-1);
 }
+/* Variante grande. En el Consultor los cuatro botones son el control principal
+   de la pantalla y se pulsan de pie junto a la maquina, no sentado. */
+.segmented--lg { border-radius: 11px; padding: 4px; }
+.segmented--lg button { padding: 10px 22px; font-size: 15px; border-radius: 8px; }
 
 /* ===================== Workspace ===================== */
 .workspace { flex: 1; display: flex; min-height: 0; }
@@ -861,6 +865,16 @@ tbody .plan__pers span {
 /* Mismo mecanismo que `.ord__bono.tiene-gente`: un filete en el borde de la
    fila, para localizarla sin leer la columna de estado. */
 .ord__bono.es-sinfichar td:first-child { box-shadow: inset 3px 0 0 var(--ambar); }
+
+/* Fila tintada segun el estado del bono. Se reutilizan los mismos tokens que
+   las etiquetas -- los de la paleta de estados, ya calmados-- para que fondo y
+   etiqueta digan lo mismo. El hover gana por especificidad y sigue marcando la
+   fila bajo el raton. */
+.ord__tabla tbody tr.es-espera     td { background: var(--accent-2); }
+.ord__tabla tbody tr.es-activado   td { background: var(--verde-bg); }
+.ord__tabla tbody tr.es-finalizado td { background: var(--gris-bg); }
+.ord__tabla tbody tr.es-bloqueado  td { background: var(--rojo-bg); }
+.ord__tabla tbody tr.es-sinfichar  td { background: var(--ambar-bg); }
 /* Un bono con fichajes ya ha costado trabajo: anular ESE duplicado no sale
    gratis, y conviene que se vea sin abrir nada. */
 .dup__chip-hecho { background: var(--ambar-bg); color: var(--ambar); }

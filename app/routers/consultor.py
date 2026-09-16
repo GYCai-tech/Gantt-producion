@@ -31,33 +31,37 @@ router = APIRouter(prefix="/api")
 _ORDEN_ACTIVA = 1
 _ORDEN_BLOQUEADA = 3
 
+#  LA CONSULTA DE LA v1, TAL CUAL. Se restauro literal por peticion expresa:
+#  la pantalla tiene que enseñar exactamente lo que enseñaba antes.
+#
+#  Dos consecuencias que trae de serie y que conviene tener presentes, porque
+#  llegue a cambiarlas y se revirtieron a proposito:
+#
+#  · El `JOIN` a `a_matricula` (y no LEFT) DEJA FUERA los bonos que no declaran
+#    matricula: 17 de 822 no salen en la pantalla.
+#  · Sin GROUP BY, un bono que declara el mismo articulo mas de una vez en
+#    `Ordenes_Bonos_Salidas` aparece repetido.
 _BONOS_QUERY = """
 SELECT
-    o.IdOrden               AS idorden,
-    ob.IdBono               AS idbono,
-    ob.Matricula            AS matricula,
-    a_matricula.Descrip     AS descrip_matricula,
-    ob.IdEstado             AS estado_bono,
-    o.IdArticulo            AS idarticulo_orden,
-    a_salida.Descrip        AS descrip_articulo,
-    ob.Area                 AS area,
-    o.Usuario               AS usuario
+    o.IdOrden                AS idorden,
+    ob.IdBono                AS idbono,
+    ob.Matricula             AS matricula,
+    a_matricula.Descrip      AS descrip_matricula,
+    ob.IdEstado              AS estado_bono,
+    o.IdCliente              AS idcliente,
+    o.IdArticulo             AS idarticulo_orden,
+    a_salida.Descrip         AS descrip_articulo,
+    ob.Area                  AS area,
+    o.Usuario                AS usuario
 FROM Ordenes_Bonos_Salidas obs
-    JOIN Ordenes o             ON obs.IdOrden    = o.IdOrden
-    JOIN Ordenes_Bonos ob      ON obs.IdOrden    = ob.IdOrden
-                              AND obs.IdBono     = ob.IdBono
-    JOIN Articulos a_salida    ON obs.IdArticulo = a_salida.IdArticulo
-    --  LEFT y no JOIN: 17 de los 822 bonos no declaran matrícula, y con el
-    --  JOIN del original desaparecían de la pantalla sin dejar rastro.
-    LEFT JOIN Articulos a_matricula ON ob.Matricula = a_matricula.IdArticulo
-WHERE o.IdEstado = :estado_orden
+    JOIN Ordenes o              ON obs.IdOrden     = o.IdOrden
+    JOIN Ordenes_Bonos ob       ON obs.IdOrden     = ob.IdOrden
+                               AND obs.IdBono      = ob.IdBono
+    JOIN Articulos a_salida     ON obs.IdArticulo  = a_salida.IdArticulo
+    JOIN Articulos a_matricula  ON ob.Matricula    = a_matricula.IdArticulo
+WHERE o.IdEstado  = :estado_orden
   {filtro_bono}
   {filtro_matricula}
---  `Ordenes_Bonos_Salidas` repite fila cuando un bono declara el mismo artículo
---  más de una vez; el GROUP BY hace de DISTINCT, igual que en la pestaña de
---  urgencia.
-GROUP BY o.IdOrden, ob.IdBono, ob.Matricula, a_matricula.Descrip, ob.IdEstado,
-         o.IdArticulo, a_salida.Descrip, ob.Area, o.Usuario
 ORDER BY o.IdOrden DESC
 """
 
@@ -107,6 +111,9 @@ def get_consultor_bonos(
         "matricula":         (r["matricula"] or "").strip(),
         "descrip_matricula": (r["descrip_matricula"] or "").strip(),
         "estado_bono":       r["estado_bono"],
+        #  Relleno en 48 de 822 bonos (5,8%), pero la v1 lo enseñaba y la
+        #  pantalla tiene que representar lo mismo que antes.
+        "idcliente":         (r["idcliente"] or "").strip(),
         "idarticulo_orden":  (r["idarticulo_orden"] or "").strip(),
         "descrip_articulo":  (r["descrip_articulo"] or "").strip(),
         "area":              (r["area"] or "").strip(),

@@ -1,18 +1,21 @@
 """El Consultor de Bonos, sin tocar el ERP.
 
-Portado de la v1 (`legacy/planificador-v1`) con dos cambios: el bono "sin fichar"
-sale del ERP en vivo y no de PostgreSQL, y no hay columna Cliente porque
-`Ordenes.IdCliente` esta relleno en 48 de 822 bonos (5,8%).
+La consulta es la de la v1 LITERAL, restaurada por peticion expresa: la pantalla
+tiene que enseñar exactamente lo que enseñaba antes. Lo unico que no se pudo
+portar es de donde sale el "sin fichar": la v1 lo leia de PostgreSQL
+(analytics.v_asignaciones_empleado) y aqui se deriva del ERP en vivo, porque la
+v2 no tiene esa conexion.
 """
 from app.routers import consultor
 
 
 def fila(orden=6726, bono=10, estado=1, matricula='107 ', maquina='Manual Bolsas-2 ',
-         articulo='CABLE CONTROL ', area='INYECION ', usuario='marcos '):
+         articulo='CABLE CONTROL ', area='INYECION ', usuario='marcos ',
+         cliente='0011000001 '):
     return {'idorden': orden, 'idbono': bono, 'estado_bono': estado,
             'matricula': matricula, 'descrip_matricula': maquina,
-            'idarticulo_orden': '30806013 ', 'descrip_articulo': articulo,
-            'area': area, 'usuario': usuario}
+            'idcliente': cliente, 'idarticulo_orden': '30806013 ',
+            'descrip_articulo': articulo, 'area': area, 'usuario': usuario}
 
 
 def erp(monkeypatch, bonos, abiertas=()):
@@ -28,7 +31,7 @@ def erp(monkeypatch, bonos, abiertas=()):
     return capturado
 
 
-def test_una_tarjeta_por_bono_con_textos_limpios(monkeypatch):
+def test_una_fila_por_bono_con_textos_limpios(monkeypatch):
     erp(monkeypatch, [fila()])
     b = consultor.get_consultor_bonos(estado_orden=1, estado_bono=None, matricula=None)['bonos'][0]
 
@@ -37,12 +40,28 @@ def test_una_tarjeta_por_bono_con_textos_limpios(monkeypatch):
     assert b['descrip_matricula'] == 'Manual Bolsas-2'
     assert b['area'] == 'INYECION'
     assert b['usuario'] == 'marcos'
-    # La v1 traia el cliente; se cae por estar relleno en el 5,8% de los bonos.
-    assert 'idcliente' not in b
+    # El cliente esta relleno en el 5,8% de los bonos, pero la v1 lo enseñaba.
+    assert b['idcliente'] == '0011000001'
+
+
+def test_la_consulta_es_la_de_la_v1_literal(monkeypatch):
+    """Se restauro tal cual, con dos efectos que llegaron a cambiarse y se
+    revirtieron a proposito: el JOIN a la matricula deja fuera los bonos que no
+    la declaran (17 de 822), y sin GROUP BY un bono que repite articulo en
+    Ordenes_Bonos_Salidas sale duplicado."""
+    cap = erp(monkeypatch, bonos=[])
+    consultor.get_consultor_bonos(estado_orden=1, estado_bono=None, matricula=None)
+    q = cap['consultas'][0]
+
+    assert 'JOIN Articulos a_matricula  ON ob.Matricula    = a_matricula.IdArticulo' in q
+    assert 'LEFT JOIN Articulos a_matricula' not in q
+    assert 'GROUP BY' not in q
+    assert 'o.IdCliente' in q
+    assert 'ORDER BY o.IdOrden DESC' in q
 
 
 def test_marca_el_bono_que_tiene_fichaje_abierto(monkeypatch):
-    """Un bono ACTIVO sin fichaje es trabajo en pausa, y la tarjeta lo destaca."""
+    """Un bono ACTIVO sin fichaje es trabajo en pausa, y la fila lo destaca."""
     erp(monkeypatch,
         bonos=[fila(6726, 10), fila(6727, 20)],
         abiertas=[{'idorden': 6726, 'idbono': 10}])
@@ -52,8 +71,7 @@ def test_marca_el_bono_que_tiene_fichaje_abierto(monkeypatch):
 
 
 def test_sin_bonos_no_se_pregunta_por_los_fichajes(monkeypatch):
-    """La pantalla lanza cinco peticiones a la vez y cuatro suelen venir vacias:
-    no hay que gastar una consulta mas para marcar una lista vacia."""
+    """No hay que gastar una consulta mas para marcar una lista vacia."""
     cap = erp(monkeypatch, bonos=[])
     consultor.get_consultor_bonos(estado_orden=1, estado_bono=2, matricula=None)
 
@@ -83,23 +101,6 @@ def test_llamada_directa_sin_argumentos_no_cuela_el_objeto_Query(monkeypatch):
 
     assert cap['params'][0] == {'estado_orden': 1}
     assert 'ob.Matricula = :matricula' not in cap['consultas'][0]
-
-
-def test_la_maquina_se_une_con_LEFT(monkeypatch):
-    """17 de los 822 bonos no declaran matricula. El JOIN del original los
-    borraba de la pantalla justo por no saber en que maquina van."""
-    cap = erp(monkeypatch, bonos=[])
-    consultor.get_consultor_bonos(estado_orden=1, estado_bono=None, matricula=None)
-
-    assert 'LEFT JOIN Articulos a_matricula' in cap['consultas'][0]
-
-
-def test_un_bono_sin_maquina_no_desaparece(monkeypatch):
-    erp(monkeypatch, [fila(matricula=None, maquina=None)])
-    b = consultor.get_consultor_bonos(estado_orden=1, estado_bono=None, matricula=None)['bonos'][0]
-
-    assert b['matricula'] == ''
-    assert b['descrip_matricula'] == ''
 
 
 def test_el_desplegable_no_ofrece_maquinas_sin_bonos(monkeypatch):
