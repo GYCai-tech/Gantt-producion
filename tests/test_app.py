@@ -21,9 +21,18 @@ def test_la_app_publica_las_rutas_que_consume_el_frontend():
     }.issubset(_rutas())
 
 
+def test_el_consultor_de_bonos_esta_de_vuelta():
+    """Estuvo prohibido a proposito: el reinicio a la v2 dejo main como minimo
+    y este test vigilaba que las paginas eliminadas no reaparecieran. El
+    Consultor se repone por peticion expresa, asi que la ruta pasa de vetada a
+    exigida -- pero portada al ERP, sin la dependencia de PostgreSQL que tenia
+    en la v1."""
+    assert {"/consultor-bonos", "/api/bonos", "/api/matriculas"}.issubset(_rutas())
+
+
 def test_no_quedan_rutas_de_las_paginas_eliminadas():
-    assert not (_rutas() & {"/historico-produccion", "/consultor-bonos", "/api/bonos",
-                            "/fiabilidad", "/api/fiabilidad"})
+    """Las que siguen sin volver. `/api/bonos` salio de esta lista; el resto no."""
+    assert not (_rutas() & {"/historico-produccion", "/fiabilidad", "/api/fiabilidad"})
 
 
 def test_el_censo_de_operarios_se_limita_al_departamento_de_planta(monkeypatch):

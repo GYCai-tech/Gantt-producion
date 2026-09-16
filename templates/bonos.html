@@ -18,7 +18,7 @@
   <main class="panel plan">
 
     <header class="plan__intro">
-      <h1>Bonos</h1>
+      <h1>Urgencia de bonos</h1>
     </header>
 
     <div id="bon-cargando" class="plan__estado">Leyendo el ERP…</div>
@@ -28,7 +28,9 @@
       <div class="ord__stats" id="bon-stats"></div>
 
       <div class="ord__barra">
+        <div class="segmented" id="bon-almacenes"></div>
         <div class="segmented" id="bon-filtros"></div>
+        <select id="bon-maquina" class="select-sm" onchange="Bonos.setMaquina(this.value)"></select>
         <span class="ord__cuenta" id="bon-resumen"></span>
       </div>
 

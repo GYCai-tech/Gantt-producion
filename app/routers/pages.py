@@ -72,3 +72,11 @@ def bonos(request: Request):
         request, "bonos.html",
         {"current_page": "bonos", "static_v": _static_v()},
     )
+
+
+@router.get("/consultor-bonos", response_class=HTMLResponse)
+def consultor_bonos(request: Request):
+    return templates.TemplateResponse(
+        request, "consultor_bonos.html",
+        {"current_page": "consultor", "static_v": _static_v()},
+    )

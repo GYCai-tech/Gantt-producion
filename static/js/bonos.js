@@ -1,9 +1,13 @@
 /* ============================================================
-   GYC · Bonos
-   Bonos vivos de ordenes cuyo articulo tiene el stock libre en
-   negativo en el almacen Principal. Una fila por bono, en el
+   GYC · Urgencia de bonos
+   Bonos vivos de ordenes cuyo articulo no tiene stock libre, en
+   el almacen Principal o en Produccion. Una fila por bono, en el
    orden que trae el ERP (por descripcion). El stock es el del
    articulo de la ORDEN, no el de lo que fabrica el bono.
+
+   Los tres filtros (almacen, estado y maquina) se aplican en el
+   cliente sobre los mismos datos: el ERP ya manda los dos saldos
+   y la matricula, asi que cambiar de filtro no cuesta una peticion.
    ============================================================ */
 const Bonos = (() => {
   'use strict';
@@ -24,7 +28,17 @@ const Bonos = (() => {
     bloqueado: { tit: 'Bloqueado', e: 3 },
   };
 
-  let datos = null, filtro = 'todos', busqueda = '', busquedaBono = '';
+  // En que almacen se mira el negativo. "Total" es estar en negativo en ALGUNO
+  // de los dos, no la suma: un agujero en Produccion sigue siendo un agujero
+  // aunque en Principal sobre material.
+  const ALMACENES = {
+    total:      { tit: 'Total',      hay: b => b.libre_principal < 0 || b.libre_produccion < 0 },
+    principal:  { tit: 'Principal',  hay: b => b.libre_principal < 0 },
+    produccion: { tit: 'Producción', hay: b => b.libre_produccion < 0 },
+  };
+
+  let datos = null, filtro = 'todos', almacen = 'total', maquina = '';
+  let busqueda = '', busquedaBono = '';
 
   // "6372/30", "6372·30", "6372-30" o "6372 30" son la misma orden y bono.
   // Se compara con la forma normalizada Y con lo tecleado tal cual, igual que
@@ -32,7 +46,13 @@ const Bonos = (() => {
   const aBono = t => t.replace(/(\d)\s*[·.\-\/ ]\s*(\d)/g, '$1/$2');
   const coincide = b => !busqueda
     || b.texto.includes(busqueda) || b.texto.includes(busquedaBono);
-  const deEstado = (b, f) => FILTROS[f].e === null || b.estado === FILTROS[f].e;
+  const deEstado  = (b, f) => FILTROS[f].e === null || b.estado === FILTROS[f].e;
+  const deAlmacen = (b, a) => ALMACENES[a].hay(b);
+  const deMaquina = b => !maquina || b.matricula === maquina;
+
+  // Todo menos el filtro que se esta contando: si la cuenta de un boton se
+  // calculara sobre lo ya filtrado por el, siempre diria lo mismo que el total.
+  const base = b => coincide(b) && deMaquina(b);
 
   function stats(vis) {
     const ordenes = new Set(vis.map(b => b.idorden)).size;
@@ -46,41 +66,71 @@ const Bonos = (() => {
           n !== tot ? `<em>de ${num(tot)}</em>` : ''}</div>`).join('');
   }
 
-  // La cuenta de cada boton sale de lo que deja la busqueda: si no, un boton
-  // promete bonos que al pulsarlo no aparecen.
+  // La cuenta de cada boton sale de lo que dejan los OTROS filtros: si no, un
+  // boton promete bonos que al pulsarlo no aparecen.
   function botones() {
-    const buscados = datos.bonos.filter(coincide);
+    const paraAlmacen = datos.bonos.filter(b => base(b) && deEstado(b, filtro));
+    $('bon-almacenes').innerHTML = Object.entries(ALMACENES).map(([k, a]) => {
+      const n = paraAlmacen.filter(b => deAlmacen(b, k)).length;
+      return `<button class="${k === almacen ? 'is-active' : ''}" data-a="${k}">${a.tit} · ${num(n)}</button>`;
+    }).join('');
+
+    const paraEstado = datos.bonos.filter(b => base(b) && deAlmacen(b, almacen));
     $('bon-filtros').innerHTML = Object.entries(FILTROS).map(([k, f]) => {
-      const n = buscados.filter(b => deEstado(b, k)).length;
+      const n = paraEstado.filter(b => deEstado(b, k)).length;
       return `<button class="${k === filtro ? 'is-active' : ''}" data-f="${k}">${f.tit} · ${num(n)}</button>`;
     }).join('');
   }
 
+  // El desplegable se arma con las maquinas que de verdad hay en pantalla, no
+  // con el censo entero: ofrecer una maquina que al elegirla no devuelve nada
+  // es peor que no ofrecerla.
+  function selectorMaquinas() {
+    const visibles = datos.bonos.filter(b => coincide(b) && deEstado(b, filtro) && deAlmacen(b, almacen));
+    const mapa = new Map();
+    visibles.forEach(b => {
+      if (b.matricula) mapa.set(b.matricula, b.maquina || b.matricula);
+    });
+    const opciones = [...mapa.entries()]
+      .sort((a, b) => a[1].localeCompare(b[1], 'es', { sensitivity: 'base' }));
+
+    // Si la maquina elegida se queda sin bonos al cambiar otro filtro, se
+    // mantiene en la lista para poder verla seleccionada y desmarcarla.
+    if (maquina && !mapa.has(maquina)) opciones.unshift([maquina, maquina + ' (sin bonos)']);
+
+    $('bon-maquina').innerHTML =
+      `<option value="">Todas las máquinas · ${num(mapa.size)}</option>` +
+      opciones.map(([m, d]) =>
+        `<option value="${esc(m)}" ${m === maquina ? 'selected' : ''}>${esc(d)}</option>`).join('');
+  }
+
   function tabla(vis) {
-    // Las columnas de la consulta de Access, una a una y en su orden
-    // (IdOrden, IdBono, IdArticulo, Descrip, IdAlmacen, Expr2,
-    // Articulos_1.Descrip, Expr3). El estado va al final: no esta en el
-    // SELECT de Access, pero es lo que filtran los botones.
+    // Las columnas de la consulta de Access mas las dos que pedia la pantalla:
+    // la maquina del bono y el stock libre separado por almacen (antes solo se
+    // veia el del Principal, y los agujeros de Produccion quedaban ocultos).
     const cab = `<tr>
         <th class="num"><span class="dup__th">Orden</span></th>
         <th class="num"><span class="dup__th">Bono</span></th>
         <th><span class="dup__th">Artículo</span></th>
         <th><span class="dup__th">Descripción</span></th>
-        <th class="num"><span class="dup__th">Almacén</span></th>
-        <th class="num"><span class="dup__th">Stock libre</span></th>
+        <th><span class="dup__th">Máquina</span></th>
+        <th class="num"><span class="dup__th">Libre Principal</span></th>
+        <th class="num"><span class="dup__th">Libre Producción</span></th>
         <th><span class="dup__th">Artículo de la orden</span></th>
         <th class="num"><span class="dup__th">Libre − mínimo</span></th>
         <th><span class="dup__th">Estado</span></th>
       </tr>`;
+    const celdaStock = v => `<td class="num"${v < 0 ? ' style="color:var(--rojo)"' : ''}><b>${num(v)}</b></td>`;
     const cuerpo = vis.map(b => `<tr class="ord__bono">
         <td class="num ord__cod"><b>${esc(b.idorden)}</b></td>
         <td class="num ord__cod">${esc(b.idbono)}</td>
         <td class="ord__cod">${esc(b.idarticulo)}</td>
         <td><b>${esc(b.descrip) || '—'}</b></td>
-        <td class="num ord__cod">${esc(b.idalmacen)}</td>
-        <td class="num"><b>${num(b.stock)}</b></td>
+        <td>${esc(b.maquina || b.matricula) || '—'}</td>
+        ${celdaStock(b.libre_principal)}
+        ${celdaStock(b.libre_produccion)}
         <td>${esc(b.descrip_orden) || '—'}</td>
-        <td class="num"><b>${num(b.stock_sobre_minimo)}</b></td>
+        <td class="num"><b>${num(b.sobre_minimo)}</b></td>
         <td><span class="dup__estado is-${ESTADO[b.estado] || 'espera'}">${esc(b.estado_label)}</span></td>
       </tr>`).join('');
     $('bon-tabla').innerHTML = `<thead>${cab}</thead><tbody>${cuerpo}</tbody>`;
@@ -88,8 +138,10 @@ const Bonos = (() => {
   }
 
   function refrescar() {
-    const vis = datos.bonos.filter(b => coincide(b) && deEstado(b, filtro));
+    const vis = datos.bonos.filter(b =>
+      coincide(b) && deEstado(b, filtro) && deAlmacen(b, almacen) && deMaquina(b));
     botones();
+    selectorMaquinas();
     stats(vis);
     $('bon-resumen').textContent = vis.length === datos.total_bonos
       ? `${num(vis.length)} bonos`
@@ -101,7 +153,7 @@ const Bonos = (() => {
     datos = d;
     d.bonos.forEach(b => {
       b.texto = [b.idorden, b.idbono, `${b.idorden}/${b.idbono}`, b.idarticulo, b.descrip,
-                 b.descrip_orden].join(' ').toLowerCase();
+                 b.descrip_orden, b.matricula, b.maquina].join(' ').toLowerCase();
     });
     refrescar();
     $('generado').textContent = 'Leído a las ' + new Date(d.generado)
@@ -130,11 +182,19 @@ const Bonos = (() => {
     if (datos) refrescar();
   }
 
+  function setMaquina(m) {
+    maquina = m;
+    if (datos) refrescar();
+  }
+
   document.addEventListener('click', e => {
-    const b = e.target.closest('#bon-filtros [data-f]');
-    if (b && datos) { filtro = b.dataset.f; refrescar(); }
+    if (!datos) return;
+    const f = e.target.closest('#bon-filtros [data-f]');
+    if (f) { filtro = f.dataset.f; refrescar(); return; }
+    const a = e.target.closest('#bon-almacenes [data-a]');
+    if (a) { almacen = a.dataset.a; refrescar(); }
   });
 
   document.addEventListener('DOMContentLoaded', cargar);
-  return { cargar, setBusqueda };
+  return { cargar, setBusqueda, setMaquina };
 })();
