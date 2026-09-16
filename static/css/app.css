@@ -208,13 +208,18 @@ button { font-family: inherit; }
 .search-gantt-wrap svg {
   position: absolute; left: 9px; color: var(--ink-3); pointer-events: none;
 }
-#search-gantt {
+/* Por CLASE y no por #search-gantt, que es el ID del input del Gantt. Las otras
+   cuatro paginas montan el mismo envoltorio pero con IDs propios (#ord-buscar,
+   #dup-buscar, #bon-buscar, #con-buscar), asi que se quedaban SIN estilo: sin
+   ancho, sin alto y -lo que se veia- sin el padding izquierdo que reserva el
+   hueco de la lupa, que va posicionada en absoluto encima del texto. */
+.search-gantt-wrap input {
   height: 32px; padding: 0 10px 0 28px; width: 210px;
   border: 1px solid var(--line); border-radius: 8px;
   background: var(--surface); color: var(--ink); font-size: 12px; outline: none;
 }
-#search-gantt:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
-#search-gantt::placeholder { color: var(--ink-3); }
+.search-gantt-wrap input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
+.search-gantt-wrap input::placeholder { color: var(--ink-3); }
 .summary b { color: var(--ink); }
 .summary__warn {
   display: inline-flex; align-items: center; gap: 4px;
@@ -848,6 +853,14 @@ tbody .plan__pers span {
 .dup__estado.is-espera    { background: var(--accent-2); color: var(--accent); }
 .dup__estado.is-activado  { background: var(--verde-bg); color: var(--verde); }
 .dup__estado.is-bloqueado { background: var(--rojo-bg);  color: var(--rojo); }
+/* Los dos que faltaban para el Consultor de bonos. "Sin fichar" es un bono
+   ACTIVO que nadie esta fichando ahora: trabajo en pausa, no un estado del ERP,
+   y por eso va en ambar y no en verde. */
+.dup__estado.is-finalizado { background: var(--gris-bg);  color: var(--gris); }
+.dup__estado.is-sinfichar  { background: var(--ambar-bg); color: var(--ambar); }
+/* Mismo mecanismo que `.ord__bono.tiene-gente`: un filete en el borde de la
+   fila, para localizarla sin leer la columna de estado. */
+.ord__bono.es-sinfichar td:first-child { box-shadow: inset 3px 0 0 var(--ambar); }
 /* Un bono con fichajes ya ha costado trabajo: anular ESE duplicado no sale
    gratis, y conviene que se vea sin abrir nada. */
 .dup__chip-hecho { background: var(--ambar-bg); color: var(--ambar); }
