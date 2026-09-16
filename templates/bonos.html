@@ -28,7 +28,7 @@
       <div class="ord__barra">
         <div class="segmented segmented--lg" id="bon-almacenes"></div>
         <div class="segmented segmented--lg" id="bon-filtros"></div>
-        <select id="bon-maquina" class="select-lg" onchange="Bonos.setMaquina(this.value)"></select>
+        <div id="bon-maquina"></div>
         <span class="ord__cuenta" id="bon-resumen"></span>
       </div>
 
@@ -43,5 +43,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/combo.js?v={{ static_v }}"></script>
 <script src="/static/js/bonos.js?v={{ static_v }}"></script>
 {% endblock %}

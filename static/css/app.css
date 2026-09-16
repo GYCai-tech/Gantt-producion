@@ -142,6 +142,44 @@ button { font-family: inherit; }
 }
 .select-lg:focus { border-color: var(--accent); }
 
+/* --- Desplegable de maquinas en el que se escribe (ver static/js/combo.js) ---
+   Imita a `select-lg` -mismo alto, mismo borde, misma letra- para que en la
+   barra de filtros no se note que uno es un <select> y el otro no. */
+.combo { position: relative; }
+.combo__input {
+  height: 38px; width: 240px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+  font-family: inherit; font-size: 14px; font-weight: 600; color: var(--ink-2);
+  padding: 0 30px 0 12px; outline: none; cursor: text;
+}
+.combo__input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
+/* El placeholder aqui NO es un texto de ayuda: es la opcion "Todas las
+   maquinas", o sea el estado real del filtro. Por eso va con el color y el
+   peso del texto normal y no en gris apagado. */
+.combo__input::placeholder { color: var(--ink-2); font-weight: 600; opacity: 1; }
+.combo.is-puesto .combo__input { border-color: var(--accent); color: var(--ink); }
+/* La flechita, para que se lea como un desplegable y no como una caja de texto */
+.combo::after {
+  content: ''; position: absolute; right: 12px; top: 17px; pointer-events: none;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 5px solid var(--ink-3);
+}
+.combo__lista {
+  position: absolute; z-index: 40; top: calc(100% + 4px); left: 0;
+  min-width: 100%; max-width: 380px; max-height: 300px; overflow-y: auto;
+  margin: 0; padding: 4px; list-style: none;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 10px 24px rgba(16, 24, 40, .14);
+}
+.combo__lista li {
+  padding: 8px 10px; border-radius: 6px; cursor: pointer;
+  font-size: 13.5px; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.combo__lista li.is-puesta { font-weight: 700; color: var(--ink); }
+.combo__lista li.is-marcada { background: var(--accent-2); color: var(--accent); }
+.combo__nada { color: var(--ink-3); cursor: default; }
+
 .backlog__list { flex: 1; overflow-y: auto; padding: 4px 12px 16px; }
 .backlog__group {
   display: flex; align-items: baseline; gap: 6px;
@@ -232,6 +270,12 @@ button { font-family: inherit; }
 }
 .search-gantt-wrap input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
 .search-gantt-wrap input::placeholder { color: var(--ink-3); }
+
+/* Variante para cuando el buscador NO vive en la barra de navegacion sino en
+   la barra de filtros (Consultor de bonos): ahi comparte fila con botones y
+   desplegable de 38px, y a 32px se veia hundido y de juguete. */
+.search-gantt-wrap--lg input { height: 38px; width: 300px; font-size: 14px; padding: 0 12px 0 34px; }
+.search-gantt-wrap--lg svg { left: 12px; }
 .summary b { color: var(--ink); }
 .summary__warn {
   display: inline-flex; align-items: center; gap: 4px;

@@ -1,11 +1,10 @@
 {% extends "base.html" %}
 {% block title %}GYC · Consultor de bonos{% endblock %}
 
+{# La busqueda NO va aqui arriba, como en las demas pantallas: en esta baja a
+   la barra de filtros, junto a los botones y a la maquina, que es donde se la
+   busca y donde se ve. #}
 {% block navbar_extra %}
-<div class="search-gantt-wrap">
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-  <input id="con-buscar" type="search" placeholder="Orden, bono, artículo o máquina…" oninput="Consultor.setBusqueda(this.value)">
-</div>
 <button class="btn-refresh" onclick="Consultor.cargar()" title="Volver a leer el ERP">
   <svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
   <span id="refresh-label">Actualizar</span>
@@ -27,7 +26,11 @@
     <div id="con-cuerpo" hidden>
       <div class="ord__barra">
         <div class="segmented segmented--lg" id="con-filtros"></div>
-        <select id="con-maquina" class="select-lg" onchange="Consultor.setMaquina(this.value)"></select>
+        <div id="con-maquina"></div>
+        <div class="search-gantt-wrap search-gantt-wrap--lg">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input id="con-buscar" type="search" placeholder="Orden, bono, artículo o máquina…" oninput="Consultor.setBusqueda(this.value)">
+        </div>
         <span class="ord__cuenta" id="con-resumen"></span>
       </div>
 
@@ -42,5 +45,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/combo.js?v={{ static_v }}"></script>
 <script src="/static/js/consultor.js?v={{ static_v }}"></script>
 {% endblock %}

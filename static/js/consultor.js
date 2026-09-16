@@ -77,10 +77,14 @@ const Consultor = (() => {
     //  mantiene para poder verla seleccionada y quitarla.
     if (maquina && !mapa.has(maquina)) opciones.unshift([maquina, maquina + ' (sin bonos)']);
 
-    $('con-maquina').innerHTML =
-      `<option value="">Todas las máquinas · ${num(mapa.size)}</option>` +
-      opciones.map(([m, d]) =>
-        `<option value="${esc(m)}" ${m === maquina ? 'selected' : ''}>${esc(d)}</option>`).join('');
+    //  No es un <select>: tambien se puede escribir el nombre de la maquina
+    //  para no bajar a mano por la lista entera (ver combo.js).
+    Combo.pintar('con-maquina', {
+      opciones,
+      valor: maquina,
+      vacio: `Todas las máquinas · ${num(mapa.size)}`,
+      onElegir: setMaquina,
+    });
   }
 
   function tabla(vis) {
