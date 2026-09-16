@@ -96,10 +96,19 @@ const App = (() => {
   // programa de produccion. Viene de /api/avisos, no de las barras: el aviso
   // es del operario y no debe depender de lo que quepa en la ventana.
   let sinSalida = {};
+  // {idempleado: {motivo, desde, hasta}} de quien no esta en planta el dia
+  // visible: vacaciones, medico, baja. Viene del mismo /api/avisos y por el
+  // mismo motivo que sinSalida: la ausencia es de la persona, no de sus barras,
+  // y tiene que verse aunque ese dia no tenga ninguna asignada.
+  let ausencias = {};
 
   // ── Utilidades de fecha ────────────────────────────────────────────
   const DAY = 86400000;
   const pad = n => String(n).padStart(2, '0');
+  // YYYY-MM-DD en hora LOCAL. Con toISOString() saldria el dia ANTERIOR: la
+  // medianoche local de Madrid son las 22:00Z de la vispera. Es el mismo
+  // desfase que corrige _dia_local en el backend.
+  const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const startOfDay = d => { const r = new Date(d); r.setHours(0,0,0,0); return r; };
   const addDays = (d, n) => new Date(+d + n * DAY);
   const isWeekend = d => d.getDay() === 0 || d.getDay() === 6;
@@ -241,10 +250,11 @@ const App = (() => {
     // pantalla.
     const [its, avisos] = await Promise.all([
       fetch(url).then(r => r.json()),
-      fetch(`/api/avisos?vista=${vista}`).then(r => r.json()).catch(() => ({})),
+      fetch(`/api/avisos?vista=${vista}&dia=${ymd(days[0])}`).then(r => r.json()).catch(() => ({})),
     ]);
     items = its;
     sinSalida = avisos.sin_salida || {};
+    ausencias = avisos.ausencias || {};
     itemMap.clear();
     items.forEach(i => itemMap.set(String(i.id), i));
     // Las áreas salen de las barras, así que se recalculan con cada carga.
@@ -402,9 +412,16 @@ const App = (() => {
         // filtro de area: su bono puede ser de otra seccion y entonces la fila
         // no pertenece a la que se esta mirando.
         const atascado = areaActive === 'todos' && !!sinSalida[String(g.id)];
+        // Y quien no ha venido, igual: un ausente NO tiene barras --porque esta
+        // de vacaciones o de baja-- asi que el filtro lo escondia justo el dia
+        // en que hacia falta saberlo. Si su fila desaparece, la marca de
+        // ausencia no se pinta nunca y el hueco en la planta no se explica.
+        // Mismo guardarraiz que el atasco: solo sin filtro de area, porque sin
+        // barras no hay area a la que pertenecer.
+        const ausente = areaActive === 'todos' && !!ausencias[String(g.id)];
         const has = ventanaIncluyeHoy
-          ? (barras.some(i => i.en_curso) || atascado)
-          : barras.length > 0;
+          ? (barras.some(i => i.en_curso) || atascado || ausente)
+          : (barras.length > 0 || ausente);
         return cargaFilter === 'con' ? has : !has;
       });
     }
@@ -464,14 +481,32 @@ const App = (() => {
       // no es que vaya justo, es que no puede empezar ninguno. El numero sale
       // de la cola entera, no de las barras que se ven.
       const atascado = sinSalida[String(grp.id)] || 0;
+      // Quien no ha venido no esta "atascado": la ausencia manda sobre el aviso
+      // de cola bloqueada. Claro que no puede empezar nada -- no esta -- y las
+      // dos marcas a la vez solo dirian lo mismo dos veces, en dos colores.
+      const ausente = ausencias[String(grp.id)] || null;
+
+      // Una ausencia PARCIAL no es "no vino": una consulta medica de 07:00 a
+      // 10:00 deja media jornada trabajada. Se marca la fila igual, pero sin
+      // rayar la pista y diciendo la franja, o estariamos afirmando que falto
+      // el dia entero.
+      const franja = ausente && ausente.parcial && ausente.hora_ini && ausente.hora_fin
+        ? `${ausente.hora_ini}–${ausente.hora_fin}` : '';
 
       const row = document.createElement('div');
-      row.className = 'row' + (atascado ? ' is-sin-salida' : '');
+      row.className = 'row'
+        + (ausente ? ' is-ausente' + (ausente.parcial ? ' is-ausente--parcial' : '')
+           : atascado ? ' is-sin-salida' : '');
       row.style.height = rowH + 'px';
 
       const label = document.createElement('div');
       label.className = 'row__label';
-      if (atascado) {
+      if (ausente) {
+        label.title = ausente.motivo
+          + (franja ? ` · de ${franja}` : '')
+          + (ausente.desde && ausente.hasta && ausente.desde !== ausente.hasta
+             ? ` · del ${fmtDate(ausente.desde)} al ${fmtDate(ausente.hasta)}` : '');
+      } else if (atascado) {
         label.title = (atascado === 1
           ? 'El único bono que tiene asignado está bloqueado'
           : `Sus ${atascado} bonos asignados están bloqueados`)
@@ -479,7 +514,9 @@ const App = (() => {
       }
       label.innerHTML = `<div class="row__name">${esc(grp.nombre)}</div>` +
                         `<div class="row__sub">${esc(grp.sub || '')}${lanes > 1 ? ` · ${lanes} paralelos` : ''}</div>` +
-                        (atascado
+                        (ausente
+                          ? `<div class="row__aviso row__aviso--ausente">${esc(ausente.motivo)}${franja ? ` · ${franja}` : ''}</div>`
+                          : atascado
                           ? `<div class="row__aviso">Todo bloqueado · ${atascado} bono${atascado > 1 ? 's' : ''}</div>`
                           : '');
 

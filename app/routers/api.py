@@ -640,7 +640,10 @@ def _avance_por_bono(lineas: list[dict], ahora: datetime) -> dict:
 
 
 @router.get("/avisos")
-def get_avisos(vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
+def get_avisos(
+    vista: str = Query("empleado", pattern="^(maquina|empleado)$"),
+    dia: Optional[date] = Query(None, description="Día visible del Gantt. Por defecto, hoy."),
+):
     """Avisos de FILA: los que no son de un bono sino del recurso entero.
 
     Va aparte de `/items` a propósito, porque no depende de la ventana visible.
@@ -651,13 +654,21 @@ def get_avisos(vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
     barras, el aviso desaparecía justo en el día en que más falta hace.
 
     Una máquina no "se queda sin poder trabajar" —el semáforo es de la
-    persona—, así que en la vista de máquinas no hay nada que avisar.
+    persona—, así que en la vista de máquinas no hay nada que avisar. Las
+    ausencias son igual de personales: una máquina no se va al médico.
+
+    `dia` es el primer día visible del Gantt, y solo lo usan las ausencias.
+    `sin_salida` es el estado de la cola y no depende de la ventana; una
+    ausencia sí: quien hoy está de vacaciones mañana puede estar en planta.
     """
     if vista != "empleado":
-        return {"sin_salida": {}}
+        return {"sin_salida": {}, "ausencias": {}}
     ahora = datetime.now()
     trabajando = {str(l["idempleado"]) for l in _leer_abiertas(ahora)}
-    return {"sin_salida": _sin_salida(_leer_cola(), trabajando)}
+    return {
+        "sin_salida": _sin_salida(_leer_cola(), trabajando),
+        "ausencias":  _ausencias(dia or date.today()),
+    }
 
 
 @router.get("/items")
@@ -1242,6 +1253,141 @@ def _sin_salida(cola: list[dict], trabajando: set[str]) -> dict[str, int]:
         por_empleado.setdefault(str(b["idempleado"]), []).append(b["semaforo"])
     return {rid: len(s) for rid, s in por_empleado.items()
             if rid not in trabajando and all(x == "bloqueada" for x in s)}
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  AUSENCIAS: quién no está en planta, y por qué
+# ─────────────────────────────────────────────────────────────────────
+#  Presencia y ausencias NO están en el ERP, y no por descuido: `Empleados_
+#  Presencia`, `Empleados_Contratos`, `Empleados_Situacion_Especial`,
+#  `Calendario_Empleados` y las peticiones de calendario están las cinco a CERO
+#  filas; ningún empleado tiene calendario asignado (0 de 42); y las incidencias
+#  del catálogo —Vacaciones, Día libre, Ausencia— son semilla de fábrica de 2017
+#  con `Activa = False`. El módulo de RRHH del ERP nunca se encendió.
+#
+#  El dato vive en PORTALHR, otra base del mismo servidor. El cruce es
+#  `Conf_Empleados.codigotag = PORTALHR.dbo.Employees.AccessId` —36 de los 42
+#  empleados lo tienen—, el mismo que ya hace la vista `Persv_FichajeSebastian`.
+#
+#  PENDIENTE DE PERMISOS. El login de la app solo tiene SELECT sobre
+#  `Employees_PersonalData`; sobre `Employees` responde "permiso denegado". Por
+#  eso `Persv_FichajeSebastian` tampoco se puede leer desde aquí: esa vista vive
+#  en GOMEZYCRESPO y las tablas en PORTALHR, y entre bases distintas no hay
+#  encadenamiento de propiedad que valga. Una vista equivalente creada DENTRO de
+#  PORTALHR sí funcionaría con un único GRANT sobre ella.
+#
+#  La consulta se deja deliberadamente SIN escribir. Nunca se han podido ver las
+#  columnas de `Employees_Leaves` ni `Employees_Holidays` —ni siquiera consta que
+#  existan, porque `sys.objects` también filtra por permisos—, así que cualquier
+#  SQL aquí sería inventado: parecería terminado y fallaría al primer contacto.
+#  Cuando llegue el acceso basta rellenar `_SQL_AUSENCIAS` respetando el contrato
+#  de columnas; el endpoint, el front y el CSS ya están hechos.
+# ─────────────────────────────────────────────────────────────────────
+
+#  Las DOS tablas hacen falta, y se filtran distinto:
+#
+#  · `Employees_Leaves` son las BAJAS y traen rango: `dateEnd` viene relleno en
+#    las 14 filas y las 14 son intervalos reales. Se filtra por intervalo.
+#  · `Employees_Holidays` son vacaciones y permisos, con una fila POR DÍA:
+#    `dateEnd` está a NULL en las 2.232 filas. Se filtra por día suelto.
+#
+#  Sin las bajas se pierde gente: el 16-09-2026 producción tenía 2 ausencias en
+#  Holidays y otras 2 en Leaves (un accidente de moto y una baja larga). La mitad.
+#
+#  `StatusId = 1` es el estado bueno. El 3 NO es "rechazada" como parecía: su
+#  `DenyReason` es literalmente "Automatically denied because the date of the
+#  holiday is before the current date" —ausencias meüdas a toro pasado que el
+#  portal autodeniega—, y ahí caen las 71 bajas de 2025. Se dejan fuera igual
+#  porque son todas pasadas, pero conviene saber que al navegar a un día viejo
+#  el Gantt no las verá. El 4 son solicitudes sin enviar (29 filas, todas de una
+#  persona de administración).
+#
+#  El MOTIVO sale de `Reason`, que es texto libre de quien lo metió, y por eso
+#  puede venir vacío o ser un guion. `Type` tampoco sirve de etiqueta: mezcla
+#  cosas muy distintas bajo el mismo código —el 19 tiene "SUSPENSION EMPLEO" y
+#  "operacion hija"; el 3, "CONSULTA MEDICA" y "DIA SINDICAL"—. Así que se usa
+#  el texto si lo hay y, si no, una etiqueta genérica derivada del Type.
+#
+#  Contrato de salida: una fila por empleado ausente el día `:dia`, con
+#  `idempleado` (el del ERP, resuelto vía codigotag), `motivo` ya legible,
+#  `desde`/`hasta` y la franja `parcial`/`hora_ini`/`hora_fin`.
+_SQL_AUSENCIAS = """
+WITH ausencia AS (
+    SELECT l.EmployeeId,
+           CAST(l.[date] AS date)  AS desde,
+           CAST(l.dateEnd AS date) AS hasta,
+           NULLIF(LTRIM(RTRIM(l.Reason)), '') AS motivo_libre,
+           'Baja'                  AS motivo_tipo,
+           CAST(0 AS bit)             AS parcial,
+           CAST(NULL AS nvarchar(10)) AS hora_ini,
+           CAST(NULL AS nvarchar(10)) AS hora_fin,
+           1 AS prioridad
+    FROM PORTALHR.dbo.Employees_Leaves l
+    WHERE l.StatusId = 1
+      AND :dia BETWEEN CAST(l.[date] AS date) AND CAST(l.dateEnd AS date)
+
+    UNION ALL
+
+    SELECT h.EmployeeId,
+           CAST(h.[date] AS date), CAST(h.[date] AS date),
+           NULLIF(LTRIM(RTRIM(h.Reason)), ''),
+           CASE WHEN h.[Type] IN (0, 1, 2) THEN 'Vacaciones'
+                WHEN h.[Type] = 5          THEN 'Baja'
+                ELSE 'Permiso' END,
+           ISNULL(h.PartialDay, 0), h.StartTime, h.EndTime,
+           2
+    FROM PORTALHR.dbo.Employees_Holidays h
+    WHERE h.StatusId = 1
+      AND CAST(h.[date] AS date) = :dia
+), resuelta AS (
+    --  Una baja pesa más que un permiso: si alguien tiene las dos el mismo día
+    --  manda la baja, que es la que explica de verdad por qué no está.
+    SELECT ce.IdEmpleado AS idempleado,
+           COALESCE(a.motivo_libre, a.motivo_tipo) AS motivo,
+           a.desde, a.hasta, a.parcial, a.hora_ini, a.hora_fin,
+           ROW_NUMBER() OVER (PARTITION BY ce.IdEmpleado ORDER BY a.prioridad) AS rn
+    FROM ausencia a
+        JOIN PORTALHR.dbo.Employees e           ON e.EmployeeId = a.EmployeeId
+        --  Sin este guardarraíl, un tag vacío casaría '' = '' y cruzaría gente
+        --  sin ninguna relación. Hoy no ocurre (medido: 0 casos), pero basta un
+        --  codigotag en blanco para que ocurra.
+        JOIN GOMEZYCRESPO.dbo.Conf_Empleados ce ON ce.codigotag = e.AccessId
+                                               AND LTRIM(RTRIM(e.AccessId)) <> ''
+)
+SELECT idempleado, motivo, desde, hasta, parcial, hora_ini, hora_fin
+FROM resuelta WHERE rn = 1
+"""
+
+
+def _ausencias(dia: date) -> dict[str, dict]:
+    """{idempleado: {motivo, desde, hasta}} de quien no está en planta ese día.
+
+    Degrada a vacío igual que el semáforo o el escandallo: una ausencia que no
+    se puede leer es información de menos, no una pantalla rota. Mientras no
+    haya permisos en PORTALHR devuelve {} y el Gantt se pinta exactamente como
+    hoy, sin marcas.
+    """
+    if not _SQL_AUSENCIAS:
+        return {}
+    try:
+        filas = _erp(_SQL_AUSENCIAS, {"dia": dia})
+    except HTTPException:
+        print("[avisos] ausencias no disponibles: ¿faltan permisos en PORTALHR?")
+        return {}
+    return {
+        str(r["idempleado"]): {
+            "motivo": (r["motivo"] or "").strip() or "Ausente",
+            "desde":  r["desde"],
+            "hasta":  r["hasta"],
+            # Una ausencia PARCIAL no es "no vino": Elías tiene consulta de 07:00
+            # a 10:00 y trabaja el resto de la jornada. Marcarle el día entero
+            # sería falso, así que la franja viaja hasta el front.
+            "parcial":  bool(r["parcial"]),
+            "hora_ini": (r["hora_ini"] or "").strip() or None,
+            "hora_fin": (r["hora_fin"] or "").strip() or None,
+        }
+        for r in filas
+    }
 
 
 def _encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,

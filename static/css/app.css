@@ -333,6 +333,33 @@ button { font-family: inherit; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* Operario que no esta en planta: vacaciones, medico, baja. Se marca la fila
+   entera igual que el atasco —tambien es de la persona, no de un bono suyo—
+   pero en GRIS y no en rojo: no es un problema que resolver ni una alarma, es
+   que no esta. La pista va rayada para que se lea "aqui no va nada" de un
+   vistazo, sin competir con las barras de quien si vino. */
+.row.is-ausente .row__label {
+  background: var(--gris-bg); box-shadow: inset 3px 0 0 var(--gris);
+}
+.row.is-ausente:hover .row__label { background: #e5e9f0; }
+.row.is-ausente .row__name { color: var(--ink-2); }
+.row.is-ausente .row__track,
+.row.is-ausente:hover .row__track {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(121,133,154,.05) 0 6px,
+    rgba(121,133,154,.11) 6px 12px
+  );
+}
+.row__aviso--ausente { color: var(--gris); }
+
+/* Ausencia PARCIAL (una consulta medica de 07:00 a 10:00): la persona SI vino y
+   tiene barras que pintar. Se deja la marca en el rail —hay algo que saber— pero
+   la pista va limpia: rayarla diria que falto el dia entero, y es mentira. */
+.row.is-ausente--parcial .row__track,
+.row.is-ausente--parcial:hover .row__track { background: none; }
+.row.is-ausente--parcial .row__name { color: var(--ink); }
+
 /* Escala del eje. El porcentaje va DENTRO del control y con ancho fijo para
    que los botones no bailen al pasar de 100% a 337%. */
 .zoom--escala { align-items: center; }
