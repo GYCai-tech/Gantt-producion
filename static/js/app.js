@@ -412,16 +412,14 @@ const App = (() => {
         // filtro de area: su bono puede ser de otra seccion y entonces la fila
         // no pertenece a la que se esta mirando.
         const atascado = areaActive === 'todos' && !!sinSalida[String(g.id)];
-        // Y quien no ha venido, igual: un ausente NO tiene barras --porque esta
-        // de vacaciones o de baja-- asi que el filtro lo escondia justo el dia
-        // en que hacia falta saberlo. Si su fila desaparece, la marca de
-        // ausencia no se pinta nunca y el hueco en la planta no se explica.
-        // Mismo guardarraiz que el atasco: solo sin filtro de area, porque sin
-        // barras no hay area a la que pertenecer.
-        const ausente = areaActive === 'todos' && !!ausencias[String(g.id)];
+        // OJO: un ausente NO cuenta como "con actividad". Estar de baja o de
+        // vacaciones es justo lo contrario de tener trabajo en marcha, asi que
+        // su fila sale en "Todos" --donde no se filtra nada-- y en "Sin
+        // actividad", que es donde toca buscarlo. El atasco si cuenta porque
+        // ese si tiene bonos asignados, solo que no puede empezarlos.
         const has = ventanaIncluyeHoy
-          ? (barras.some(i => i.en_curso) || atascado || ausente)
-          : (barras.length > 0 || ausente);
+          ? (barras.some(i => i.en_curso) || atascado)
+          : barras.length > 0;
         return cargaFilter === 'con' ? has : !has;
       });
     }
