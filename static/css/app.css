@@ -875,14 +875,14 @@ tbody .plan__pers span {
 .dup__estado.is-espera    { background: var(--accent-2); color: var(--accent); }
 .dup__estado.is-activado  { background: var(--verde-bg); color: var(--verde); }
 .dup__estado.is-bloqueado { background: var(--rojo-bg);  color: var(--rojo); }
-/* Los dos que faltaban para el Consultor de bonos. "Sin fichar" es un bono
+/* Los dos que faltaban para el Consultor de bonos. "Parado" es un bono
    ACTIVO que nadie esta fichando ahora: trabajo en pausa, no un estado del ERP,
    y por eso va en ambar y no en verde. */
 .dup__estado.is-finalizado { background: var(--gris-bg);  color: var(--gris); }
-.dup__estado.is-sinfichar  { background: var(--ambar-bg); color: var(--ambar); }
+.dup__estado.is-parado     { background: var(--ambar-bg); color: var(--ambar); }
 /* Mismo mecanismo que `.ord__bono.tiene-gente`: un filete en el borde de la
    fila, para localizarla sin leer la columna de estado. */
-.ord__bono.es-sinfichar td:first-child { box-shadow: inset 3px 0 0 var(--ambar); }
+.ord__bono.es-parado td:first-child { box-shadow: inset 3px 0 0 var(--ambar); }
 
 /* Fila tintada segun el estado del bono. Se reutilizan los mismos tokens que
    las etiquetas -- los de la paleta de estados, ya calmados-- para que fondo y
@@ -892,7 +892,7 @@ tbody .plan__pers span {
 .ord__tabla tbody tr.es-activado   td { background: var(--verde-bg); }
 .ord__tabla tbody tr.es-finalizado td { background: var(--gris-bg); }
 .ord__tabla tbody tr.es-bloqueado  td { background: var(--rojo-bg); }
-.ord__tabla tbody tr.es-sinfichar  td { background: var(--ambar-bg); }
+.ord__tabla tbody tr.es-parado     td { background: var(--ambar-bg); }
 /* Un bono con fichajes ya ha costado trabajo: anular ESE duplicado no sale
    gratis, y conviene que se vea sin abrir nada. */
 .dup__chip-hecho { background: var(--ambar-bg); color: var(--ambar); }

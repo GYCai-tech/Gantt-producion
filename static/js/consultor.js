@@ -43,9 +43,15 @@ const Consultor = (() => {
   const deEstado  = (b, f) => FILTROS[f].e === null || b.estado_bono === FILTROS[f].e;
   const deMaquina = b => !maquina || b.matricula === maquina;
 
-  //  Un bono ACTIVO que nadie esta fichando ahora mismo es trabajo en pausa.
+  //  PARADO: el ERP lo tiene como Activo y nadie esta fichando ahora mismo.
   //  Lo dice el ERP en vivo (lineas con Hfinal NULL), no la replica.
-  const sinFichar = b => b.estado_bono === 1 && !b.tiene_fichaje_activo;
+  //
+  //  Se llamaba "Sin fichar", heredado de la v1, y el nombre enganaba: se leia
+  //  como "nunca se ha fichado" cuando lo que dice es "ahora no hay nadie".
+  //  Ojo: tampoco significa terminado. El bono 6717/10 salia asi con sus tres
+  //  fichajes cerrados y 110 minutos trabajados esa manana; el ERP seguia sin
+  //  darlo por finalizado ni declarar una sola pieza.
+  const estaParado = b => b.estado_bono === 1 && !b.tiene_fichaje_activo;
 
   //  La cuenta de cada boton sale de lo que dejan los OTROS filtros: si no, un
   //  boton promete bonos que al pulsarlo no aparecen.
@@ -91,9 +97,9 @@ const Consultor = (() => {
     //  La fila entera va tintada segun su estado: de un vistazo se ve el
     //  reparto sin tener que leer la ultima columna.
     const cuerpo = vis.map(b => {
-      const parado = sinFichar(b);
+      const parado = estaParado(b);
       const e = parado
-        ? { tit: 'Sin fichar', cls: 'sinfichar' }
+        ? { tit: 'Parado', cls: 'parado' }
         : (ESTADO[b.estado_bono] || ESTADO[0]);
       return `<tr class="ord__bono dup__bono es-${e.cls}">
         <td class="num ord__cod"><b>${esc(b.idorden)}</b></td>
