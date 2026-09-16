@@ -54,18 +54,6 @@ const Bonos = (() => {
   // calculara sobre lo ya filtrado por el, siempre diria lo mismo que el total.
   const base = b => coincide(b) && deMaquina(b);
 
-  function stats(vis) {
-    const ordenes = new Set(vis.map(b => b.idorden)).size;
-    const articulos = new Set(vis.map(b => b.idarticulo)).size;
-    $('bon-stats').innerHTML = [
-      ['Bonos', vis.length, datos.total_bonos, 'ord__stat--ojo'],
-      ['Órdenes', ordenes, datos.total_ordenes, ''],
-      ['Artículos', articulos, datos.total_articulos, ''],
-    ].map(([t, n, tot, cls]) => `<div class="ord__stat ${cls}">
-        <span>${t}</span><b>${num(n)}</b>${
-          n !== tot ? `<em>de ${num(tot)}</em>` : ''}</div>`).join('');
-  }
-
   // La cuenta de cada boton sale de lo que dejan los OTROS filtros: si no, un
   // boton promete bonos que al pulsarlo no aparecen.
   function botones() {
@@ -121,7 +109,11 @@ const Bonos = (() => {
         <th><span class="dup__th">Estado</span></th>
       </tr>`;
     const celdaStock = v => `<td class="num"${v < 0 ? ' style="color:var(--rojo)"' : ''}><b>${num(v)}</b></td>`;
-    const cuerpo = vis.map(b => `<tr class="ord__bono">
+    // La fila entera va tintada segun el estado del bono, igual que en el
+    // Consultor: de un vistazo se ve el reparto sin leer la ultima columna.
+    // Aqui solo hay tres estados vivos --en espera, activado y bloqueado--, y
+    // los tres tienen ya su color en el sistema compartido.
+    const cuerpo = vis.map(b => `<tr class="ord__bono es-${ESTADO[b.estado] || 'espera'}">
         <td class="num ord__cod"><b>${esc(b.idorden)}</b></td>
         <td class="num ord__cod">${esc(b.idbono)}</td>
         <td class="ord__cod">${esc(b.idarticulo)}</td>
@@ -142,7 +134,6 @@ const Bonos = (() => {
       coincide(b) && deEstado(b, filtro) && deAlmacen(b, almacen) && deMaquina(b));
     botones();
     selectorMaquinas();
-    stats(vis);
     $('bon-resumen').textContent = vis.length === datos.total_bonos
       ? `${num(vis.length)} bonos`
       : `${num(vis.length)} de ${num(datos.total_bonos)} bonos`;
