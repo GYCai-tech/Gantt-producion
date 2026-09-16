@@ -109,11 +109,7 @@ const Bonos = (() => {
         <th><span class="dup__th">Estado</span></th>
       </tr>`;
     const celdaStock = v => `<td class="num"${v < 0 ? ' style="color:var(--rojo)"' : ''}><b>${num(v)}</b></td>`;
-    // La fila entera va tintada segun el estado del bono, igual que en el
-    // Consultor: de un vistazo se ve el reparto sin leer la ultima columna.
-    // Aqui solo hay tres estados vivos --en espera, activado y bloqueado--, y
-    // los tres tienen ya su color en el sistema compartido.
-    const cuerpo = vis.map(b => `<tr class="ord__bono es-${ESTADO[b.estado] || 'espera'}">
+    const cuerpo = vis.map(b => `<tr class="ord__bono">
         <td class="num ord__cod"><b>${esc(b.idorden)}</b></td>
         <td class="num ord__cod">${esc(b.idbono)}</td>
         <td class="ord__cod">${esc(b.idarticulo)}</td>
