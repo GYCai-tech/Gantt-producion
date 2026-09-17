@@ -97,7 +97,10 @@ const App = (() => {
   // es del operario y no debe depender de lo que quepa en la ventana.
   let sinSalida = {};
   // {idempleado: {motivo, desde, hasta}} de quien no esta en planta el dia
-  // visible: vacaciones, medico, baja. Viene del mismo /api/avisos y por el
+  // visible. `motivo` es SIEMPRE una de tres categorias -- "De baja",
+  // "Vacaciones" o "Ausencia" --: el porque concreto es dato de salud y el
+  // backend no lo manda, asi que aqui no hay nada que filtrar ni ocultar.
+  // Viene del mismo /api/avisos y por el
   // mismo motivo que sinSalida: la ausencia es de la persona, no de sus barras,
   // y tiene que verse aunque ese dia no tenga ninguna asignada.
   let ausencias = {};

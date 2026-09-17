@@ -1302,11 +1302,27 @@ def _sin_salida(cola: list[dict], trabajando: set[str]) -> dict[str, int]:
 #  el Gantt no las verá. El 4 son solicitudes sin enviar (29 filas, todas de una
 #  persona de administración).
 #
-#  El MOTIVO sale de `Reason`, que es texto libre de quien lo metió, y por eso
-#  puede venir vacío o ser un guion. `Type` tampoco sirve de etiqueta: mezcla
-#  cosas muy distintas bajo el mismo código —el 19 tiene "SUSPENSION EMPLEO" y
-#  "operacion hija"; el 3, "CONSULTA MEDICA" y "DIA SINDICAL"—. Así que se usa
-#  el texto si lo hay y, si no, una etiqueta genérica derivada del Type.
+#  `Reason` NO SE LEE, y es deliberado. Es texto libre de quien metió la
+#  ausencia, y lo que la gente escribe ahí es categoría especial del RGPD:
+#  "CARDIÓLOGO HIJA", "URGENCIAS", "OPERACION HIJA", "HIJO ENFERMO",
+#  "ENCONTRARME ENFERMO EN CAMA", "SUSPENSION EMPLEO". El Gantt lo pintaba en
+#  la fila del operario, a la vista de toda la planta. Para saber que alguien
+#  no está no hace falta saber por qué, así que la columna ni se selecciona:
+#  cortado en la consulta, no en el front, para que el dato no llegue a salir
+#  del servidor ni viaje en el JSON de /api/avisos.
+#
+#  La etiqueta sale solo de la CATEGORÍA, y son tres:
+#
+#      De baja ...... `Employees_Leaves` entera, y el Type 5 de Holidays
+#      Vacaciones ... Type 0, 1 y 2 (la mayoría de lo que se ve)
+#      Ausencia ..... todo lo demás
+#
+#  Nada más fino que eso: `Type` no da para más porque mezcla cosas distintas
+#  bajo el mismo código —el 19 tiene "SUSPENSION EMPLEO" y "operacion hija"; el
+#  3, "CONSULTA MEDICA" y "DIA SINDICAL"—. Y no hay etiqueta de "no
+#  justificada" porque el portal no la tiene: `LeaveId` viene NULL en las
+#  1.985 aprobadas y `NotContribution` está a False en todas. Deducirla del
+#  texto vacío sería acusar a alguien por una casilla en blanco.
 #
 #  Contrato de salida: una fila por empleado ausente el día `:dia`, con
 #  `idempleado` (el del ERP, resuelto vía codigotag), `motivo` ya legible,
@@ -1316,8 +1332,7 @@ WITH ausencia AS (
     SELECT l.EmployeeId,
            CAST(l.[date] AS date)  AS desde,
            CAST(l.dateEnd AS date) AS hasta,
-           NULLIF(LTRIM(RTRIM(l.Reason)), '') AS motivo_libre,
-           'Baja'                  AS motivo_tipo,
+           'De baja'               AS motivo,
            CAST(0 AS bit)             AS parcial,
            CAST(NULL AS nvarchar(10)) AS hora_ini,
            CAST(NULL AS nvarchar(10)) AS hora_fin,
@@ -1330,10 +1345,9 @@ WITH ausencia AS (
 
     SELECT h.EmployeeId,
            CAST(h.[date] AS date), CAST(h.[date] AS date),
-           NULLIF(LTRIM(RTRIM(h.Reason)), ''),
            CASE WHEN h.[Type] IN (0, 1, 2) THEN 'Vacaciones'
-                WHEN h.[Type] = 5          THEN 'Baja'
-                ELSE 'Permiso' END,
+                WHEN h.[Type] = 5          THEN 'De baja'
+                ELSE 'Ausencia' END,
            ISNULL(h.PartialDay, 0), h.StartTime, h.EndTime,
            2
     FROM PORTALHR.dbo.Employees_Holidays h
@@ -1343,7 +1357,7 @@ WITH ausencia AS (
     --  Una baja pesa más que un permiso: si alguien tiene las dos el mismo día
     --  manda la baja, que es la que explica de verdad por qué no está.
     SELECT ce.IdEmpleado AS idempleado,
-           COALESCE(a.motivo_libre, a.motivo_tipo) AS motivo,
+           a.motivo,
            a.desde, a.hasta, a.parcial, a.hora_ini, a.hora_fin,
            ROW_NUMBER() OVER (PARTITION BY ce.IdEmpleado ORDER BY a.prioridad) AS rn
     FROM ausencia a
@@ -1360,7 +1374,7 @@ FROM resuelta WHERE rn = 1
 
 
 #  Cómo se LEE una ausencia parcial en planta. Decir "07:00–10:00" describe el
-#  hueco; lo que hace falta saber es que ese día Elías entra a las 10:00.
+#  hueco; lo que hace falta saber es que ese día el operario entra a las 10:00.
 #
 #  La frase depende de dónde caiga la franja respecto a la jornada. Medido sobre
 #  las 255 parciales aprobadas, y las cuatro formas son reales:
@@ -1411,14 +1425,17 @@ def _ausencias(dia: date) -> dict[str, dict]:
     for r in filas:
         hora_ini = (r["hora_ini"] or "").strip() or None
         hora_fin = (r["hora_fin"] or "").strip() or None
-        # Una ausencia PARCIAL no es "no vino": Elías tiene consulta de 07:00 a
-        # 10:00 y trabaja el resto de la jornada. Marcarle el día entero sería
+        # Una ausencia PARCIAL no es "no vino": quien falta de 07:00 a 10:00
+        # trabaja el resto de la jornada. Marcarle el día entero sería
         # falso. `cuando` es la frase ya resuelta —"entra a las 10:00"—, y que
         # salga None es lo que decide que la ausencia es de día completo: así el
         # front no tiene que volver a razonar sobre horarios.
         cuando = _cuando_falta(hora_ini, hora_fin) if r["parcial"] else None
         ausencias[str(r["idempleado"])] = {
-            "motivo":  (r["motivo"] or "").strip() or "Ausente",
+            #  Ya viene de un literal de la consulta —nunca de texto que haya
+            #  escrito una persona—, así que el respaldo es solo por si algún
+            #  día la consulta cambia y deja de garantizarlo.
+            "motivo":  (r["motivo"] or "").strip() or "Ausencia",
             "desde":   r["desde"],
             "hasta":   r["hasta"],
             "parcial": bool(cuando),

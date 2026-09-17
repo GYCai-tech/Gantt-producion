@@ -52,12 +52,12 @@ def test_mapea_por_idempleado_en_texto(monkeypatch):
 
 
 def test_una_parcial_dice_como_afecta_a_la_jornada(monkeypatch):
-    """Elias tiene consulta de 07:00 a 10:00: lo que hay que saber no es la
-    franja en crudo, es que ESE DIA entra a las 10:00."""
-    fingir_erp(monkeypatch, [fila(15, "Consulta médica", True, "07:00", "10:00")])
-    elias = api._ausencias(DIA)["15"]
-    assert elias["parcial"] is True
-    assert elias["cuando"] == "entra a las 10:00"
+    """Quien falta de 07:00 a 10:00 trabaja el resto: lo que hay que saber no es
+    la franja en crudo, es que ESE DIA entra a las 10:00."""
+    fingir_erp(monkeypatch, [fila(15, "Ausencia", True, "07:00", "10:00")])
+    parcial = api._ausencias(DIA)["15"]
+    assert parcial["parcial"] is True
+    assert parcial["cuando"] == "entra a las 10:00"
 
 
 def test_las_cuatro_formas_de_una_parcial():
@@ -81,17 +81,34 @@ def test_una_parcial_que_cubre_la_jornada_es_dia_completo(monkeypatch):
 def test_una_baja_larga_conserva_su_rango(monkeypatch):
     """Las bajas vienen de Employees_Leaves y son intervalos, no dias sueltos."""
     fingir_erp(monkeypatch, [
-        fila(31, "ACCIDENTE MOTO", desde=date(2026, 6, 2), hasta=date(2026, 9, 30)),
+        fila(31, "De baja", desde=date(2026, 6, 2), hasta=date(2026, 9, 30)),
     ])
     victor = api._ausencias(DIA)["31"]
     assert (victor["desde"], victor["hasta"]) == (date(2026, 6, 2), date(2026, 9, 30))
 
 
 def test_un_motivo_vacio_no_deja_la_fila_muda(monkeypatch):
-    """`Reason` es texto libre y llega vacio a menudo. Marcar la fila sin decir
-    por que seria peor que no marcarla."""
+    """La consulta ya solo devuelve literales, asi que esto no deberia pasar.
+    El respaldo existe por si algun dia deja de garantizarlo: marcar la fila sin
+    decir nada seria peor que no marcarla."""
     fingir_erp(monkeypatch, [fila(3, "   "), fila(4, None)])
-    assert [a["motivo"] for a in api._ausencias(DIA).values()] == ["Ausente", "Ausente"]
+    assert [a["motivo"] for a in api._ausencias(DIA).values()] == ["Ausencia", "Ausencia"]
+
+
+def test_la_consulta_no_lee_el_motivo_escrito_en_el_portal():
+    """`Reason` es texto libre y la gente escribe ahi datos de salud suyos o de
+    sus hijos. El Gantt lo pintaba en la fila del operario, a la vista de toda
+    la planta.
+
+    Se corta en la CONSULTA, no en el front: si la columna no se selecciona, el
+    dato no sale del servidor ni puede reaparecer por un descuido al pintar.
+    Este test es el guardarrail de eso."""
+    assert "Reason" not in api._SQL_AUSENCIAS
+
+    #  Y la etiqueta sale de un literal, no de nada que haya tecleado una
+    #  persona: las tres categorias son las unicas salidas posibles.
+    for etiqueta in ("'De baja'", "'Vacaciones'", "'Ausencia'"):
+        assert etiqueta in api._SQL_AUSENCIAS
 
 
 def test_si_el_erp_falla_el_gantt_se_pinta_igual(monkeypatch):
