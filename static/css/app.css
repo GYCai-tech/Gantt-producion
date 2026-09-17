@@ -936,20 +936,32 @@ tbody .plan__pers span {
 /* El filete ambar de "Parado" se va con el resto del color de fila: el estado
    se lee en su pastilla, que ahora es la primera columna. */
 
-/* FALTA DE MATERIAL. Columna propia, no un estado mas: son ejes distintos --92
-   bonos estan bloqueados Y sin material, 81 sin material sin estar bloqueados
-   y 117 bloqueados con el material puesto--, pero ahora que ninguna fila se
-   tinta por estado, el rojo esta libre y es el color que le toca: es lo que
-   impide trabajar. Fondo blanco porque esta pastilla SOLO aparece en filas
-   `sin-material`, que ya van en rojo: un fondo rojo sobre otro se perderia. */
-.dup__material {
-  display: inline-block; padding: 2px 9px; border-radius: 99px;
-  font-size: 13px; font-weight: 700; white-space: nowrap;
-  background: #fff; color: var(--rojo);
+/* LEYENDA de la fila roja. La columna "Material" se quito -- con la fila
+   entera en rojo repetia el mismo dato 164 veces y al final de once columnas--,
+   asi que el color pasa a ser el unico aviso y hay que decir una vez que
+   significa. La muestra usa el mismo fondo y el mismo filete que la fila, para
+   que se reconozca sin pensarlo.
+
+   Y ademas FILTRA: pulsarla deja solo los bonos sin material. Va aparte del
+   grupo de estados porque aquellos son excluyentes entre si y este no -- se
+   combina con el estado, con la maquina y con la busqueda. */
+.con__leyenda {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--ink-2); white-space: nowrap;
+  padding: 5px 10px; border-radius: 999px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line);
+  font-family: inherit;
 }
-/* El guion de "si hay material" se apaga: lo que tiene que saltar es la falta,
-   no las 599 filas en las que no pasa nada. */
-.dup__material--ok { color: var(--ink-3); }
+.con__leyenda:hover { background: var(--surface-2); }
+.con__leyenda.is-active { background: var(--rojo); color: #fff; border-color: var(--rojo); }
+.con__leyenda.is-active b { color: #fff; }
+/* Activa, la muestra se queda sin fondo rojo sobre rojo: un borde blanco la
+   mantiene reconocible como "el color de esa fila". */
+.con__leyenda.is-active .con__leyenda-color { background: #fff; box-shadow: none; }
+.con__leyenda-color {
+  width: 22px; height: 14px; border-radius: 3px; flex-shrink: 0;
+  background: #fce8ea; box-shadow: inset 3px 0 0 var(--rojo);
+}
 
 /* FUERA el tintado de fila por estado. Lo tenia el Consultor -- Urgencia ya lo
    habia soltado en 16fd875-- y con las cinco filas de algun color ninguna
