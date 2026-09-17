@@ -933,33 +933,40 @@ tbody .plan__pers span {
    y por eso va en ambar y no en verde. */
 .dup__estado.is-finalizado { background: var(--gris-bg);  color: var(--gris); }
 .dup__estado.is-parado     { background: var(--ambar-bg); color: var(--ambar); }
-/* Mismo mecanismo que `.ord__bono.tiene-gente`: un filete en el borde de la
-   fila, para localizarla sin leer la columna de estado. */
-.ord__bono.es-parado td:first-child { box-shadow: inset 3px 0 0 var(--ambar); }
+/* El filete ambar de "Parado" se va con el resto del color de fila: el estado
+   se lee en su pastilla, que ahora es la primera columna. */
 
-/* FALTA DE MATERIAL. Columna propia, no un estado mas, y de un color que no
-   usa ninguno de los cinco estados -- el rojo es de "Bloqueado" y son cosas
-   distintas: 92 bonos estan bloqueados Y sin material, 81 sin material sin
-   estar bloqueados y 117 bloqueados con el material puesto. Violeta deja claro
-   de un vistazo que se lee en otra columna y responde a otra pregunta. */
+/* FALTA DE MATERIAL. Columna propia, no un estado mas: son ejes distintos --92
+   bonos estan bloqueados Y sin material, 81 sin material sin estar bloqueados
+   y 117 bloqueados con el material puesto--, pero ahora que ninguna fila se
+   tinta por estado, el rojo esta libre y es el color que le toca: es lo que
+   impide trabajar. Fondo blanco porque esta pastilla SOLO aparece en filas
+   `sin-material`, que ya van en rojo: un fondo rojo sobre otro se perderia. */
 .dup__material {
   display: inline-block; padding: 2px 9px; border-radius: 99px;
-  font-size: 13px; font-weight: 600; white-space: nowrap;
-  background: #f3ecfb; color: #6b3fa0;
+  font-size: 13px; font-weight: 700; white-space: nowrap;
+  background: #fff; color: var(--rojo);
 }
 /* El guion de "si hay material" se apaga: lo que tiene que saltar es la falta,
    no las 599 filas en las que no pasa nada. */
 .dup__material--ok { color: var(--ink-3); }
 
-/* Fila tintada segun el estado del bono. Se reutilizan los mismos tokens que
-   las etiquetas -- los de la paleta de estados, ya calmados-- para que fondo y
-   etiqueta digan lo mismo. El hover gana por especificidad y sigue marcando la
-   fila bajo el raton. */
-.ord__tabla tbody tr.es-espera     td { background: var(--accent-2); }
-.ord__tabla tbody tr.es-activado   td { background: var(--verde-bg); }
-.ord__tabla tbody tr.es-finalizado td { background: var(--gris-bg); }
-.ord__tabla tbody tr.es-bloqueado  td { background: var(--rojo-bg); }
-.ord__tabla tbody tr.es-parado     td { background: var(--ambar-bg); }
+/* FUERA el tintado de fila por estado. Lo tenia el Consultor -- Urgencia ya lo
+   habia soltado en 16fd875-- y con las cinco filas de algun color ninguna
+   destacaba. El estado se lee en su pastilla, que ahora abre la fila por la
+   izquierda y conserva su color.
+
+   El UNICO color de fila que queda es este, y por eso funciona: rojo para el
+   bono al que le falta material. Es lo que impide trabajar, venga del estado
+   que venga -- 92 de los marcados estan bloqueados, 75 en espera y 5 activos. */
+.ord__tabla tbody tr.sin-material td { background: #fce8ea; }
+.ord__tabla tbody tr.sin-material td:first-child { box-shadow: inset 3px 0 0 var(--rojo); }
+/* Las pastillas de estado tienen fondos palidos y la de "Bloqueado" es del
+   mismo rojo que la fila -- se volveria invisible justo en los 92 bonos que a
+   la vez estan bloqueados y sin material. Sobre fila roja van en blanco: se
+   sigue leyendo el estado, y el color del texto, que es lo que lo identifica,
+   no se toca. */
+.ord__tabla tbody tr.sin-material .dup__estado { background: #fff; }
 /* Un bono con fichajes ya ha costado trabajo: anular ESE duplicado no sale
    gratis, y conviene que se vea sin abrir nada. */
 .dup__chip-hecho { background: var(--ambar-bg); color: var(--ambar); }

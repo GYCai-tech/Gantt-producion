@@ -94,6 +94,7 @@ const Consultor = (() => {
     //  una division de nido y sus tres bonos sacan tres chapas distintas-, asi
     //  que la columna que decia "Articulo" a secas enganaba.
     const cab = `<tr>
+        <th><span class="dup__th">Estado</span></th>
         <th class="num"><span class="dup__th">Orden</span></th>
         <th class="num"><span class="dup__th">Bono</span></th>
         <th><span class="dup__th">Artículo final</span></th>
@@ -104,16 +105,18 @@ const Consultor = (() => {
         <th><span class="dup__th">Cliente</span></th>
         <th><span class="dup__th">Usuario</span></th>
         <th><span class="dup__th">Material</span></th>
-        <th><span class="dup__th">Estado</span></th>
       </tr>`;
-    //  La fila entera va tintada segun su estado: de un vistazo se ve el
-    //  reparto sin tener que leer la ultima columna.
+    //  La fila NO se tinta por estado: para eso esta su pastilla, ahora la
+    //  primera columna. El unico color de fila que queda es el rojo de "falta
+    //  material", y justamente por eso se ve -- cuando todas las filas iban de
+    //  algun color, ninguna destacaba.
     const cuerpo = vis.map(b => {
       const parado = estaParado(b);
       const e = parado
         ? { tit: 'Parado', cls: 'parado' }
         : (ESTADO[b.estado_bono] || ESTADO[0]);
-      return `<tr class="ord__bono dup__bono es-${e.cls}">
+      return `<tr class="ord__bono dup__bono${b.sin_material ? ' sin-material' : ''}">
+        <td><span class="dup__estado is-${e.cls}">${e.tit}</span></td>
         <td class="num ord__cod"><b>${esc(b.idorden)}</b></td>
         <td class="num ord__cod">${esc(b.idbono)}</td>
         <td><b>${esc(b.descrip_articulo_orden) || '—'}</b>${
@@ -128,9 +131,8 @@ const Consultor = (() => {
         <td>${esc(b.idcliente) || '—'}</td>
         <td>${esc(b.usuario) || '—'}</td>
         <td>${b.sin_material
-                ? '<span class="dup__material">Falta</span>'
+                ? '<span class="dup__material">Faltante</span>'
                 : '<span class="dup__material--ok">—</span>'}</td>
-        <td><span class="dup__estado is-${e.cls}">${e.tit}</span></td>
       </tr>`;
     }).join('');
     $('con-tabla').innerHTML = `<thead>${cab}</thead><tbody>${cuerpo}</tbody>`;
@@ -158,8 +160,9 @@ const Consultor = (() => {
                  b.idarticulo_orden, b.descrip_articulo_orden, b.descrip_articulo,
                  b.matricula, b.descrip_matricula, b.area, b.idcliente,
                  b.usuario, (b.operarios || []).join(' '),
-                 //  Para poder escribir "falta material" y quedarse con esos.
-                 b.sin_material ? 'falta material sin material' : ''
+                 //  Para poder escribir "faltante" o "sin material" y quedarse
+                 //  con esos.
+                 b.sin_material ? 'faltante falta material sin material' : ''
                 ].join(' ').toLowerCase();
     });
     refrescar();
