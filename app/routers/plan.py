@@ -26,7 +26,7 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Query
 
 from app.routers.api import (JORNADA_FIN, JORNADA_INICIO, _minutos_laborables_entre,
-                             get_grupos, get_items)
+                             alfabetico, get_grupos, get_items)
 
 router = APIRouter()
 
@@ -183,8 +183,11 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
 
     # Los cargados primero y, dentro de ellos, por carga total. Quien no tiene
     # nada se queda al final agrupado, que es donde se lee de un vistazo
-    # cuánta gente esta libre.
-    personas.sort(key=lambda p: (-p["dias_con_trabajo"], -p["total_min"], p["nombre"]))
+    # cuánta gente esta libre. El criterio no cambia; el desempate por nombre
+    # usa `alfabetico` para que "marcos" no caiga siempre el último ni "ETT1"
+    # se cuele delante de "Elías" (ver el porqué en api.py).
+    personas.sort(key=lambda p: (-p["dias_con_trabajo"], -p["total_min"],
+                                 alfabetico(p["nombre"])))
 
     resumen = [{
         "fecha": dia,

@@ -1,3 +1,4 @@
+import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -117,6 +118,27 @@ def _erp(query: str, params: dict):
 def _nombre_completo(r) -> str:
     partes = [p.strip() for p in (r["nombre"], r["apellidos"]) if p and p.strip()]
     return " ".join(partes) or f"#{r['idempleado']}"
+
+
+def alfabetico(texto: str) -> str:
+    """Clave para ordenar nombres como se ordenan en castellano.
+
+    `sorted()` a secas compara por código Unicode, y eso NO es orden
+    alfabético: las mayúsculas van antes que todas las minúsculas y las
+    vocales con tilde después de la Z. Con los nombres reales del ERP salía
+    así de desordenado:
+
+        ETT1 ETT1              <- antes que "Elías" porque 'T'(84) < 'l'(108)
+        Elías Calviño Ferro
+        JOSE RAMON ALVAREZ     <- antes que "Javier", por lo mismo
+        Javier Atanes Pérez
+        marcos Bello Marquina  <- el último de los 25, por ir en minúscula
+
+    Quitando tildes y pasando a minúscula, los tres casos caen en su sitio.
+    """
+    sin_tildes = "".join(c for c in unicodedata.normalize("NFD", texto)
+                         if unicodedata.category(c) != "Mn")
+    return sin_tildes.casefold()
 
 
 def _leer_lineas(desde: date, hasta: date) -> list[dict]:
@@ -253,7 +275,7 @@ def get_grupos(vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
             "sub":    ", ".join(areas),
             "areas":  areas,
         })
-    return sorted(grupos, key=lambda g: g["nombre"])
+    return sorted(grupos, key=lambda g: alfabetico(g["nombre"]))
 
 
 # ─────────────────────────────────────────────────────────────────────

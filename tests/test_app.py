@@ -52,3 +52,44 @@ def test_el_censo_de_operarios_se_limita_al_departamento_de_planta(monkeypatch):
     censo, params = capturado['consultas'][0]
     assert 'ed.IdDepartamento = :departamento' in censo
     assert params == {'departamento': 6}
+
+
+def test_los_operarios_salen_en_orden_alfabetico_de_verdad(monkeypatch):
+    """`sorted()` a secas compara por codigo Unicode, que NO es alfabetico: las
+    mayusculas van antes que todas las minusculas y las tildes despues de la Z.
+
+    Con los 25 operarios reales del ERP eso ponia "ETT1" delante de "Elias",
+    "JOSE RAMON" delante de "Javier" y dejaba a "marcos" el ultimo de la lista
+    solo por ir en minuscula."""
+    from app.routers import api
+
+    censo = [
+        {'idempleado': 1, 'nombre': 'marcos', 'apellidos': 'Bello Marquina'},
+        {'idempleado': 2, 'nombre': 'ETT1', 'apellidos': 'ETT1'},
+        {'idempleado': 3, 'nombre': 'Elías', 'apellidos': 'Calviño Ferro'},
+        {'idempleado': 4, 'nombre': 'JOSE RAMON', 'apellidos': 'ALVAREZ DACOBA'},
+        {'idempleado': 5, 'nombre': 'Javier', 'apellidos': 'Atanes Pérez'},
+        {'idempleado': 6, 'nombre': 'Óscar', 'apellidos': 'González Garza'},
+    ]
+    #  La primera consulta es el censo; la segunda, las areas por empleado.
+    respuestas = iter([censo, []])
+    monkeypatch.setattr(api, '_erp', lambda q, p: next(respuestas))
+
+    assert [g['nombre'] for g in api.get_grupos(vista='empleado')] == [
+        'Elías Calviño Ferro',
+        'ETT1 ETT1',
+        'Javier Atanes Pérez',
+        'JOSE RAMON ALVAREZ DACOBA',
+        'marcos Bello Marquina',
+        'Óscar González Garza',
+    ]
+
+
+def test_la_clave_alfabetica_ignora_mayusculas_y_tildes():
+    from app.routers.api import alfabetico
+
+    """Las dos cosas que rompian el orden, por separado."""
+    assert alfabetico('Óscar') == alfabetico('oscar')
+    assert alfabetico('ETT1') < alfabetico('Isaac')
+    #  Una vocal con tilde ordena donde su vocal, no despues de la Z.
+    assert alfabetico('Álvaro') < alfabetico('Beatriz')
