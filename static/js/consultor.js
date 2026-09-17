@@ -103,6 +103,7 @@ const Consultor = (() => {
         <th><span class="dup__th">Operario</span></th>
         <th><span class="dup__th">Cliente</span></th>
         <th><span class="dup__th">Usuario</span></th>
+        <th><span class="dup__th">Material</span></th>
         <th><span class="dup__th">Estado</span></th>
       </tr>`;
     //  La fila entera va tintada segun su estado: de un vistazo se ve el
@@ -126,6 +127,9 @@ const Consultor = (() => {
                 : '<span class="sub">Sin asignar</span>'}</td>
         <td>${esc(b.idcliente) || '—'}</td>
         <td>${esc(b.usuario) || '—'}</td>
+        <td>${b.sin_material
+                ? '<span class="dup__material">Falta</span>'
+                : '<span class="dup__material--ok">—</span>'}</td>
         <td><span class="dup__estado is-${e.cls}">${e.tit}</span></td>
       </tr>`;
     }).join('');
@@ -153,7 +157,10 @@ const Consultor = (() => {
       b.texto = [b.idorden, b.idbono, `${b.idorden}/${b.idbono}`,
                  b.idarticulo_orden, b.descrip_articulo_orden, b.descrip_articulo,
                  b.matricula, b.descrip_matricula, b.area, b.idcliente,
-                 b.usuario, (b.operarios || []).join(' ')].join(' ').toLowerCase();
+                 b.usuario, (b.operarios || []).join(' '),
+                 //  Para poder escribir "falta material" y quedarse con esos.
+                 b.sin_material ? 'falta material sin material' : ''
+                ].join(' ').toLowerCase();
     });
     refrescar();
     $('generado').textContent = 'Leído a las ' + new Date()

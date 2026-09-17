@@ -937,6 +937,20 @@ tbody .plan__pers span {
    fila, para localizarla sin leer la columna de estado. */
 .ord__bono.es-parado td:first-child { box-shadow: inset 3px 0 0 var(--ambar); }
 
+/* FALTA DE MATERIAL. Columna propia, no un estado mas, y de un color que no
+   usa ninguno de los cinco estados -- el rojo es de "Bloqueado" y son cosas
+   distintas: 92 bonos estan bloqueados Y sin material, 81 sin material sin
+   estar bloqueados y 117 bloqueados con el material puesto. Violeta deja claro
+   de un vistazo que se lee en otra columna y responde a otra pregunta. */
+.dup__material {
+  display: inline-block; padding: 2px 9px; border-radius: 99px;
+  font-size: 13px; font-weight: 600; white-space: nowrap;
+  background: #f3ecfb; color: #6b3fa0;
+}
+/* El guion de "si hay material" se apaga: lo que tiene que saltar es la falta,
+   no las 599 filas en las que no pasa nada. */
+.dup__material--ok { color: var(--ink-3); }
+
 /* Fila tintada segun el estado del bono. Se reutilizan los mismos tokens que
    las etiquetas -- los de la paleta de estados, ya calmados-- para que fondo y
    etiqueta digan lo mismo. El hover gana por especificidad y sigue marcando la

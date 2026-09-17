@@ -21,7 +21,7 @@ y `fact_bonos` excluye los bonos sin fichaje, que son casi todos los bloqueados.
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from app.routers.api import _HORAS_LINEA_VIVA, _erp, _nombre_completo
 
@@ -82,6 +82,40 @@ SELECT DISTINCT obl.IdOrden AS idorden, obl.IdBono AS idbono
 FROM Ordenes_Bonos_Lineas obl
 WHERE obl.Hfinal IS NULL
   AND obl.Hinicial BETWEEN :limite AND :ahora
+"""
+
+#  BONOS SIN MATERIAL DISPONIBLE. Portada de la consulta de Access, con tres
+#  cambios que no alteran lo que devuelve:
+#
+#  · Access repetia tres veces la misma condicion cambiando solo el estado
+#    (`IdEstado=0 AND ... OR IdEstado=1 AND ... OR IdEstado=3 AND ...`); aqui
+#    es un `IN (0,1,3)`. Los finalizados quedan fuera igual que alli, y tiene
+#    sentido: un bono terminado ya no necesita material.
+#  · `Disponible < "0"` comparaba contra el TEXTO "0". En Access colaba porque
+#    convierte sola; `Disponible` es decimal, asi que aqui va `< 0`. Si algun
+#    dia esa columna pasara a texto, la comparacion de Access habria empezado a
+#    mentir en silencio ('10' < '0' es cierto entre cadenas).
+#  · DISTINCT: el JOIN a la vista es por (IdOrden, IdArticulo) sin el bono, asi
+#    que un bono con varias entradas del mismo articulo salia repetido. Aqui
+#    solo hace falta el conjunto de bonos marcados.
+#
+#  OJO con la dependencia: `Pers_vOrdenes_Consumos` es una vista PERSONALIZADA
+#  del equipo, no del catalogo del ERP. Si alguien la renombra o la borra, esto
+#  se cae -- por eso degrada a vacio en vez de tumbar la pantalla.
+#
+#  La vista trae una fila por almacen (hay 2). No hace falta desambiguar: de los
+#  350 pares (orden, articulo) marcados hoy, los 350 estan negativos en todos
+#  los almacenes donde aparecen, asi que no hay falsos positivos por ese lado.
+_SIN_MATERIAL_QUERY = """
+SELECT DISTINCT ob.IdOrden AS idorden, ob.IdBono AS idbono
+FROM Ordenes o
+    JOIN Ordenes_Bonos ob           ON o.IdOrden      = ob.IdOrden
+    JOIN Ordenes_Bonos_Entradas obe ON obe.IdOrden    = ob.IdOrden
+                                   AND obe.IdBono     = ob.IdBono
+    JOIN Pers_vOrdenes_Consumos pc  ON pc.IdArticulo  = obe.IdArticulo
+                                   AND pc.IdOrden     = o.IdOrden
+WHERE ob.IdEstado IN (0, 1, 3)
+  AND pc.Disponible < 0
 """
 
 #  QUIEN TIENE EL BONO ASIGNADO. Va en consulta aparte y se cruza en Python, no
@@ -175,11 +209,27 @@ def get_consultor_bonos(
             asignados.setdefault((r["idorden"], r["idbono"]), []).append(
                 _nombre_completo(r))
 
+        #  Falta de material. Degrada a vacio si la vista personalizada no esta
+        #  disponible: es una marca de mas, no la pantalla.
+        try:
+            sin_material = {(r["idorden"], r["idbono"])
+                            for r in _erp(_SIN_MATERIAL_QUERY, {})}
+        except HTTPException:
+            print("[consultor] sin material no disponible: "
+                  "¿falta la vista Pers_vOrdenes_Consumos?")
+            sin_material = set()
+
         for b in bonos:
             b["tiene_fichaje_activo"] = (b["idorden"], b["idbono"]) in con_fichaje
             #  Varios operarios en un bono es normal (105 de 783): van todos,
             #  que para eso se reparten el trabajo.
             b["operarios"] = sorted(asignados.get((b["idorden"], b["idbono"]), []))
+            #  NO es un estado, es un eje aparte: 92 bonos estan bloqueados Y
+            #  sin material a la vez, 81 sin material sin estar bloqueados y
+            #  117 bloqueados con el material puesto. Meterlo en `estado_bono`
+            #  obligaria a elegir cual de las dos cosas contar, y se perderia
+            #  la otra. Por eso viaja como campo propio.
+            b["sin_material"] = (b["idorden"], b["idbono"]) in sin_material
 
     return {"total": len(bonos), "bonos": bonos}
 

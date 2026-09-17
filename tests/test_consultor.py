@@ -27,9 +27,9 @@ def asignacion(orden=6726, bono=10, idempleado=28, nombre='Manuel ',
             'nombre': nombre, 'apellidos': apellidos}
 
 
-def erp(monkeypatch, bonos, abiertas=(), asignados=()):
-    """Sustituye `_erp`, que el endpoint llama hasta tres veces: bonos,
-    fichajes abiertos y asignaciones de operario."""
+def erp(monkeypatch, bonos, abiertas=(), asignados=(), sin_material=()):
+    """Sustituye `_erp`, que el endpoint llama hasta cuatro veces: bonos,
+    fichajes abiertos, asignaciones de operario y falta de material."""
     capturado = {'consultas': [], 'params': []}
 
     def fake(query, params):
@@ -39,6 +39,8 @@ def erp(monkeypatch, bonos, abiertas=(), asignados=()):
             return list(abiertas)
         if 'Pers_EmpleadosOrdenBono' in query:
             return list(asignados)
+        if 'Pers_vOrdenes_Consumos' in query:
+            return list(sin_material)
         return list(bonos)
 
     monkeypatch.setattr(consultor, '_erp', fake)
@@ -164,3 +166,55 @@ def test_el_desplegable_no_ofrece_maquinas_sin_bonos(monkeypatch):
 
     assert 'o.IdEstado IN (:activa, :bloqueada)' in cap['consultas'][0]
     assert cap['params'][0] == {'activa': 1, 'bloqueada': 3}
+
+
+def test_la_falta_de_material_no_es_un_estado_sino_un_eje_aparte(monkeypatch):
+    """Medido en el ERP: 92 bonos estan BLOQUEADOS Y sin material a la vez, 81
+    sin material sin estar bloqueados, y 117 bloqueados con el material puesto.
+
+    Son preguntas distintas, asi que viaja en su propio campo. Si se hubiera
+    metido como un estado mas habria que elegir cual de las dos cosas contar en
+    esos 92, y la otra se perderia."""
+    erp(monkeypatch,
+        bonos=[fila(6726, 10, estado=3),   # bloqueado y sin material
+               fila(6727, 20, estado=0),   # en espera y sin material
+               fila(6728, 30, estado=3)],  # bloqueado pero con material
+        sin_material=[{'idorden': 6726, 'idbono': 10},
+                      {'idorden': 6727, 'idbono': 20}])
+    bonos = consultor.get_consultor_bonos()['bonos']
+
+    assert [b['sin_material'] for b in bonos] == [True, True, False]
+    #  El estado sigue siendo el del ERP, sin contaminar.
+    assert [b['estado_bono'] for b in bonos] == [3, 0, 3]
+
+
+def test_la_consulta_de_material_es_la_de_access_sin_sus_trampas(monkeypatch):
+    """Access repetia la misma condicion tres veces cambiando solo el estado, y
+    comparaba `Disponible` contra el TEXTO "0" -- colaba porque convierte sola,
+    pero entre cadenas '10' < '0' es cierto."""
+    cap = erp(monkeypatch, bonos=[fila()])
+    consultor.get_consultor_bonos()
+    q = next(c for c in cap['consultas'] if 'Pers_vOrdenes_Consumos' in c)
+
+    assert 'ob.IdEstado IN (0, 1, 3)' in q
+    assert 'pc.Disponible < 0' in q
+    assert "Disponible < '0'" not in q and 'Disponible < "0"' not in q
+    #  El JOIN a la vista no lleva el bono, asi que sin DISTINCT un bono con
+    #  varias entradas del mismo articulo saldria repetido.
+    assert 'SELECT DISTINCT' in q
+
+
+def test_si_falta_la_vista_personalizada_la_pantalla_sigue_en_pie(monkeypatch):
+    """`Pers_vOrdenes_Consumos` la mantiene el equipo, no viene con el ERP. Si
+    desaparece, la marca es informacion de menos -- no una pantalla rota."""
+    from fastapi import HTTPException
+
+    def fake(query, params):
+        if 'Pers_vOrdenes_Consumos' in query:
+            raise HTTPException(status_code=503, detail='No se pudo consultar el ERP')
+        if 'Hfinal IS NULL' in query or 'Pers_EmpleadosOrdenBono' in query:
+            return []
+        return [fila()]
+
+    monkeypatch.setattr(consultor, '_erp', fake)
+    assert consultor.get_consultor_bonos()['bonos'][0]['sin_material'] is False
