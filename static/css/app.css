@@ -277,13 +277,16 @@ button { font-family: inherit; }
 .search-gantt-wrap--lg input { height: 38px; width: 300px; font-size: 14px; padding: 0 12px 0 34px; }
 .search-gantt-wrap--lg svg { left: 12px; }
 .summary b { color: var(--ink); }
+/* El contador "N sin tiempo" de la cabecera cuenta lo mismo que pintan las
+   barras .bar.st-sin-estimar, asi que va del mismo gris: en ambar competia
+   con "en riesgo" y prometia una urgencia que no es. */
 .summary__warn {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 2px 8px; border-radius: 999px; cursor: pointer;
-  background: var(--ambar-bg); color: #80490a; border: 1px solid #ecca97;
+  background: var(--gris-bg); color: #56627a; border: 1px solid #cfd6e0;
 }
-.summary__warn:hover { background: #f8e6cd; }
-.summary__warn.is-active { background: #80490a; color: #fff; border-color: #80490a; }
+.summary__warn:hover { background: #e2e7ee; }
+.summary__warn.is-active { background: #56627a; color: #fff; border-color: #56627a; }
 .summary__warn.is-active b { color: #fff; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; vertical-align: middle; }
 
@@ -539,15 +542,21 @@ button { font-family: inherit; }
    trabajar), que antes compartia color con esto y se confundian. */
 .bar.st-plazo,     .bar.st-normal  { background: #ddf3f8; border-color: #18b5d0; color: #0f5f6e; }
 .bar.st-sin-fecha { background: var(--gris-bg); border-color: #cfd6e0; color: #56627a; }
-/* Sin tiempo teorico ni media: no se puede estimar el fin, y se ve. */
+/* Sin tiempo teorico ni media: no se puede estimar el fin, y se ve.
+   GRIS, no ambar. Compartia el ambar exacto de .bar.st-riesgo -mismo fondo,
+   mismo color de texto y el mismo triangulo-, asi que "no se puede calcular"
+   y "va lento" se veian igual siendo cosas distintas: una es falta de datos
+   y la otra pide ir a mirar el bono. El ambar queda para la segunda.
+   El fondo va un punto mas profundo que el de .bar.st-completado (#eef1f5) y
+   el borde discontinuo es mas oscuro que el suyo, porque si no las dos barras
+   grises se confundirian entre si y habriamos movido el problema de sitio. */
 .bar.st-sin-estimar {
-  background: var(--ambar-bg); border-color: #e0a94f; border-style: dashed;
-  color: #80490a;
+  background: #e8ecf2; border-color: #9aa6b8; border-style: dashed;
+  color: #56627a;
 }
-/* El aviso de las dos barras ambar: "no se puede estimar" y "va lento". Son
-   los dos casos en los que hay que mirar el bono, asi que llevan la misma
-   marca; lo que las distingue es el borde discontinuo de la primera. */
-.bar.st-sin-estimar::before,
+/* El triangulo queda SOLO en "en riesgo": vuelve a significar una cosa, que
+   es "esto hay que mirarlo". En las barras sin estimar el borde discontinuo
+   ya dice lo suyo -el fin es una proyeccion que no se ha podido calcular-. */
 .bar.st-riesgo::before { content: "▲"; margin-right: 4px; flex-shrink: 0; font-size: 10px; }
 .bar.st-parada  { background: #f4e9ea; border-color: #dcb9bd; color: #7e3a40; }
 .bar.st-pausada { background: #eaeef5; border-color: #bcc8dc; color: #45526e; }

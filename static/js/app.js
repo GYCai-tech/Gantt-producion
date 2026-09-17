@@ -69,7 +69,11 @@ const App = (() => {
   };
   const ST_COLOR = {
     plazo: '#128fa6', completado: '#6b7689',
-    retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#c4710c',
+    //  "sin-estimar" era este mismo naranja que "riesgo", y no habia forma de
+    //  distinguirlos. Ahora es gris, que es lo que ya usaban sus etiquetas
+    //  (.tag--sin-estimar) y lo que de verdad dice: falta informacion, no hay
+    //  un problema en el bono. El naranja queda para lo que pide accion.
+    retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#79859a',
     parada: '#9a4b52', pausada: '#5b6b8a', parcial: '#c77b1f',
     programado: '#5b63b0', disponible: '#1f9254',
     'pendiente-cierre': '#3f7d9e',
@@ -815,7 +819,8 @@ const App = (() => {
       (sinTiempo || soloSinTiempo
         ? `<span class="summary__warn${soloSinTiempo ? ' is-active' : ''}" onclick="App.toggleSinTiempo()"
                  title="Bonos sin tiempo teorico ni media. Pincha para ver solo esos.">` +
-          `▲ <b>${sinTiempo}</b> sin tiempo</span>`
+          //  Sin el triangulo: ahora es marca exclusiva de "en riesgo".
+          `<b>${sinTiempo}</b> sin tiempo</span>`
         : '');
   }
 
