@@ -88,12 +88,19 @@ const Consultor = (() => {
   }
 
   function tabla(vis) {
+    //  Dos articulos distintos, y conviene no confundirlos: el FINAL es lo que
+    //  la orden fabrica; el del BONO es la pieza intermedia que sale de esta
+    //  operacion. En 625 de las 783 filas no son el mismo -la orden 6734 hace
+    //  una division de nido y sus tres bonos sacan tres chapas distintas-, asi
+    //  que la columna que decia "Articulo" a secas enganaba.
     const cab = `<tr>
         <th class="num"><span class="dup__th">Orden</span></th>
         <th class="num"><span class="dup__th">Bono</span></th>
-        <th><span class="dup__th">Artículo</span></th>
+        <th><span class="dup__th">Artículo final</span></th>
+        <th><span class="dup__th">Artículo del bono</span></th>
         <th><span class="dup__th">Máquina</span></th>
         <th><span class="dup__th">Área</span></th>
+        <th><span class="dup__th">Operario</span></th>
         <th><span class="dup__th">Cliente</span></th>
         <th><span class="dup__th">Usuario</span></th>
         <th><span class="dup__th">Estado</span></th>
@@ -108,10 +115,15 @@ const Consultor = (() => {
       return `<tr class="ord__bono dup__bono es-${e.cls}">
         <td class="num ord__cod"><b>${esc(b.idorden)}</b></td>
         <td class="num ord__cod">${esc(b.idbono)}</td>
-        <td><b>${esc(b.descrip_articulo) || '—'}</b></td>
+        <td><b>${esc(b.descrip_articulo_orden) || '—'}</b>${
+          b.idarticulo_orden ? `<span class="sub">${esc(b.idarticulo_orden)}</span>` : ''}</td>
+        <td>${esc(b.descrip_articulo) || '—'}</td>
         <td>${esc(b.descrip_matricula || b.matricula) || '—'}${
           b.matricula && b.descrip_matricula ? `<span class="sub">${esc(b.matricula)}</span>` : ''}</td>
         <td>${esc(b.area) || '—'}</td>
+        <td>${(b.operarios || []).length
+                ? esc(b.operarios.join(', '))
+                : '<span class="sub">Sin asignar</span>'}</td>
         <td>${esc(b.idcliente) || '—'}</td>
         <td>${esc(b.usuario) || '—'}</td>
         <td><span class="dup__estado is-${e.cls}">${e.tit}</span></td>
@@ -134,9 +146,14 @@ const Consultor = (() => {
   function pintar(d) {
     datos = d;
     d.bonos.forEach(b => {
-      b.texto = [b.idorden, b.idbono, `${b.idorden}/${b.idbono}`, b.descrip_articulo,
+      //  Se busca por el ARTICULO FINAL -codigo y descripcion- ademas de por
+      //  el del bono: quien pregunta "que hay de la division de nido" piensa
+      //  en lo que sale por la puerta, no en la chapa intermedia. Y por el
+      //  OPERARIO, para poder ver de un vistazo que tiene uno encima.
+      b.texto = [b.idorden, b.idbono, `${b.idorden}/${b.idbono}`,
+                 b.idarticulo_orden, b.descrip_articulo_orden, b.descrip_articulo,
                  b.matricula, b.descrip_matricula, b.area, b.idcliente,
-                 b.usuario].join(' ').toLowerCase();
+                 b.usuario, (b.operarios || []).join(' ')].join(' ').toLowerCase();
     });
     refrescar();
     $('generado').textContent = 'Leído a las ' + new Date()

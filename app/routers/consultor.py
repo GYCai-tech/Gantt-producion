@@ -23,7 +23,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
-from app.routers.api import _HORAS_LINEA_VIVA, _erp
+from app.routers.api import _HORAS_LINEA_VIVA, _erp, _nombre_completo
 
 router = APIRouter(prefix="/api")
 
@@ -41,6 +41,14 @@ _ORDEN_BLOQUEADA = 3
 #    matricula: 17 de 822 no salen en la pantalla.
 #  · Sin GROUP BY, un bono que declara el mismo articulo mas de una vez en
 #    `Ordenes_Bonos_Salidas` aparece repetido.
+#
+#  UNICO añadido a la consulta de la v1: `a_orden`, para poder enseñar y buscar
+#  el ARTICULO FINAL de la orden. La v1 ya traia su codigo (`o.IdArticulo`) pero
+#  no su descripcion, y la columna "Articulo" enseñaba en realidad la del
+#  articulo que sale del BONO —una pieza intermedia—, que en 625 de las 783
+#  filas (80%) no es el mismo. Es LEFT y no INNER por costumbre defensiva; no
+#  puede duplicar ni perder filas porque `IdArticulo` es la PK de `Articulos` y
+#  las 167 ordenes activas apuntan a uno que existe.
 _BONOS_QUERY = """
 SELECT
     o.IdOrden                AS idorden,
@@ -50,6 +58,7 @@ SELECT
     ob.IdEstado              AS estado_bono,
     o.IdCliente              AS idcliente,
     o.IdArticulo             AS idarticulo_orden,
+    a_orden.Descrip          AS descrip_articulo_orden,
     a_salida.Descrip         AS descrip_articulo,
     ob.Area                  AS area,
     o.Usuario                AS usuario
@@ -59,6 +68,7 @@ FROM Ordenes_Bonos_Salidas obs
                                AND obs.IdBono      = ob.IdBono
     JOIN Articulos a_salida     ON obs.IdArticulo  = a_salida.IdArticulo
     JOIN Articulos a_matricula  ON ob.Matricula    = a_matricula.IdArticulo
+    LEFT JOIN Articulos a_orden ON o.IdArticulo    = a_orden.IdArticulo
 WHERE o.IdEstado  = :estado_orden
   {filtro_bono}
   {filtro_matricula}
@@ -72,6 +82,25 @@ SELECT DISTINCT obl.IdOrden AS idorden, obl.IdBono AS idbono
 FROM Ordenes_Bonos_Lineas obl
 WHERE obl.Hfinal IS NULL
   AND obl.Hinicial BETWEEN :limite AND :ahora
+"""
+
+#  QUIEN TIENE EL BONO ASIGNADO. Va en consulta aparte y se cruza en Python, no
+#  como JOIN dentro de `_BONOS_QUERY`, por dos motivos:
+#
+#  · La asignacion es 1:N —105 de los 783 bonos tienen mas de un operario, y
+#    hasta cuatro—, asi que un JOIN multiplicaria filas en una consulta que ya
+#    duplica de por si y que hay que dejar como la dejo la v1.
+#  · `Ordenes_Bonos.IdEmpleado` NO sirve: esta a NULL. La asignacion vive en
+#    `Pers_EmpleadosOrdenBono` (Orden, Bono -> IdEmpleado), igual que en el
+#    Gantt y en la pestaña de ordenes sin asignar.
+#
+#  El LEFT a `Empleados_Datos` es por si una asignacion apunta a una ficha que
+#  ya no esta: mejor "#38" que perder la fila entera.
+_ASIGNADOS_QUERY = """
+SELECT pe.Orden AS idorden, pe.Bono AS idbono, pe.IdEmpleado AS idempleado,
+       ed.Nombre AS nombre, ed.Apellidos AS apellidos
+FROM Pers_EmpleadosOrdenBono pe
+    LEFT JOIN Empleados_Datos ed ON ed.IdEmpleado = pe.IdEmpleado
 """
 
 
@@ -115,6 +144,10 @@ def get_consultor_bonos(
         #  pantalla tiene que representar lo mismo que antes.
         "idcliente":         (r["idcliente"] or "").strip(),
         "idarticulo_orden":  (r["idarticulo_orden"] or "").strip(),
+        #  El artículo FINAL de la orden. Ojo, no es `descrip_articulo`: ese es
+        #  el que sale del bono —una pieza intermedia— y en el 80% de las filas
+        #  no coinciden.
+        "descrip_articulo_orden": (r["descrip_articulo_orden"] or "").strip(),
         "descrip_articulo":  (r["descrip_articulo"] or "").strip(),
         "area":              (r["area"] or "").strip(),
         "usuario":           (r["usuario"] or "").strip(),
@@ -132,8 +165,21 @@ def get_consultor_bonos(
                 "limite": ahora - timedelta(hours=_HORAS_LINEA_VIVA),
             })
         }
+        #  Quién lo tiene asignado. Se lee entera y se agrupa aquí: son ~19.500
+        #  filas de todas las órdenes de la historia, pero cruzarlas en memoria
+        #  sale más barato que filtrar por los cientos de bonos de la pantalla.
+        asignados: dict[tuple, list[str]] = {}
+        for r in _erp(_ASIGNADOS_QUERY, {}):
+            #  Mismo nombre que en el Gantt: `_nombre_completo` ya resuelve
+            #  "Nombre Apellidos" y cae a "#id" si la ficha no tiene nombre.
+            asignados.setdefault((r["idorden"], r["idbono"]), []).append(
+                _nombre_completo(r))
+
         for b in bonos:
             b["tiene_fichaje_activo"] = (b["idorden"], b["idbono"]) in con_fichaje
+            #  Varios operarios en un bono es normal (105 de 783): van todos,
+            #  que para eso se reparten el trabajo.
+            b["operarios"] = sorted(asignados.get((b["idorden"], b["idbono"]), []))
 
     return {"total": len(bonos), "bonos": bonos}
 
