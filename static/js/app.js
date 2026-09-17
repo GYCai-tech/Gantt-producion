@@ -454,7 +454,40 @@ const App = (() => {
       return;
     }
 
+    // En la vista de MAQUINAS, cada maquina se parte en una fila por operario:
+    // la de operarios ya ensena una maquina por barra, y esta es su simetrica
+    // -- quien esta en cada maquina, sin tener que leer barra por barra.
+    //
+    // Una CUADRILLA -varios operarios en el mismo bono- se reparte: su barra
+    // sale en la fila de cada uno de ellos, no en una fila conjunta con los
+    // nombres juntos. La fila responde "que ha hecho esta persona en esta
+    // maquina", y estando los tres en ese bono, a los tres les toca. Eso si:
+    // la misma barra aparece varias veces, asi que sumar anchos por pantalla
+    // no da horas-hombre.
+    const filas = [];
     lista.forEach(grp => {
+      const barras = byRes.get(String(grp.id)) || [];
+      if (vista !== 'maquina' || !barras.length) {
+        filas.push({ grp, barras, sub: grp.sub });
+        return;
+      }
+      const porOperario = new Map();
+      barras.forEach(it => {
+        //  `operarios` viene del backend como "A, B, C" (un join por comas),
+        //  y los nombres no llevan coma: partir por ella es seguro.
+        const nombres = (it.operarios || '').split(',')
+          .map(s => s.trim()).filter(Boolean);
+        (nombres.length ? nombres : ['Sin operario']).forEach(op => {
+          if (!porOperario.has(op)) porOperario.set(op, []);
+          porOperario.get(op).push(it);
+        });
+      });
+      [...porOperario.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0], 'es', { sensitivity: 'base' }))
+        .forEach(([op, its]) => filas.push({ grp, barras: its, sub: op }));
+    });
+
+    filas.forEach(({ grp, barras, sub }) => {
       // Orden cronológico por inicio: el algoritmo de carriles de abajo es un
       // *greedy interval scheduling* y solo es correcto si los intervalos se
       // procesan en ese orden. Antes se ordenaba primero por tipo (real antes
@@ -463,21 +496,49 @@ const App = (() => {
       // mismo bono que no se solapan con ella, empujándolas a otro carril sin
       // motivo (el bono "saltaba" de fila en vez de seguir contiguo).
       const TIPO_PRIO = { real: 0, trabajado: 1, programado: 2 };
-      const its = (byRes.get(String(grp.id)) || []).slice()
+      const its = barras.slice()
         .sort((a, b) => {
           const d = new Date(a.start) - new Date(b.start);
           return d !== 0 ? d : (TIPO_PRIO[a.tipo] ?? 3) - (TIPO_PRIO[b.tipo] ?? 3);
         });
 
       // Las dos vistas usan los mismos intervalos calculados por el servidor.
-      const laneEnd = [];
+      //
+      // El carril se reparte POR BONO, no por barra. Un bono llega partido en
+      // varias barras --lo trabajado ayer, lo que esta en curso, lo proyectado,
+      // cada sesion de fichaje-- y repartiendolas de una en una cada trozo
+      // cogia el primer carril libre: el mismo bono aparecia arriba en un
+      // tramo y abajo en el siguiente, y no habia forma de seguirlo en
+      // horizontal. Ordenar por hora de inicio arreglaba solo el caso de la
+      // barra "real"; el salto seguia en cuanto habia un hueco entre sesiones
+      // y otro bono se colaba en medio.
+      //
+      // Ahora el bono reserva su carril desde su PRIMERA barra hasta la ULTIMA
+      // y no lo suelta. Cuesta algun carril de mas --un bono con un hueco
+      // grande lo mantiene ocupado-- y ese es justo el precio de que la fila
+      // se lea de izquierda a derecha.
+      const porBono = new Map();
       its.forEach(it => {
-        const s = +new Date(it.start);
-        const e = +new Date(it.end);
-        let lane = laneEnd.findIndex(end => end <= s);
-        if (lane === -1) { lane = laneEnd.length; laneEnd.push(e); }
-        else laneEnd[lane] = e;
-        it._lane = lane;
+        //  Sin bono identificable, cada barra va por su cuenta: mejor eso que
+        //  amontonar cosas sin relacion en el mismo carril.
+        const k = it.idbono != null ? `${it.idorden}/${it.idbono}` : `_${it.id ?? Math.random()}`;
+        const s = +new Date(it.start), e = +new Date(it.end);
+        const g = porBono.get(k);
+        if (g) { g.start = Math.min(g.start, s); g.end = Math.max(g.end, e); g.items.push(it); }
+        else porBono.set(k, { start: s, end: e, items: [it] });
+      });
+
+      //  El carril se guarda APARTE y no en el propio item (`it._lane`): con
+      //  las cuadrillas, la misma barra esta en la fila de varios operarios y
+      //  escribirlo dentro haria que la ultima fila en calcularse le pisara el
+      //  carril a las anteriores.
+      const laneDe = new Map();
+      const laneEnd = [];
+      [...porBono.values()].sort((a, b) => a.start - b.start).forEach(g => {
+        let lane = laneEnd.findIndex(end => end <= g.start);
+        if (lane === -1) { lane = laneEnd.length; laneEnd.push(g.end); }
+        else laneEnd[lane] = g.end;
+        g.items.forEach(it => laneDe.set(it, lane));
       });
       const lanes = Math.max(1, laneEnd.length);
       const rowH = ROW_PAD * 2 + lanes * BAR_H + (lanes - 1) * LANE_GAP;
@@ -518,8 +579,11 @@ const App = (() => {
           : `Sus ${atascado} bonos asignados están bloqueados`)
           + ' en el programa de producción: ahora mismo no puede empezar nada.';
       }
+      //  En maquinas, el subtitulo es el OPERARIO de esta fila (la matricula se
+      //  pierde ahi, pero la maquina ya la nombra la linea de arriba y quien
+      //  esta en ella es lo que no se sabia).
       label.innerHTML = `<div class="row__name">${esc(grp.nombre)}</div>` +
-                        `<div class="row__sub">${esc(grp.sub || '')}${lanes > 1 ? ` · ${lanes} paralelos` : ''}</div>` +
+                        `<div class="row__sub">${esc(sub || '')}${lanes > 1 ? ` · ${lanes} paralelos` : ''}</div>` +
                         (ausente
                           ? `<div class="row__aviso row__aviso--ausente">${esc(ausente.motivo)}${franja ? ` · ${franja}` : ''}</div>`
                           : atascado
@@ -531,7 +595,7 @@ const App = (() => {
       track.dataset.rid = grp.id;
 
       its.forEach(it => {
-        const top = ROW_PAD + it._lane * (BAR_H + LANE_GAP);
+        const top = ROW_PAD + (laneDe.get(it) || 0) * (BAR_H + LANE_GAP);
         const bar = buildBar(it, W, top);
         if (bar) track.appendChild(bar);
       });
