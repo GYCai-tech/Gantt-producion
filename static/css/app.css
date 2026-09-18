@@ -372,14 +372,17 @@ button { font-family: inherit; }
   position: sticky; left: 0; z-index: 4; flex-shrink: 0;
   width: var(--rail-w); height: 100%;
   background: var(--surface); border-right: 1px solid var(--line);
-  border-bottom: 1px solid var(--line-2);
+  /*  2px y NEGRO: con 1px de --line-2 las filas se tocaban y costaba ver donde
+      acababa un operario y empezaba el siguiente, sobre todo desde que la vista
+      de maquinas abre una fila por cada operario de la misma maquina. */
+  border-bottom: 2px solid #000;
   display: flex; flex-direction: column; justify-content: center;
   padding: 0 16px; gap: 2px; transition: background .12s;
 }
 .row__name { font-size: 14px; font-weight: 600; color: var(--ink); line-height: 1.2;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row__sub  { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row__track { position: relative; height: 100%; border-bottom: 1px solid var(--line-2); flex-shrink: 0; transition: background .12s; }
+.row__track { position: relative; height: 100%; border-bottom: 2px solid #000; flex-shrink: 0; transition: background .12s; }
 .row__track.is-drop-target { background: rgba(47,111,235,.08) !important; box-shadow: inset 0 0 0 2px var(--accent); }
 
 /* Operario con TODA su cola en rojo en el programa de produccion: no puede
@@ -558,6 +561,29 @@ button { font-family: inherit; }
    es "esto hay que mirarlo". En las barras sin estimar el borde discontinuo
    ya dice lo suyo -el fin es una proyeccion que no se ha podido calcular-. */
 .bar.st-riesgo::before { content: "▲"; margin-right: 4px; flex-shrink: 0; font-size: 10px; }
+
+/* PARADA ANOTADA sobre esa linea de fichaje (Averia Maquina, Calidad, Esperar
+   Carretilla...). Amarillo, como se pidio, y gana al color del estado porque
+   va despues en la hoja.
+
+   No es un estado mas: un bono puede ir en plazo y haber tenido una averia
+   igualmente.
+
+   El amarillo va FUERTE y el texto en negro: a diferencia del resto de la
+   paleta, que es calmada a proposito, esta marca tiene que cantar desde lejos.
+   Y de paso deja de confundirse con el ambar apagado de "en riesgo", que
+   significa otra cosa -- ese lleva ▲ y este el filete y el simbolo ⏻. */
+.bar.has-paro {
+  background: #FFFF00; border-color: #c9c900; color: #000; font-weight: 700;
+  box-shadow: inset 4px 0 0 #8a8a00;
+}
+/*  Los textos de dentro llevan su propio color en la paleta normal y ganarian
+    por especificidad, dejandolos grises sobre el amarillo. */
+.bar.has-paro .bar__id,
+.bar.has-paro .bar__bono,
+.bar.has-paro .bar__sub,
+.bar.has-paro .bar__paro { color: #000; font-weight: 700; }
+.bar__paro { margin-right: 4px; flex-shrink: 0; font-size: 11px; }
 .bar.st-parada  { background: #f4e9ea; border-color: #dcb9bd; color: #7e3a40; }
 .bar.st-pausada { background: #eaeef5; border-color: #bcc8dc; color: #45526e; }
 .bar.st-programado { background: #d3d8f7; border-color: #8a93d8; color: #2f3470; }
@@ -942,22 +968,28 @@ tbody .plan__pers span {
    significa. La muestra usa el mismo fondo y el mismo filete que la fila, para
    que se reconozca sin pensarlo.
 
-   Y ademas FILTRA: pulsarla deja solo los bonos sin material. Va aparte del
-   grupo de estados porque aquellos son excluyentes entre si y este no -- se
-   combina con el estado, con la maquina y con la busqueda. */
-.con__leyenda {
+   Y ademas FILTRA: pulsarla deja solo los bonos sin material. Vive DENTRO del
+   grupo de estados, a la izquierda de "Bloqueados", pero no es uno de ellos:
+   aquellos son excluyentes entre si y este se combina con el que este puesto.
+   Por eso conserva aspecto propio -- la muestra de color y el fondo blanco--
+   en vez del de los botones de al lado.
+
+   Los selectores van anclados a `.segmented` a proposito: `.segmented button`
+   pone `border: 0; background: transparent` y, con una clase y un elemento,
+   gana por especificidad a un `.con__leyenda` a secas. */
+.segmented .con__leyenda {
   display: inline-flex; align-items: center; gap: 6px;
-  font-size: 13px; color: var(--ink-2); white-space: nowrap;
-  padding: 5px 10px; border-radius: 999px; cursor: pointer;
+  font-size: 13px; font-weight: 600; color: var(--ink-2); white-space: nowrap;
+  padding: 6px 12px; border-radius: 6px; cursor: pointer;
   background: var(--surface); border: 1px solid var(--line);
-  font-family: inherit;
+  font-family: inherit; margin: 0 2px;
 }
-.con__leyenda:hover { background: var(--surface-2); }
-.con__leyenda.is-active { background: var(--rojo); color: #fff; border-color: var(--rojo); }
-.con__leyenda.is-active b { color: #fff; }
+.segmented .con__leyenda:hover { background: var(--surface-2); }
+.segmented .con__leyenda.is-active { background: var(--rojo); color: #fff; border-color: var(--rojo); }
+.segmented .con__leyenda.is-active b { color: #fff; }
 /* Activa, la muestra se queda sin fondo rojo sobre rojo: un borde blanco la
    mantiene reconocible como "el color de esa fila". */
-.con__leyenda.is-active .con__leyenda-color { background: #fff; box-shadow: none; }
+.segmented .con__leyenda.is-active .con__leyenda-color { background: #fff; box-shadow: none; }
 .con__leyenda-color {
   width: 22px; height: 14px; border-radius: 3px; flex-shrink: 0;
   background: #fce8ea; box-shadow: inset 3px 0 0 var(--rojo);

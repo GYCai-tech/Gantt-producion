@@ -141,6 +141,28 @@ def alfabetico(texto: str) -> str:
     return sin_tildes.casefold()
 
 
+def _leer_paradas() -> dict:
+    """{(orden, bono, linea): {motivo, minutos}} de las paradas anotadas.
+
+    Degrada a vacío como el semáforo o las ausencias: que no se pueda leer una
+    anotación es una marca de menos, no una pantalla rota."""
+    try:
+        filas = _erp(_SQL_PARADAS, {})
+    except HTTPException:
+        print("[items] paradas no disponibles: ¿falta Ordenes_Bonos_Lineas_Inc?")
+        return {}
+    return {
+        (r["idorden"], r["idbono"], r["idlinea"]): {
+            #  El catálogo puede no tener el código; mejor el código suelto que
+            #  una marca sin texto.
+            "motivo":  (r["motivo"] or r["tipo"] or "").strip() or "Parada",
+            "minutos": round(float(r["minutos"] or 0)) or None,
+            "observaciones": (r["observaciones"] or "").strip() or None,
+        }
+        for r in filas
+    }
+
+
 def _leer_lineas(desde: date, hasta: date) -> list[dict]:
     """Las líneas de bono del rango, deduplicadas y con inicio/fin resueltos."""
     filas = _erp(_consulta_lineas(_FILTRO_RANGO), {"desde": desde, "hasta": hasta})
@@ -365,6 +387,27 @@ WHERE ob.IdEstado IN (0, 1, 3)   -- solo bonos abiertos; los cerrados ya tienen 
 #  es 1,9 -- cinco veces inflado. Ese número contaminaba la media del artículo y
 #  luego se aplicaba a lotes de miles de piezas. El ritmo se mide solo con
 #  producción; la preparación va aparte, en su propia columna.
+#  PARADAS ANOTADAS sobre una línea de fichaje. Salen de
+#  `Ordenes_Bonos_Lineas_Inc` con su catálogo `Incidencias_Tipos` (Avería
+#  Máquina, Avería Utillaje, Calidad, Esperar Carretilla, Otros Paros...).
+#
+#  OJO con la unidad: el minuto de parada NO está en `Minutos` —que viene a 0—
+#  sino en `Duracion`, y en DÍAS, igual que el escandallo. La avería de utillaje
+#  del 6490/10 guarda 0,054861 = 79 minutos, que son exactamente los que duró su
+#  línea 3. Leer `Minutos` a secas daría cero en todas.
+#
+#  La tabla es diminuta (36 filas) y no se filtra por fecha: cuesta menos
+#  traerla entera que acotarla, y así una anotación vieja aparece igual si se
+#  navega a ese día.
+_SQL_PARADAS = """
+SELECT i.IdOrden AS idorden, i.IdBono AS idbono, i.IdLinea AS idlinea,
+       i.TipoIncidencia AS tipo, t.Descrip AS motivo,
+       i.Duracion * 1440.0 AS minutos,
+       NULLIF(LTRIM(RTRIM(i.Observaciones)), '') AS observaciones
+FROM Ordenes_Bonos_Lineas_Inc i
+    LEFT JOIN Incidencias_Tipos t ON t.TipoIncidencia = i.TipoIncidencia
+"""
+
 _SQL_MEDIAS = """
 WITH bono_min AS (
     SELECT obl.IdOrden, obl.IdBono,
@@ -716,6 +759,7 @@ def get_items(
     lineas = list(por_id.values())
     teoricos, medias = _cargar_estimaciones()
     avance = _avance_por_bono([l for l in lineas if l["abierta"]], ahora)
+    paradas = _leer_paradas()
 
     items = []
     for l in lineas:
@@ -742,6 +786,11 @@ def get_items(
             # que poder distinguirlos. Ver _OPERACION_MONTAJE.
             "es_montaje":   montaje,
             "tipo_trabajo": "montaje" if montaje else "produccion",
+            #  Parada anotada sobre ESTA línea de fichaje. Va aparte del
+            #  `estado` a propósito: un bono puede ir en plazo y haber tenido
+            #  una avería igualmente, así que son cosas distintas y se marcan
+            #  distinto.
+            "paro":       paradas.get((l["idorden"], l["idbono"], l["idlinea"])),
             "estimado":   False,
             "start":      inicio,
             "end":        fin,

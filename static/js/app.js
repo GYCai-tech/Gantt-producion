@@ -612,7 +612,12 @@ const App = (() => {
     const w = Math.max(rx - lx, 6);
 
     const bar = document.createElement('div');
-    bar.className = `bar bar--${it.tipo} st-${it.estado}` + (it.estimado ? ' is-estimado' : '');
+    //  `has-paro` tiñe la barra de amarillo cuando esa linea de fichaje tiene
+    //  una parada anotada. Va APARTE del estado: un bono puede ir en plazo y
+    //  haber tenido una averia igualmente, asi que no es un estado mas.
+    bar.className = `bar bar--${it.tipo} st-${it.estado}`
+                  + (it.estimado ? ' is-estimado' : '')
+                  + (it.paro ? ' has-paro' : '');
     bar.style.left = lx + 'px'; bar.style.width = w + 'px';
     bar.style.top = top + 'px'; bar.style.height = BAR_H + 'px';
     bar.dataset.id = it.id;
@@ -626,6 +631,12 @@ const App = (() => {
                     // solo montaje como si lo lleva dentro (barra fundida).
                     (it.es_montaje || it.min_montaje
                       ? `<span class="bar__setup" title="${it.es_montaje ? 'Montaje de utillaje: preparando la máquina, no fabricando' : 'Incluye ' + it.min_montaje + ' min de montaje de utillaje'}">⚙</span>` : '') +
+                    //  El motivo va DENTRO de la barra, no solo en el tooltip:
+                    //  es lo que distingue este amarillo del de "en riesgo",
+                    //  que comparte color pero significa otra cosa.
+                    (it.paro
+                      ? `<span class="bar__paro" title="Parada anotada: ${esc(it.paro.motivo)}${
+                          it.paro.minutos ? ' · ' + esc(fmtMin(it.paro.minutos)) : ''}">⏻</span>` : '') +
                     `<span class="bar__id">${esc(it.idorden)}<span class="bar__bono">${esc(bonoLabel)}</span></span>` +
                     (w > 60 ? `<span class="bar__sub">${esc(String(sub).slice(0, 30))}</span>` : '') +
                     // El numero de la barra es el exceso DE ESTA SESION, no el
@@ -695,6 +706,10 @@ const App = (() => {
     const rows = [];
     if (it.operacion) rows.push(`<div class="tip__row">Operación <span>${esc(it.operacion)}</span></div>`);
     rows.push(`<div class="tip__row">Bono <span>${it.idbono || '—'}</span></div>`);
+    //  La parada explica por que esa barra esta en amarillo. Va arriba, junto
+    //  al bono, y no perdida entre los tiempos: es el motivo de la marca.
+    if (it.paro) rows.push(`<div class="tip__row">Parada <span>⏻ ${esc(it.paro.motivo)}${
+      it.paro.minutos ? ' · ' + fmtMin(it.paro.minutos) : ''}</span></div>`);
     if (it.es_montaje) rows.push(`<div class="tip__row">Tipo <span>⚙ Montaje de utillaje</span></div>`);
     // Por que hay una barra proyectada de un bono que ya esta en marcha.
     if (it.continuacion) rows.push(`<div class="tip__row">Tipo <span>⏭ Sigue a la preparación en curso</span></div>`);
