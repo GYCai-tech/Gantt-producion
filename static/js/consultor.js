@@ -26,8 +26,15 @@ const Consultor = (() => {
   };
 
   //  `e` es el IdEstado que deja pasar cada boton; null, todos.
+  //
+  //  "Paradas" no es un estado del ERP sino un subconjunto de los ACTIVOS -- el
+  //  ERP los da por activos y no hay nadie fichando ahora mismo--, y por eso va
+  //  pegado a "Activos": se lee como lo que es, un afinado de esa pestaña. La
+  //  pantalla ya distinguia esos bonos con su pastilla, pero no habia forma de
+  //  quedarse solo con ellos.
   const FILTROS = {
     activos:   { tit: 'Activos',   e: 1 },
+    parado:    { tit: 'Paradas',   e: 1, soloParados: true },
     espera:    { tit: 'En espera', e: 0 },
     todos:     { tit: 'Total',     e: null },
     bloqueado: { tit: 'Bloqueados', e: 3 },
@@ -46,7 +53,9 @@ const Consultor = (() => {
   const aBono = t => t.replace(/(\d)\s*[·.\-\/ ]\s*(\d)/g, '$1/$2');
   const coincide = b => !busqueda
     || b.texto.includes(busqueda) || b.texto.includes(busquedaBono);
-  const deEstado   = (b, f) => FILTROS[f].e === null || b.estado_bono === FILTROS[f].e;
+  const deEstado   = (b, f) => FILTROS[f].soloParados
+    ? estaParado(b)
+    : (FILTROS[f].e === null || b.estado_bono === FILTROS[f].e);
   const deMaquina  = b => !maquina || b.matricula === maquina;
   const deMaterial = b => !soloSinMaterial || b.sin_material;
 
@@ -64,10 +73,18 @@ const Consultor = (() => {
   //  boton promete bonos que al pulsarlo no aparecen.
   function botones() {
     const base = datos.bonos.filter(b => coincide(b) && deMaquina(b) && deMaterial(b));
-    $('con-filtros').innerHTML = Object.entries(FILTROS).map(([k, f]) => {
+    //  "Sin material" va DENTRO del grupo, a la izquierda de "Bloqueados",
+    //  pero no es uno de ellos: los del grupo son excluyentes -un bono esta en
+    //  un estado o en otro- y este se combina con el que este puesto. Por eso
+    //  conserva su aspecto propio, con la muestra del color de la fila, y no
+    //  el de los botones de estado.
+    const html = [];
+    Object.entries(FILTROS).forEach(([k, f]) => {
+      if (k === 'bloqueado') html.push(botonMaterial());
       const n = base.filter(b => deEstado(b, k)).length;
-      return `<button class="${k === filtro ? 'is-active' : ''}" data-f="${k}">${f.tit} · ${num(n)}</button>`;
-    }).join('');
+      html.push(`<button class="${k === filtro ? 'is-active' : ''}" data-f="${k}">${f.tit} · ${num(n)}</button>`);
+    });
+    $('con-filtros').innerHTML = html.join('');
   }
 
   //  El mismo control hace de LEYENDA y de filtro: la muestra de color explica
@@ -81,11 +98,10 @@ const Consultor = (() => {
   function botonMaterial() {
     const n = datos.bonos.filter(b => coincide(b) && deEstado(b, filtro)
                                       && deMaquina(b) && b.sin_material).length;
-    $('con-material').innerHTML =
-      `<button class="con__leyenda${soloSinMaterial ? ' is-active' : ''}"
-               onclick="Consultor.toggleMaterial()"
-               title="Solo los bonos sin material disponible. Se combina con el estado, la máquina y la búsqueda.">` +
-      `<i class="con__leyenda-color"></i>Sin material · <b>${num(n)}</b></button>`;
+    return `<button class="con__leyenda${soloSinMaterial ? ' is-active' : ''}"
+                    onclick="Consultor.toggleMaterial()"
+                    title="Solo los bonos sin material disponible. Se combina con el estado, la máquina y la búsqueda.">` +
+           `<i class="con__leyenda-color"></i>Sin material · <b>${num(n)}</b></button>`;
   }
 
   //  El desplegable se arma con las maquinas que de verdad hay en pantalla, no
@@ -166,8 +182,7 @@ const Consultor = (() => {
   function refrescar() {
     const vis = datos.bonos.filter(b => coincide(b) && deEstado(b, filtro)
                                         && deMaquina(b) && deMaterial(b));
-    botones();
-    botonMaterial();
+    botones();          // pinta tambien el de "Sin material", que va dentro
     selectorMaquinas();
     $('con-resumen').textContent = vis.length === datos.total
       ? `${num(vis.length)} bonos`
