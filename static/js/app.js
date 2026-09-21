@@ -715,8 +715,28 @@ const App = (() => {
   }
 
   function buildBar(it, W, top) {
+    //  Una sesion en curso cuyo fin la propia estimacion declara
+    //  INDETERMINADO no se dibuja hasta ese fin: se dibuja hasta AHORA, y
+    //  crece con el reloj mientras el fichaje siga abierto (la vista se
+    //  recarga sola cada 5 min, ver el setInterval de loadItems).
+    //
+    //  `it.end` NO se toca: la cola lo necesita para reservar el recurso, y
+    //  cambiarlo moveria el plan. Lo que cambia es lo que se ensena. Pintar
+    //  esa proyeccion convertia un hueco reconocido en una prediccion firme:
+    //  6625/10, con 2 piezas de 1500 y el presupuesto ya agotado, estiraba la
+    //  barra hasta el 24 de septiembre. Ahora el borde derecho es "lo que
+    //  lleva", que es lo unico que de verdad se sabe.
+    //
+    //  Solo cuando "ahora" cae DENTRO de la ventana que se esta mirando. Al
+    //  navegar a otro dia, `workX(ahora)` se pega al borde (0 o W) y la barra
+    //  se quedaba en 0px de ancho: desaparecia de la pantalla. En un dia que
+    //  no es hoy no hay reloj que seguir, asi que se dibuja como siempre.
+    const xAhora = workX(new Date());
+    const creciendo = it.en_curso && it.fin_indeterminado
+                      && xAhora > 0 && xAhora < W;
     let lx = workX(it.start), rx = workX(it.end);
     if (rx <= 0 || lx >= W) return null;
+    if (creciendo) rx = xAhora;
     lx = clamp(lx, 0, W); rx = clamp(rx, 0, W);
     const w = Math.max(rx - lx, 6);
 
@@ -726,6 +746,7 @@ const App = (() => {
     //  haber tenido una averia igualmente, asi que no es un estado mas.
     bar.className = `bar bar--${it.tipo} st-${it.estado}`
                   + (it.estimado ? ' is-estimado' : '')
+                  + (creciendo ? ' bar--creciendo' : '')
                   + (it.paro ? ' has-paro' : '');
     bar.style.left = lx + 'px'; bar.style.width = w + 'px';
     bar.style.top = top + 'px'; bar.style.height = BAR_H + 'px';
@@ -781,12 +802,19 @@ const App = (() => {
     // Se exige `min_exceso` y no solo que `fin_teorico` caiga dentro: como el
     // fin de una barra abierta es "ahora", el corte teorico queda unos segundos
     // por detras y pintaba una astilla roja en bonos que no se han pasado.
+    //
+    // Y el rojo llega SOLO hasta ahora, nunca hasta el final de la barra,
+    // aunque de `fin_teorico` en adelante todo sea exceso. El motivo no es que
+    // el resto este dentro del presupuesto -- no lo esta -- sino que ahi no hay
+    // nada que afirmar: en cuanto hay `min_exceso`, `estimacion.py` marca
+    // `fin_indeterminado` y el tooltip ensena "Fin: Indeterminado", porque
+    // pasado el presupuesto lo que queda por delante es justo lo que el modelo
+    // no supo prever. El borde derecho de la barra es un relleno, no una
+    // prediccion. Se probo a rayar ese tramo de rojo ("exceso que viene") y es
+    // peor: pinta una certeza sobre el unico trozo del que la app dice
+    // expresamente que no sabe nada.
     if (it.fin_teorico && it.min_exceso_barra) {
       const xTeorico = workX(new Date(it.fin_teorico));
-      // El exceso llega hasta AHORA, no hasta el final de la barra: en una
-      // barra abierta el final es el fin PROYECTADO, y pintar de rojo trabajo
-      // que aun no ha ocurrido hacia que el tramo midiera 155 min mientras la
-      // etiqueta decia "+18". Ahora el largo del rojo y la cifra coinciden.
       const xAhora = Math.min(lx + w, workX(new Date()));
       if (xTeorico < xAhora - 1) {
         const ex = document.createElement('div');
@@ -904,6 +932,20 @@ const App = (() => {
       if (it.min_exceso_barra && it.min_exceso_barra < it.min_exceso) {
         rows.push(`<div class="tip__row">De esta sesión <span>${fmtMin(it.min_exceso_barra)} de más</span></div>`);
       }
+      // Sin esto, el tramo sin teñir de la barra se lee como "lo que queda
+      // va dentro de lo previsto", y lo que pasa es que el presupuesto ya
+      // estaba gastado antes de empezar.
+      if (it.presupuesto_agotado_antes) {
+        rows.push(`<div class="tip__row">Presupuesto <span style="color:#ff9a9a">agotado antes de abrir esta sesión: toda ella es exceso</span></div>`);
+      }
+    }
+    // Lo que falta cuesta una cosa segun el escandallo y otra al ritmo que
+    // lleva el bono. La barra dibuja la primera -- es la que manda sobre la
+    // cola --, asi que la segunda hay que decirla o no se ve por ningun lado.
+    if (it.min_restantes_ritmo_real != null
+        && it.min_restantes_ritmo_real > it.min_restantes_teoricos) {
+      rows.push(`<div class="tip__row">Falta <span>${fmtMin(it.min_restantes_teoricos)} a teórico · `
+        + `<span style="color:#ff9a9a">${fmtMin(it.min_restantes_ritmo_real)} al ritmo real</span></span></div>`);
     }
     if (it.tipo === 'real') {
       if (it.progreso_piezas != null) rows.push(`<div class="tip__row">Progreso <span>${it.progreso_piezas}% de las piezas</span></div>`);

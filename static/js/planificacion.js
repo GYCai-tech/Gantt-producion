@@ -36,14 +36,18 @@ const Plan = (() => {
   function celda(c, p) {
     const n = nivel(c.pct);
     if (!c.min) return `<td class="plan__c is-libre"><span class="plan__vacio">—</span></td>`;
-    // Un bono bloqueado o sin estimacion fiable dentro de la celda se marca:
-    // la carga es la misma pero lo que se puede prometer no.
-    const aviso = c.bonos.some(b => b.estado === 'parada') ? ' tiene-parada'
-                : c.bonos.some(b => b.estado === 'sin-estimar') ? ' tiene-dudoso' : '';
-    // Dos fichajes en marcha a la vez: puede ser una maquina automatica
-    // atendida mientras se hace otra cosa, o un fichaje que nadie cerro.
+    // Esta celda tuvo dos rayas de aviso en el borde inferior: roja para los
+    // bonos PARADOS y ambar para los que no tienen estimacion fiable. Se
+    // quitaron las dos por no aportar. Ninguna figuraba en la leyenda, asi que
+    // no habia forma de saber que significaban desde la pantalla, y lo que
+    // contaban ya vive en el Gantt, que es donde se mira un bono suelto. Aqui
+    // lo que se busca es cuanta carga tiene cada uno, y 33 celdas rayadas solo
+    // le quitaban sitio a esa lectura.
+    //
+    // El punto ambar de "dos cosas a la vez" (es-simultaneo) SI se queda: ese
+    // esta en la leyenda y cambia como se lee el porcentaje de la celda.
     const simult = c.simultaneo ? ' es-simultaneo' : '';
-    return `<td class="plan__c is-${n}${aviso}${simult}" data-p="${esc(p.id)}" data-f="${c.fecha}">
+    return `<td class="plan__c is-${n}${simult}" data-p="${esc(p.id)}" data-f="${c.fecha}">
       <div class="plan__barra"><i style="width:${Math.min(100, c.pct)}%"></i></div>
       <div class="plan__cifra">${c.pct}%<span>${c.bonos.length} bono${c.bonos.length > 1 ? 's' : ''}</span></div>
     </td>`;

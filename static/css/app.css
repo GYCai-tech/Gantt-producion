@@ -603,6 +603,20 @@ button { font-family: inherit; }
 .bar.st-pendiente-cierre { background: #e7f1f6; border-color: #a9cbdc; color: #2c5c74; }
 .bar.st-parcial { background: #eef1f5; border-color: #cdd5e0; color: #59657a; }
 
+/* Sesion en curso cuyo fin la estimacion NO sabe: la barra llega hasta ahora
+   y crece con el reloj. El borde derecho va discontinuo y sin redondear para
+   que no se lea como un final -- no es que el trabajo acabe ahi, es que a
+   partir de ahi no se sabe nada. Un borde recto y solido prometia una hora de
+   fin que el propio tooltip desmiente con "Fin: Indeterminado". */
+.bar--creciendo {
+  border-right: 2px dashed currentColor;
+  border-top-right-radius: 2px;
+  border-bottom-right-radius: 2px;
+}
+/* El tramo de exceso muere en ese mismo borde: su esquina redondeada volvia a
+   dibujar el final que la barra acaba de dejar de prometer. */
+.bar--creciendo .bar__exceso { border-radius: 0; }
+
 /* Relleno de lo ya trabajado dentro de una barra en curso: la parte solida
    llega hasta "ahora" y el resto, tenue, es lo estimado que queda. Antes esto
    era una rayita de 3px al pie; ahora ocupa toda la altura porque es la
@@ -839,10 +853,11 @@ tbody .plan__pers span {
 .plan__cifra { margin-top: 6px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .plan__cifra span { font-weight: 400; color: var(--ink-3); margin-left: 5px; font-size: 11px; }
 .plan__c[data-p] { cursor: help; }
-/* Un bono bloqueado o sin estimacion fiable dentro del dia: la carga es la
-   misma pero lo que se puede prometer, no. */
-.plan__c.tiene-dudoso { box-shadow: inset 0 -3px 0 var(--ambar); }
-.plan__c.tiene-parada { box-shadow: inset 0 -3px 0 var(--rojo); }
+/* Aqui vivian dos rayas en el borde inferior de la celda: .tiene-parada (roja,
+   bonos a medias) y .tiene-dudoso (ambar, sin estimacion fiable). Retiradas
+   las dos: marcaban 33 celdas, ninguna figuraba en la leyenda -- no habia como
+   saber que querian decir -- y lo que contaban ya se ve en el Gantt. Esta
+   rejilla es para leer carga, y las rayas competian con el porcentaje. */
 
 .tip__sub { font-size: 11.5px; color: var(--ink-3); margin: -2px 0 7px; line-height: 1.45; }
 /* ============================================================
