@@ -1,0 +1,26 @@
+[
+  {
+    "areas": [
+      "CHAPA"
+    ],
+    "id": "1",
+    "nombre": "Ana Boo",
+    "sub": "CHAPA"
+  },
+  {
+    "areas": [
+      "ESTRUCTURAS"
+    ],
+    "id": "2",
+    "nombre": "Bruno Cela",
+    "sub": "ESTRUCTURAS"
+  },
+  {
+    "areas": [
+      "CHAPA"
+    ],
+    "id": "3",
+    "nombre": "chus Ávila",
+    "sub": "CHAPA"
+  }
+]

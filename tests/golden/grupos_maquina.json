@@ -1,0 +1,14 @@
+[
+  {
+    "area": "CHAPA",
+    "id": "M1",
+    "nombre": "Maquina M1",
+    "sub": "Matrícula M1"
+  },
+  {
+    "area": "ESTRUCTURAS",
+    "id": "M2",
+    "nombre": "Maquina M2",
+    "sub": "Matrícula M2"
+  }
+]
