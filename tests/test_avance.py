@@ -11,7 +11,10 @@ from sqlalchemy.exc import SQLAlchemyError
 import pytest
 from fastapi import HTTPException
 
-from app.routers import api
+from app.calculos import cola as cola_mod, fusion as fusion_mod
+from app.erp import cache, cliente, lecturas
+from app.erp.cliente import ErpNoDisponible
+from app.services import produccion
 
 AHORA = datetime(2026, 9, 7, 12)
 
@@ -44,7 +47,7 @@ def erp(monkeypatch):
         def connect(self):
             with engine.connect() as c:
                 yield Conexion(c)
-    monkeypatch.setattr(api, 'get_erp_engine', ERP)
+    monkeypatch.setattr(cliente, 'get_erp_engine', ERP)
     yield engine
     engine.dispose()
 
@@ -64,7 +67,7 @@ def test_consumo_y_operarios_separan_preparacion_de_fabricacion(erp):
         dict(empleado=3, operacion=1, inicio='2026-09-07 11:55:00', fin=None, piezas=0),
         dict(empleado=4, operacion=2, inicio='2026-09-07 10:00:00', fin='2026-09-07 10:05:00', piezas=0),
     ])
-    avance = api._avance_por_bono([{'idorden': 1}], AHORA)[(1, 10)]
+    avance = lecturas.leer_avance([{'idorden': 1}], AHORA)[(1, 10)]
     # `montando` es 1: el empleado 3 tiene una preparacion abierta. Se cuenta
     # aparte porque mientras solo hay montaje fichado `operarios` da 0 y no
     # habria por quien dividir la fabricacion que viene detras.
@@ -78,17 +81,23 @@ def test_fichajes_fantasma_futuros_y_duraciones_negativas_no_inflan_consumo(erp)
         dict(empleado=2, operacion=0, inicio='2026-09-08 10:00:00', fin=None, piezas=0),
         dict(empleado=3, operacion=0, inicio='2026-09-07 11:00:00', fin='2026-09-07 10:00:00', piezas=0),
     ])
-    avance = api._avance_por_bono([{'idorden': 1}], AHORA)[(1, 10)]
+    avance = lecturas.leer_avance([{'idorden': 1}], AHORA)[(1, 10)]
     assert avance['min_produccion'] == 0
     assert avance['minutos'] == 0
     assert avance['operarios'] == 1
 
 
 def test_error_del_erp_no_se_convierte_en_cero_produccion(monkeypatch):
+    """Cero produccion y "no se pudo leer" NO son lo mismo: un bono sin avance
+    legible no puede pasar por un bono que no ha hecho nada.
+
+    La lectura lanza `ErpNoDisponible` y no sabe lo que es un 503; el codigo
+    HTTP lo pone `app/main.py`, y eso lo vigila
+    `test_un_fallo_del_erp_llega_al_frontend_como_503`."""
     class ERP:
         def connect(self):
             raise SQLAlchemyError('fallo sintetico')
-    monkeypatch.setattr(api, 'get_erp_engine', ERP)
-    with pytest.raises(HTTPException) as exc:
-        api._avance_por_bono([{'idorden': 1}], AHORA)
-    assert exc.value.status_code == 503
+    monkeypatch.setattr(cliente, 'get_erp_engine', ERP)
+    with pytest.raises(ErpNoDisponible) as exc:
+        lecturas.leer_avance([{'idorden': 1}], AHORA)
+    assert 'avance' in str(exc.value)

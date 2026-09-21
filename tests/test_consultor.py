@@ -207,11 +207,11 @@ def test_la_consulta_de_material_es_la_de_access_sin_sus_trampas(monkeypatch):
 def test_si_falta_la_vista_personalizada_la_pantalla_sigue_en_pie(monkeypatch):
     """`Pers_vOrdenes_Consumos` la mantiene el equipo, no viene con el ERP. Si
     desaparece, la marca es informacion de menos -- no una pantalla rota."""
-    from fastapi import HTTPException
+    from app.erp.cliente import ErpNoDisponible
 
     def fake(query, params):
         if 'Pers_vOrdenes_Consumos' in query:
-            raise HTTPException(status_code=503, detail='No se pudo consultar el ERP')
+            raise ErpNoDisponible('No se pudo consultar el ERP')
         if 'Hfinal IS NULL' in query or 'Pers_EmpleadosOrdenBono' in query:
             return []
         return [fila()]

@@ -224,10 +224,17 @@ const App = (() => {
     renderEscala();
     montarRueda();
     tickClock(); setInterval(tickClock, 30000);
+    // Si el arranque falla no hay nada que enseñar, asi que lo unico que se
+    // hace es contarlo: antes quedaba la pantalla en blanco y sin mensaje.
     loadGrupos()
-      .then(() => loadItems())
-      .then(() => { setTimeout(scrollToNow, 100); maybeAutoRefresh(); });
-    setInterval(loadItems, 300000);
+      .then(ok => ok ? loadItems() : false)
+      .then(ok => { if (ok) { setTimeout(scrollToNow, 100); maybeAutoRefresh(); } })
+      .catch(marcarFallo);
+    // El auto-refresco de 5 minutos es el que mas daño hacia: la excepcion se
+    // tragaba y en pantalla se quedaba el Gantt ANTERIOR, que ademas tickClock
+    // sigue repintando cada 30 s. El usuario veia datos de hace horas creyendo
+    // que eran de ahora. Ahora `loadItems` nunca se rompe en silencio.
+    setInterval(() => loadItems(), 300000);
   }
 
   const REFRESH_COOLDOWN_MIN = 5;
@@ -240,35 +247,130 @@ const App = (() => {
   function tickClock() {
     $('clock').textContent = new Date().toLocaleString('es-ES',
       { weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' });
+    // El aviso de datos caducados envejece con el reloj: si no, diria "hace 1
+    // min" durante toda la tarde.
+    if (fallo) pintarAviso();
     if (items.length) render();
+  }
+
+  // ── Ultima lectura buena ───────────────────────────────────────────
+  // Que se esta enseñando AHORA y de cuando es. Si una recarga falla se
+  // vuelve a esto: un Gantt viejo pero coherente --dia, zoom, vista y barras
+  // del mismo momento-- sirve para algo; uno con el dia nuevo y las barras
+  // viejas, no. Lo que NO puede pasar es que se vea viejo sin avisar.
+  let ultimoBueno = null;    // Date de la ultima carga que trajo datos
+  let ventanaBuena = null;   // {vista, zi, winStart, allGrupos} de esa carga
+  let fallo = null;          // {mensaje} mientras el aviso este puesto
+
+  function guardarLecturaBuena() {
+    ultimoBueno = new Date();
+    ventanaBuena = { vista, zi, winStart: new Date(winStart), allGrupos };
+    fallo = null;
+    pintarAviso();
+  }
+
+  function marcarFallo(e) {
+    fallo = { mensaje: (e && e.message) || 'Error desconocido' };
+    volverALoBueno();
+    pintarAviso();
+  }
+
+  // Deshace la navegacion que no se ha podido cargar. No toca nada si aun no
+  // hay ninguna lectura buena: en el arranque no hay a donde volver.
+  function volverALoBueno() {
+    if (!ventanaBuena) return;
+    const cambiaVista = ventanaBuena.vista !== vista;
+    vista = ventanaBuena.vista;
+    zi = ventanaBuena.zi;
+    winStart = new Date(ventanaBuena.winStart);
+    allGrupos = ventanaBuena.allGrupos;
+    if (cambiaVista) {
+      [...$('vista-tabs').children].forEach(b => b.classList.toggle('is-active', b.dataset.v === vista));
+      $('gantt-corner').textContent = vista === 'maquina' ? 'Máquinas' : 'Operarios';
+    }
+    buildDays();
+    renderZoom();
+    renderEscala();
+    renderAreas();
+    applyArea();
+    render();
+  }
+
+  function pintarAviso() {
+    const el = $('gantt-error');
+    if (!el) return;
+    if (!fallo) { el.hidden = true; el.textContent = ''; return; }
+    el.hidden = false;
+    if (!ultimoBueno) {
+      el.textContent = `No se pudieron cargar los datos: ${fallo.mensaje}. `
+        + 'No hay nada que mostrar; vuelve a intentarlo con «Actualizar».';
+      return;
+    }
+    const min = (Date.now() - +ultimoBueno) / 60000;
+    const hace = min < 1 ? 'hace menos de un minuto' : 'hace ' + fmtMin(min);
+    const hora = ultimoBueno.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    el.textContent = `Sin contacto con el ERP: ${fallo.mensaje}. `
+      + `Lo que ves es la lectura de las ${hora} (${hace}) y NO se está actualizando.`;
   }
 
   // ── Carga de datos ─────────────────────────────────────────────────
   async function loadGrupos() {
-    allGrupos = await (await fetch(`/api/grupos?vista=${vista}`)).json();
-    renderAreas();
-    applyArea();
+    const t = ApiCliente.turno('grupos');
+    try {
+      const datos = await ApiCliente.cargar(`/api/grupos?vista=${vista}`, { señal: t.señal });
+      if (!t.vigente()) return false;
+      allGrupos = datos;
+      renderAreas();
+      applyArea();
+      return true;
+    } catch (e) {
+      // Una cancelacion es una navegacion posterior, no un fallo: quien la
+      // provoco ya esta pintando lo suyo.
+      if (ApiCliente.cancelada(e) || !t.vigente()) return false;
+      marcarFallo(e);
+      return false;
+    } finally {
+      t.soltar();
+    }
   }
 
+  // Devuelve si la carga acabo pintando datos nuevos. Nunca lanza: el que
+  // llama no tiene que acordarse de poner un .catch() para que la pantalla
+  // diga la verdad.
   async function loadItems() {
     buildDays();
+    // Un solo turno para las dos peticiones: si el usuario cambia de dia, de
+    // zoom o de vista mientras esta en vuelo, se cancela entera y la respuesta
+    // lenta ya no puede pintar el dia equivocado.
+    const t = ApiCliente.turno('items');
     const url = `/api/items?vista=${vista}&desde=${days[0].toISOString()}&hasta=${winEnd.toISOString()}`;
-    // Si el aviso falla, el Gantt se pinta igual: es informacion de mas, no la
-    // pantalla.
-    const [its, avisos] = await Promise.all([
-      fetch(url).then(r => r.json()),
-      fetch(`/api/avisos?vista=${vista}&dia=${ymd(days[0])}`).then(r => r.json()).catch(() => ({})),
-    ]);
-    items = its;
-    sinSalida = avisos.sin_salida || {};
-    ausencias = avisos.ausencias || {};
-    itemMap.clear();
-    items.forEach(i => itemMap.set(String(i.id), i));
-    // Las áreas salen de las barras, así que se recalculan con cada carga.
-    renderAreas();
-    applyArea();
-    render();
-    updateSummary();
+    try {
+      // Si el aviso falla, el Gantt se pinta igual: es informacion de mas, no
+      // la pantalla.
+      const [its, avisos] = await Promise.all([
+        ApiCliente.cargar(url, { señal: t.señal }),
+        ApiCliente.opcional(`/api/avisos?vista=${vista}&dia=${ymd(days[0])}`, {}, { señal: t.señal }),
+      ]);
+      if (!t.vigente()) return false;
+      items = its;
+      sinSalida = avisos.sin_salida || {};
+      ausencias = avisos.ausencias || {};
+      itemMap.clear();
+      items.forEach(i => itemMap.set(String(i.id), i));
+      // Las áreas salen de las barras, así que se recalculan con cada carga.
+      renderAreas();
+      applyArea();
+      render();
+      updateSummary();
+      guardarLecturaBuena();
+      return true;
+    } catch (e) {
+      if (ApiCliente.cancelada(e) || !t.vigente()) return false;
+      marcarFallo(e);
+      return false;
+    } finally {
+      t.soltar();
+    }
   }
 
   // ── Áreas ──────────────────────────────────────────────────────────
@@ -858,7 +960,9 @@ const App = (() => {
     const si = $('search-gantt'); if (si) si.value = '';
     [...$('vista-tabs').children].forEach(b => b.classList.toggle('is-active', b.dataset.v === v));
     $('gantt-corner').textContent = v === 'maquina' ? 'Máquinas' : 'Operarios';
-    loadGrupos().then(() => loadItems());
+    // Si el censo no llega, no se piden sus barras: quedarian las de la vista
+    // anterior colgadas de unas filas que no son suyas.
+    loadGrupos().then(ok => { if (ok) loadItems(); });
   }
   function setZoom(i) {
     zi = i;
@@ -950,9 +1054,11 @@ const App = (() => {
       if (estado === 'COMPLETED') {
         localStorage.setItem('gyc_last_refresh', String(Date.now()));
         lbl.textContent = 'Recargando…';
-        await loadGrupos();
-        await loadItems();
-        toast(auto ? 'Datos actualizados al entrar' : 'Datos actualizados desde el ERP');
+        // El ETL ha terminado, pero leer lo que ha dejado puede fallar igual.
+        // Si falla, el aviso de la pantalla ya lo cuenta con detalle.
+        const ok = await loadGrupos() && await loadItems();
+        if (ok) toast(auto ? 'Datos actualizados al entrar' : 'Datos actualizados desde el ERP');
+        else if (!auto) toast('El ETL terminó, pero no se pudieron leer los datos', true);
       } else if (FIN.includes(estado)) {
         if (!auto) toast('El flujo terminó en estado ' + estado, true);
       } else {

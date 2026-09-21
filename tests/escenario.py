@@ -10,7 +10,8 @@ golden siguen valiendo: lo que se compara es la salida, no por dónde pasa.
 """
 from datetime import date, datetime
 
-from app.routers import api
+from app.erp import cache, lecturas
+from app.services import produccion
 
 #  Un lunes a media mañana: hay jornada por delante y cola que encadenar.
 AHORA = datetime(2026, 9, 7, 12)
@@ -102,28 +103,28 @@ MAQUINAS = [
 ]
 
 
-def _responder(query, params):
-    if "am.Area        AS area" in query:
-        return list(MAQUINAS)
-    if "am.Area AS area" in query:
-        return list(AREAS_EMPLEADO)
-    if "ed.Apellidos" in query:
-        return list(CENSO)
-    return []
+#  Sin histórico de montajes: el escenario fija el setup por escandallo.
+MONTAJES = {"trabajo": {}, "maquina": {}}
 
 
 def fingir_erp(monkeypatch):
     """Deja la app leyendo del escenario y no del ERP.
 
-    ÚNICO sitio que conoce los nombres de las funciones de lectura. Al
-    extraerlas a `app/erp/`, se reapunta aquí.
+    ÚNICO sitio que conoce los nombres de las funciones de lectura.
+
+    Se parchea a nivel de FUNCIÓN (`lecturas.leer_cola`) y no de `consultar`:
+    tres de las consultas del ERP contienen `ed.Apellidos`, así que despachar
+    por el texto del SQL devolvería el censo cuando se pide la cola.
     """
-    monkeypatch.setattr(api, "datetime", Reloj)
-    monkeypatch.setattr(api, "date", Fecha)
-    monkeypatch.setattr(api, "_leer_lineas", lambda *a: [dict(l) for l in LINEAS_CERRADAS])
-    monkeypatch.setattr(api, "_leer_abiertas", lambda *a: [dict(l) for l in LINEAS_ABIERTAS])
-    monkeypatch.setattr(api, "_leer_cola", lambda: [dict(b) for b in COLA])
-    monkeypatch.setattr(api, "_leer_paradas", lambda: {})
-    monkeypatch.setattr(api, "_cargar_estimaciones", lambda: (dict(TEORICOS), MEDIAS))
-    monkeypatch.setattr(api, "_avance_por_bono", lambda *a: {k: dict(v) for k, v in AVANCE.items()})
-    monkeypatch.setattr(api, "_erp", _responder)
+    monkeypatch.setattr(produccion, "datetime", Reloj)
+    monkeypatch.setattr(produccion, "date", Fecha)
+    monkeypatch.setattr(lecturas, "leer_lineas", lambda *a: [dict(l) for l in LINEAS_CERRADAS])
+    monkeypatch.setattr(lecturas, "leer_abiertas", lambda *a: [dict(l) for l in LINEAS_ABIERTAS])
+    monkeypatch.setattr(lecturas, "leer_cola", lambda: [dict(b) for b in COLA])
+    monkeypatch.setattr(lecturas, "leer_paradas", lambda: {})
+    monkeypatch.setattr(lecturas, "leer_censo_maquinas", lambda: list(MAQUINAS))
+    monkeypatch.setattr(lecturas, "leer_censo_empleados", lambda: list(CENSO))
+    monkeypatch.setattr(lecturas, "leer_areas_empleado", lambda: list(AREAS_EMPLEADO))
+    monkeypatch.setattr(lecturas, "leer_avance", lambda *a: {k: dict(v) for k, v in AVANCE.items()})
+    monkeypatch.setattr(cache, "cargar_estimaciones",
+                        lambda: (dict(TEORICOS), MEDIAS, MONTAJES))

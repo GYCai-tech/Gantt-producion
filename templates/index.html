@@ -56,6 +56,11 @@
 
       <div class="areas" id="areas"></div>
 
+      <!-- Unico sitio donde el Gantt cuenta que algo ha fallado. Oculto
+           mientras todo va bien, asi que no cambia nada de la pantalla
+           normal. Mismo patron que el resto de pantallas. -->
+      <div id="gantt-error" class="plan__estado plan__estado--error" hidden></div>
+
       <!-- Gantt -->
       <div class="gantt" id="gantt">
         <div class="gantt__inner" id="gantt-inner">
@@ -95,5 +100,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/api-cliente.js?v={{ static_v }}"></script>
 <script src="/static/js/app.js?v={{ static_v }}"></script>
 {% endblock %}

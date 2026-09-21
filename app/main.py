@@ -2,10 +2,11 @@ import datetime
 import decimal
 import json
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.erp.cliente import ErpNoDisponible
 from app.routers import api, bonos, consultor, duplicados, ordenes, pages, plan
 
 
@@ -31,6 +32,18 @@ app = FastAPI(
     version="2.0",
     default_response_class=_JSONResponse,
 )
+
+#  El ERP caido es un 503, no un 500: el servicio existe y funciona, lo que
+#  falta es el origen de datos. Se traduce AQUI, en el borde HTTP, y no en cada
+#  ruta: `app.erp` lanza `ErpNoDisponible` sin saber que existe el HTTP, y asi
+#  ninguna ruta puede olvidarse de traducirlo y colar un 500.
+#
+#  El detalle es el texto que ya traia la excepcion, identico al que servia la
+#  version anterior: el frontend lo ensena tal cual.
+@app.exception_handler(ErpNoDisponible)
+def _erp_no_disponible(request: Request, exc: ErpNoDisponible):
+    return _JSONResponse(status_code=503, content={"detail": str(exc)})
+
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

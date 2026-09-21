@@ -1,7 +1,13 @@
 """Reservas conjuntas y continuidad, con casos de taller sin tocar el ERP."""
 from datetime import datetime
 
-from app.routers import api
+#  Sin histórico de montajes: el setup sale del escandallo, como antes
+#  de que `montajes` fuera un parámetro explícito.
+MONTAJES_TEST = {"trabajo": {}, "maquina": {}}
+
+from app.calculos import cola as cola_mod, estimacion, fusion as fusion_mod
+from app.erp import cache, cliente, lecturas
+from app.services import produccion
 
 AHORA = datetime(2026, 9, 7, 12)
 HASTA = datetime(2026, 9, 11, 15)
@@ -30,7 +36,7 @@ def bono(orden=1, empleado=1, maquina='M1', cantidad=100, semaforo='disponible',
 
 def plan(cola, ocupado=None, hasta=HASTA):
     teoricos = {(b['idorden'], b['idbono']): (1, 1) for b in cola}
-    return api._planificar_cola(cola, ocupado or {}, hasta, AHORA, teoricos, MEDIAS)
+    return cola_mod.planificar_cola(cola, ocupado or {}, hasta, AHORA, teoricos, MEDIAS, MONTAJES_TEST)
 
 
 def test_dos_operarios_comparten_maquina_sin_solaparse():
@@ -51,10 +57,10 @@ def test_recursos_independientes_pueden_trabajar_en_paralelo():
 
 def test_ambas_vistas_representan_el_mismo_plan(monkeypatch):
     cola = [bono(1, 1), bono(2, 2), bono(2, 3)]
-    monkeypatch.setattr(api, '_leer_cola', lambda: cola)
+    monkeypatch.setattr(lecturas, 'leer_cola', lambda: cola)
     teoricos = {(b['idorden'], b['idbono']): (1, 1) for b in cola}
-    empleados = api._encolar('empleado', {}, HASTA, AHORA, teoricos, MEDIAS)
-    maquinas = api._encolar('maquina', {}, HASTA, AHORA, teoricos, MEDIAS)
+    empleados = produccion.encolar('empleado', {}, HASTA, AHORA, teoricos, MEDIAS, MONTAJES_TEST)
+    maquinas = produccion.encolar('maquina', {}, HASTA, AHORA, teoricos, MEDIAS, MONTAJES_TEST)
     assert len(empleados) == 3
     assert len(maquinas) == 2
     por_bono = {i['idorden']: (i['start'], i['end']) for i in maquinas}
@@ -72,7 +78,7 @@ def test_bono_compartido_reserva_a_todos_sin_duplicar_trabajo():
 def test_la_reserva_activa_se_respeta_en_ambos_recursos():
     fin = datetime(2026, 9, 8, 11, 30)
     activo = {'idempleado': '1', 'matricula': 'M1', 'libre_desde': fin}
-    ocupado = api._ocupacion_actual([activo], HASTA, AHORA)
+    ocupado = cola_mod.ocupacion_actual([activo], HASTA, AHORA)
     tareas = plan([bono(1, 2, 'M1'), bono(2, 1, 'M2')], ocupado)
     # Sin el len, un plan vacío haría pasar el `all` sin comprobar nada.
     assert len(tareas) == 2
@@ -85,10 +91,10 @@ def test_450_minutos_pendientes_no_liberan_manana_a_las_siete():
             'sin_tiempo': False, 'idempleado': '1', 'matricula': 'M1', 'es_montaje': False}
     avance = {(1, 10): {'minutos': 70, 'min_produccion': 10, 'min_montaje': 60,
                         'piezas': 10, 'operarios': 1, 'montando': 1}}
-    api._proyectar(item, linea, AHORA, {(1, 10): (1, 5)}, MEDIAS, avance)
+    estimacion.proyectar(item, linea, AHORA, {(1, 10): (1, 5)}, MEDIAS, MONTAJES_TEST, avance)
     assert item['min_restantes'] == 450
     assert item['end'] == datetime(2026, 9, 8, 11, 30)
-    ocupado = api._ocupacion_actual([item], HASTA, AHORA)
+    ocupado = cola_mod.ocupacion_actual([item], HASTA, AHORA)
     assert plan([bono(2)], ocupado)[0]['start'] == datetime(2026, 9, 8, 11, 30)
 
 
@@ -122,7 +128,7 @@ def test_no_se_cobra_preparacion_si_no_quedan_piezas():
 def test_abierta_sin_liberacion_estimable_no_regala_capacidad():
     """Sin `libre_desde` no se sabe cuándo se libera: se reserva todo."""
     item = {'idempleado': '1', 'matricula': 'M1'}
-    ocupado = api._ocupacion_actual([item], HASTA, AHORA)
+    ocupado = cola_mod.ocupacion_actual([item], HASTA, AHORA)
     assert plan([bono()], ocupado) == []
 
 
@@ -134,42 +140,42 @@ def test_bono_con_las_piezas_hechas_no_bloquea_la_cola_de_su_operario():
             'es_montaje': False}
     avance = {(1, 10): {'minutos': 240, 'min_produccion': 240, 'min_montaje': 0,
                         'piezas': 100, 'operarios': 1, 'montando': 1}}
-    api._proyectar(item, linea, AHORA, {(1, 10): (5, 1)}, MEDIAS, avance)
+    estimacion.proyectar(item, linea, AHORA, {(1, 10): (5, 1)}, MEDIAS, MONTAJES_TEST, avance)
     assert item['estado'] == 'pendiente-cierre'
     assert item['libre_desde'] == AHORA
-    ocupado = api._ocupacion_actual([item], HASTA, AHORA)
+    ocupado = cola_mod.ocupacion_actual([item], HASTA, AHORA)
     assert plan([bono(2, 1, 'M1')], ocupado)[0]['start'] == AHORA
 
 
 def test_una_preparacion_pasada_de_tiempo_sigue_reservando_su_produccion(monkeypatch):
     """Que el montaje se pase de su media no borra el bono que viene detrás."""
-    monkeypatch.setattr(api, '_minutos_montaje', lambda l: 60)
+    monkeypatch.setattr(estimacion, 'minutos_montaje', lambda l, m: 60)
     linea = dict(bono(), idoperacion=1)
     item = {'start': AHORA.replace(hour=10, minute=30), 'end': AHORA,
             'estado': 'plazo', 'sin_tiempo': False, 'idempleado': '1',
             'matricula': 'M1', 'es_montaje': True}
     avance = {(1, 10): {'minutos': 90, 'min_produccion': 0, 'min_montaje': 90,
                         'piezas': 0, 'operarios': 1, 'montando': 1}}
-    api._proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, avance)
+    estimacion.proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, MONTAJES_TEST, avance)
     assert item['min_restantes'] == 0
     # 100 piezas x 1 min desde ahora, no la ventana entera.
     assert item['libre_desde'] == AHORA.replace(hour=13, minute=40)
-    ocupado = api._ocupacion_actual([item], HASTA, AHORA)
+    ocupado = cola_mod.ocupacion_actual([item], HASTA, AHORA)
     assert plan([bono(2)], ocupado)[0]['start'] == item['libre_desde']
 
 
 def test_la_preparacion_reserva_tambien_la_produccion_que_viene_despues(monkeypatch):
-    monkeypatch.setattr(api, '_minutos_montaje', lambda l: 60)
+    monkeypatch.setattr(estimacion, 'minutos_montaje', lambda l, m: 60)
     linea = dict(bono(), idoperacion=1)
     item = {'start': AHORA.replace(hour=11, minute=30), 'end': AHORA,
             'estado': 'plazo', 'sin_tiempo': False, 'idempleado': '1',
             'matricula': 'M1', 'es_montaje': True}
     avance = {(1, 10): {'minutos': 30, 'min_produccion': 0, 'min_montaje': 30,
                         'piezas': 0, 'operarios': 1, 'montando': 1}}
-    api._proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, avance)
+    estimacion.proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, MONTAJES_TEST, avance)
     assert item['fin_estimado'] == AHORA.replace(minute=30)
     assert item['libre_desde'] == AHORA.replace(hour=14, minute=10)
-    ocupado = api._ocupacion_actual([item], HASTA, AHORA)
+    ocupado = cola_mod.ocupacion_actual([item], HASTA, AHORA)
     assert plan([bono(2)], ocupado)[0]['start'] == item['libre_desde']
 
 
@@ -190,13 +196,13 @@ def test_la_reserva_de_la_preparacion_se_pinta_como_barra(monkeypatch):
     quedaban detras del montaje, y la pantalla enseñandolo libre a las 13:16
     porque lo unico fichado era la preparacion. La cola tampoco lo recogia
     (filtra IdEstado = 0 y el bono ya estaba en 1)."""
-    monkeypatch.setattr(api, '_minutos_montaje', lambda l: 60)
+    monkeypatch.setattr(estimacion, 'minutos_montaje', lambda l, m: 60)
     item = _montaje()
     avance = {(1, 10): {'minutos': 30, 'min_produccion': 0, 'min_montaje': 30,
                         'piezas': 0, 'operarios': 1, 'montando': 1}}
-    api._proyectar(item, dict(bono(), idoperacion=1), AHORA,
-                   {(1, 10): (60, 1)}, MEDIAS, avance)
-    barra, = api._continuar([item], AHORA)
+    estimacion.proyectar(item, dict(bono(), idoperacion=1), AHORA,
+                         {(1, 10): (60, 1)}, MEDIAS, MONTAJES_TEST, avance)
+    barra, = fusion_mod.continuar([item], AHORA)
     assert barra['start'] == item['end']
     assert barra['end'] == item['libre_desde']
     assert barra['tipo'] == 'programado'
@@ -207,13 +213,13 @@ def test_la_reserva_de_la_preparacion_se_pinta_como_barra(monkeypatch):
 
 def test_un_bono_con_las_piezas_hechas_no_deja_barra_de_continuacion(monkeypatch):
     """Ahi no queda fabricacion: queda cerrar el fichaje."""
-    monkeypatch.setattr(api, '_minutos_montaje', lambda l: 60)
+    monkeypatch.setattr(estimacion, 'minutos_montaje', lambda l, m: 60)
     item = _montaje()
     avance = {(1, 10): {'minutos': 130, 'min_produccion': 100, 'min_montaje': 30,
                         'piezas': 100, 'operarios': 1, 'montando': 1}}
-    api._proyectar(item, dict(bono(), idoperacion=1), AHORA,
-                   {(1, 10): (60, 1)}, MEDIAS, avance)
-    assert api._continuar([item], AHORA) == []
+    estimacion.proyectar(item, dict(bono(), idoperacion=1), AHORA,
+                         {(1, 10): (60, 1)}, MEDIAS, MONTAJES_TEST, avance)
+    assert fusion_mod.continuar([item], AHORA) == []
 
 
 def test_cambiar_la_ventana_no_reordena_la_prevision():
@@ -241,9 +247,9 @@ def test_un_companero_ocupado_no_vacia_la_cola_del_otro():
 
 def test_el_hueco_de_un_companero_no_se_pinta_si_cae_fuera_de_la_ventana(monkeypatch):
     cola = [bono(1, 1, 'M1'), bono(1, 2, 'M1')]
-    monkeypatch.setattr(api, '_leer_cola', lambda: cola)
+    monkeypatch.setattr(lecturas, 'leer_cola', lambda: cola)
     ocupado = {('empleado', '1'): [(AHORA, datetime(2026, 9, 14, 8))]}  # más allá de HASTA
-    items = api._encolar('empleado', ocupado, HASTA, AHORA, {(1, 10): (1, 1)}, MEDIAS)
+    items = produccion.encolar('empleado', ocupado, HASTA, AHORA, {(1, 10): (1, 1)}, MEDIAS, MONTAJES_TEST)
 
     assert [i['recurso_id'] for i in items] == ['2']
 
@@ -252,10 +258,10 @@ def test_la_cola_no_presenta_la_media_de_la_maquina_como_fiable(monkeypatch):
     """Una misma maquina hace piezas muy distintas: su media sirve para
     dimensionar la barra, no como ritmo del que fiarse. Las barras abiertas ya
     lo avisaban y la cola las pintaba en verde, como una estimacion buena."""
-    monkeypatch.setattr(api, '_leer_cola', lambda: [bono()])
+    monkeypatch.setattr(lecturas, 'leer_cola', lambda: [bono()])
     solo_maquina = {'articulo': {}, 'trabajo': {},
                     'maquina': {'M1': {'n': 10, 'minutos': 100.0, 'piezas': 100.0}}}
-    items = api._encolar('empleado', {}, HASTA, AHORA, {}, solo_maquina)
+    items = produccion.encolar('empleado', {}, HASTA, AHORA, {}, solo_maquina, MONTAJES_TEST)
 
     assert len(items) == 1
     assert items[0]['origen_estimado'] == 'media_maquina'
@@ -340,7 +346,7 @@ def test_la_fabricacion_que_sigue_al_montaje_se_reparte_entre_la_cuadrilla():
             'matricula': 'M1', 'es_montaje': True}
     avance = {(1, 10): {'minutos': 30, 'min_produccion': 0, 'min_montaje': 30,
                         'piezas': 0, 'operarios': 1, 'montando': 3}}
-    api._proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, avance)
+    estimacion.proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, MONTAJES_TEST, avance)
 
     # 300 piezas x 1 min = 300 minutos-hombre; entre tres son 100 de reloj.
     assert item['_pendiente']['minutos'] == 100
@@ -357,7 +363,7 @@ def test_un_solo_montador_no_cambia_nada():
             'matricula': 'M1', 'es_montaje': True}
     avance = {(1, 10): {'minutos': 30, 'min_produccion': 0, 'min_montaje': 30,
                         'piezas': 0, 'operarios': 1, 'montando': 1}}
-    api._proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, avance)
+    estimacion.proyectar(item, linea, AHORA, {(1, 10): (60, 1)}, MEDIAS, MONTAJES_TEST, avance)
 
     assert item['_pendiente']['minutos'] == 300
 
@@ -406,9 +412,9 @@ def test_el_semaforo_manda_sobre_el_trabajo_a_medias():
 
 def test_el_bono_a_medias_se_pinta_como_fabricacion_pendiente(monkeypatch):
     cola = [bono(cantidad=100, arrancado=True, hechas=40, montado=True)]
-    monkeypatch.setattr(api, '_leer_cola', lambda: cola)
+    monkeypatch.setattr(lecturas, 'leer_cola', lambda: cola)
     teoricos = {(1, 10): (1, 1)}
-    items = api._encolar('empleado', {}, HASTA, AHORA, teoricos, MEDIAS)
+    items = produccion.encolar('empleado', {}, HASTA, AHORA, teoricos, MEDIAS, MONTAJES_TEST)
     assert items[0]['estado'] == 'continuacion'
     assert items[0]['reanudado'] is True
     assert items[0]['piezas_pendientes'] == 60
@@ -419,11 +425,11 @@ def test_el_aviso_de_todo_bloqueado_es_solo_para_quien_esta_parado():
     cola = [bono(orden=1, empleado=1, semaforo='bloqueada'),
             bono(orden=2, empleado=1, semaforo='bloqueada'),
             bono(orden=3, empleado=2, semaforo='bloqueada')]
-    assert api._sin_salida(cola, set()) == {'1': 2, '2': 1}
-    assert api._sin_salida(cola, {'1'}) == {'2': 1}
+    assert cola_mod.sin_salida(cola, set()) == {'1': 2, '2': 1}
+    assert cola_mod.sin_salida(cola, {'1'}) == {'2': 1}
 
 
 def test_con_un_bono_verde_no_hay_aviso():
     cola = [bono(orden=1, empleado=1, semaforo='bloqueada'),
             bono(orden=2, empleado=1, semaforo='disponible')]
-    assert api._sin_salida(cola, set()) == {}
+    assert cola_mod.sin_salida(cola, set()) == {}

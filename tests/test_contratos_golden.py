@@ -17,7 +17,8 @@ import pathlib
 
 import pytest
 
-from app.routers import api, plan as plan_router
+from app.routers import plan as plan_router
+from app.services import produccion
 from tests.escenario import fingir_erp
 
 GOLDEN = pathlib.Path(__file__).parent / "golden"
@@ -51,16 +52,16 @@ def _comparar(nombre, valor):
 @pytest.mark.parametrize("vista", ["empleado", "maquina"])
 def test_items_no_cambia(monkeypatch, vista):
     fingir_erp(monkeypatch)
-    items = api.get_items(vista=vista,
-                          desde=datetime.datetime(2026, 9, 7),
-                          hasta=datetime.datetime(2026, 9, 9))
+    items = produccion.calcular_items(vista,
+                                      desde=datetime.datetime(2026, 9, 7),
+                                      hasta=datetime.datetime(2026, 9, 9))
     _comparar(f"items_{vista}", items)
 
 
 @pytest.mark.parametrize("vista", ["empleado", "maquina"])
 def test_grupos_no_cambia(monkeypatch, vista):
     fingir_erp(monkeypatch)
-    _comparar(f"grupos_{vista}", api.get_grupos(vista=vista))
+    _comparar(f"grupos_{vista}", produccion.censo(vista))
 
 
 @pytest.mark.parametrize("vista", ["empleado", "maquina"])
@@ -68,6 +69,6 @@ def test_plan_no_cambia(monkeypatch, vista):
     fingir_erp(monkeypatch)
     # `plan.py` congela su propio reloj: importa `date`/`datetime` por su
     # cuenta, así que parchear los de `api` no le llega.
-    monkeypatch.setattr(plan_router, "datetime", api.datetime)
-    monkeypatch.setattr(plan_router, "date", api.date)
+    monkeypatch.setattr(plan_router, "datetime", produccion.datetime)
+    monkeypatch.setattr(plan_router, "date", produccion.date)
     _comparar(f"plan_{vista}", plan_router.get_plan(dias=3, vista=vista))
