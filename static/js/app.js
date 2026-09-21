@@ -802,18 +802,87 @@ const App = (() => {
     return bar;
   }
 
+  // ── Datos clave de una barra ───────────────────────────────────────
+  //  Los mismos ocho datos, en el mismo orden, al pasar el raton y al pinchar.
+  //  Antes cada sitio ensenaba lo suyo: el tooltip traia la estimacion y el
+  //  modal no, asi que pinchar una barra daba MENOS informacion que rozarla.
+  //
+  //  Devuelve pares [etiqueta, html] y no marcado: el tooltip los pinta como
+  //  filas y el modal como lista de definicion, cada uno con su estilo.
+  //
+  //  Ojo con dos campos, que no estan en todas las barras (medido sobre los
+  //  datos reales del ERP):
+  //
+  //    · `min_estimados` no existe en las programadas. En una barra que aun no
+  //      ha empezado, lo que va a tardar ES `min_restantes`: no hay nada
+  //      consumido que restar.
+  //    · las `trabajado` no tienen estimacion de nada -- ya terminaron -- y en
+  //      su lugar tienen el tiempo real medido.
+  function datosClave(it) {
+    const filas = [];
+    const fin = it.fin_indeterminado
+      ? `<span class="es-indet">Indeterminado</span>`
+      : fmtDt(it.end) + (it.estimado ? ' ~' : '');
+
+    filas.push(['Orden / Bono', `${esc(it.idorden)} / ${it.idbono || '—'}`]);
+    filas.push(['Estado',
+      `<span style="color:${ST_COLOR[it.estado] || '#79859a'}">●</span> ${ST_LABEL[it.estado] || it.estado_label || it.estado}`]);
+    filas.push(['Artículo', esc([it.art_id, it.art].filter(Boolean).join(' · ') || '—')]);
+
+    //  Que se esta haciendo, que NO es `it.operacion`: ese campo trae la
+    //  maquina en la vista de operarios y el operario en la de maquinas. El
+    //  tipo de trabajo real solo lo hay cuando alguien ha fichado; en una
+    //  barra de cola todavia no se sabe, y decir "fabricacion" seria inventar.
+    filas.push(['Operación', it.es_montaje ? '⚙ Montaje de utillaje'
+      : it.tipo_trabajo === 'produccion' ? 'Fabricación'
+      : '<span class="es-indet">Sin fichar todavía</span>']);
+    //  Y la maquina/operario con su nombre verdadero, segun la vista.
+    if (it.operacion) filas.push([vista === 'empleado' ? 'Máquina' : 'Operario', esc(it.operacion)]);
+
+    if (it.tipo === 'trabajado') {
+      //  Terminada: no hay nada que estimar, hay algo medido.
+      //
+      //  `min_real` son los minutos de FABRICACION. Cuando la barra lleva la
+      //  preparacion fundida dentro, decir solo eso parece un error de la
+      //  pantalla: 6751/10 ensenaba "1 min" ocupando de 07:51 a 08:09, porque
+      //  los otros 17 son el montaje. Se dice entero o no se dice.
+      filas.push(['Tiempo real', it.min_real == null ? '—'
+        : it.min_montaje ? `${fmtMin(it.min_real)} de fabricación + ${fmtMin(it.min_montaje)} de preparación`
+        : fmtMin(it.min_real)]);
+      //  El resto de la columna dice DE DONDE sale el numero -- tiempo
+      //  teorico, media del articulo, media de la maquina -- asi que aqui hay
+      //  que decir lo mismo y no "medido, no estimado", que contestaba a otra
+      //  pregunta y no se podia comparar con las demas.
+      filas.push(['Origen del dato', 'fichaje del operario']);
+      filas.push(['Tiempo restante', 'terminado']);
+    } else {
+      const total = it.min_estimados != null ? it.min_estimados : it.min_restantes;
+      filas.push(['Tiempo estimado', it.sin_tiempo
+        ? '<span class="es-indet">Sin tiempo teórico ni media</span>'
+        : total != null ? fmtMin(total) : '—']);
+      filas.push(['Origen del dato', it.sin_tiempo
+        ? '<span class="es-indet">ninguno</span>'
+        : (ORIGEN[it.origen_estimado] || it.origen_estimado || '—')]);
+      filas.push(['Tiempo restante', it.min_restantes != null ? fmtMin(it.min_restantes) : '—']);
+    }
+
+    filas.push(['Hora inicial', fmtDt(it.start)]);
+    filas.push([it.estimado ? 'Fin estimado' : 'Fin', fin]);
+    return filas;
+  }
+
   // ── Tooltip ────────────────────────────────────────────────────────
   function showTip(e, it) {
     const tip = $('tip');
-    const rows = [];
-    if (it.operacion) rows.push(`<div class="tip__row">Operación <span>${esc(it.operacion)}</span></div>`);
-    rows.push(`<div class="tip__row">Bono <span>${it.idbono || '—'}</span></div>`);
+    const rows = datosClave(it).map(([k, v]) => `<div class="tip__row">${k} <span>${v}</span></div>`);
+    //  Debajo de los datos clave, el detalle de siempre.
+    rows.push('<hr>');
     //  La parada explica por que esa barra esta en amarillo. Va arriba, junto
     //  al bono, y no perdida entre los tiempos: es el motivo de la marca.
     if (it.paro) rows.push(`<div class="tip__row">Parada <span>⏻ ${esc(it.paro.motivo)}${
       it.paro.minutos ? ' · ' + fmtMin(it.paro.minutos) : ''}</span></div>`);
-    if (it.es_montaje) rows.push(`<div class="tip__row">Tipo <span>⚙ Montaje de utillaje</span></div>`);
-    // Por que hay una barra proyectada de un bono que ya esta en marcha.
+    // El montaje ya sale arriba, en Operación. Aqui solo por que hay una barra
+    // proyectada de un bono que ya esta en marcha.
     if (it.continuacion) rows.push(`<div class="tip__row">Tipo <span>⏭ Sigue a la preparación en curso</span></div>`);
     if (it.min_montaje) rows.push(`<div class="tip__row">Preparación <span>${fmtMin(it.min_montaje)} · ${it.pct_montaje}% de la barra</span></div>`);
     // El teorico contra lo que de verdad esta costando, que es la lectura que
@@ -834,13 +903,12 @@ const App = (() => {
       if (it.operarios) rows.push(`<div class="tip__row">Operarios <span>${it.operarios}</span></div>`);
     }
     if (it.tipo === 'trabajado' || it.tipo === 'parcial') {
-      if (it.min_real != null) rows.push(`<div class="tip__row">Tiempo real <span>${Math.round(it.min_real)} min</span></div>`);
+      // El tiempo real ya sale arriba en las `trabajado`; aqui solo para las
+      // `parcial`, que no pasan por esa rama de `datosClave`.
+      if (it.tipo === 'parcial' && it.min_real != null) rows.push(`<div class="tip__row">Tiempo real <span>${Math.round(it.min_real)} min</span></div>`);
       if (it.piezas)           rows.push(`<div class="tip__row">Piezas <span>${it.piezas}</span></div>`);
     }
-    const fuente = ORIGEN[it.origen_estimado] || it.origen_estimado;
-    if (it.sin_tiempo) {
-      rows.push(`<div class="tip__row">Estimado <span>sin tiempo teorico ni media</span></div>`);
-    } else if (it.min_pieza != null) {
+    if (!it.sin_tiempo && it.min_pieza != null) {
       if (it.base_estimacion === 'piezas') {
         rows.push(`<div class="tip__row">Piezas <span>${fmtNum(it.piezas_hechas)} de ${fmtNum(it.piezas_objetivo)} · quedan ${fmtNum(it.piezas_pendientes)}</span></div>`);
         // Un bono que aun no ha empezado no tiene ritmo real que comparar.
@@ -852,12 +920,10 @@ const App = (() => {
         rows.push(`<div class="tip__row">Estimado <span>${it.min_estimados} min en total</span></div>`);
         rows.push(`<div class="tip__row">Producción consumida <span>${it.min_consumidos} min${it.excedido ? ' · se ha pasado' : ''}</span></div>`);
       }
-      if (it.min_restantes != null) rows.push(`<div class="tip__row">Le queda <span>${fmtMin(it.min_restantes)}</span></div>`);
       // Sin esto la cuenta no cuadra a la vista: 60 piezas a 5,18 min/pieza
       // son 331 minutos y la barra mide 83, porque el tiempo estimado son
       // minutos-HOMBRE y el eje es un reloj.
       if (it.a_la_vez > 1) rows.push(`<div class="tip__row">Cuadrilla <span>${it.a_la_vez} operarios a la vez · ${fmtMin(it.min_hombre)} de trabajo</span></div>`);
-      rows.push(`<div class="tip__row">Segun <span>${fuente}</span></div>`);
     }
     // Trabajo a medias: sin esto no se entiende que un bono de 1080 piezas
     // solo tenga 396 por hacer sin que nadie lo haya empezado hoy.
@@ -866,22 +932,17 @@ const App = (() => {
         it.ultimo_fichaje ? 'ultimo fichaje ' + fmtDate(it.ultimo_fichaje) : 'sin fichaje abierto'
       }</span></div>`);
     }
-    rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}</span></div>`);
-    // Sin estimacion fiable o pasado de presupuesto, `end` es donde quedo la
-    // barra al no poder proyectar -- casi siempre "ahora"-- y darlo como hora
-    // de fin dice justo lo contrario de lo que pasa.
-    rows.push(it.fin_indeterminado
-      ? `<div class="tip__row">Fin <span class="tip__indet">Indeterminado</span></div>`
-      : `<div class="tip__row">Fin <span>${fmtDt(it.end)}${it.estimado ? ' ~' : ''}</span></div>`);
+    //  Inicio, fin y estado ya van arriba, en los datos clave.
     if (it.prev) rows.push(`<div class="tip__row">Prevista <span>${fmtDate(it.prev)}</span></div>`);
+    //  Si no hubo nada que anadir al detalle, fuera el separador: un <hr> al
+    //  final del tooltip deja una raya colgando sin nada debajo.
+    if (rows[rows.length - 1] === '<hr>') rows.pop();
     const MARK = { real: '▶ ', trabajado: '✓ ', parcial: '⏸ ' };
-    const badge = `<span style="color:${ST_COLOR[it.estado] || '#79859a'}">●</span> ${ST_LABEL[it.estado] || it.estado_label}`;
     // El codigo va en la cabecera junto a la descripcion: en la barra no cabe
     // -- son 8 digitos fijos y se cortaba a la mitad, que es peor que no
     // ponerlo-- y aqui identifica el articulo sin robarle sitio a nada.
     const art = [it.art_id, it.art].filter(Boolean).map(esc).join(' · ');
-    tip.innerHTML = `<b>${MARK[it.tipo] || ''}${esc(it.idorden)}</b>${art ? ' — ' + art : ''}<hr>${rows.join('')}` +
-                    `<div class="tip__row" style="margin-top:6px">Estado <span>${badge}</span></div>`;
+    tip.innerHTML = `<b>${MARK[it.tipo] || ''}${esc(it.idorden)}</b>${art ? ' — ' + art : ''}<hr>${rows.join('')}`;
     tip.classList.add('is-visible');
     moveTip(e);
   }
@@ -913,20 +974,29 @@ const App = (() => {
     const aviso = it.continuacion
       ? '⏭ Queda por fabricar · el bono está arrancado y de momento solo tiene fichada la preparación'
       : (AVISO[it.tipo] || '');
+    //  Los MISMOS datos clave que el tooltip, en el mismo orden: pinchar una
+    //  barra no puede dar menos informacion que rozarla, que es lo que pasaba.
+    const clave = datosClave(it)
+      .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+    //  Lo que solo tiene sentido aqui, con sitio de sobra.
+    const extra = [
+      [vista === 'empleado' ? 'Operario' : 'Recurso', esc(grp ? grp.nombre : it.recurso_id)],
+      it.operarios && it.a_la_vez > 1 ? ['Cuadrilla', `${it.a_la_vez} a la vez · ${esc(it.operarios)}`] : null,
+      it.piezas_objetivo != null
+        ? ['Piezas', `${fmtNum(it.piezas_hechas || 0)} de ${fmtNum(it.piezas_objetivo)}` +
+            (it.piezas_pendientes != null ? ` · quedan ${fmtNum(it.piezas_pendientes)}` : '')]
+        : (it.piezas != null ? ['Piezas', String(it.piezas)] : null),
+      it.min_pieza != null ? ['Ritmo', `${fmtNum(it.min_pieza)} min/pieza esperado` +
+        (it.min_pieza_real != null ? ` · real ${fmtNum(it.min_pieza_real)}` : '')] : null,
+      it.min_montaje ? ['Preparación', `${fmtMin(it.min_montaje)} · ${it.pct_montaje}% de la barra`] : null,
+      it.paro ? ['Parada', `⏻ ${esc(it.paro.motivo)}${it.paro.minutos ? ' · ' + fmtMin(it.paro.minutos) : ''}`] : null,
+      it.reanudado ? ['A medias', it.ultimo_fichaje ? 'último fichaje ' + fmtDate(it.ultimo_fichaje) : 'sin fichaje abierto'] : null,
+      it.prev ? ['Prevista', fmtDate(it.prev)] : null,
+    ].filter(Boolean).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+
     $('d-body').innerHTML =
       `<div class="notice">${aviso}</div>` +
-      `<dl class="dl">
-        <dt>Operario</dt><dd>${esc(grp ? grp.nombre : it.recurso_id)}</dd>
-        <dt>Bono</dt><dd>${it.idbono || '—'}${it.operacion ? ' · ' + esc(it.operacion) : ''}</dd>
-        <dt>Artículo</dt><dd>${esc([it.art_id, it.art].filter(Boolean).join(' · ') || '—')}</dd>
-        <dt>Inicio</dt><dd>${fmtDt(it.start)}</dd>
-        <dt>Fin</dt><dd>${it.fin_indeterminado ? '<span class="dd-indet">Indeterminado</span>'
-          : fmtDt(it.end) + (it.estimado ? ' <span style="color:var(--ink-3)">(est.)</span>' : '')}</dd>
-        ${it.progreso != null ? `<dt>Progreso</dt><dd>${it.progreso}%</dd>` : ''}
-        ${it.min_real != null ? `<dt>Tiempo real</dt><dd>${Math.round(it.min_real)} min</dd>` : ''}
-        ${it.piezas  != null ? `<dt>Piezas</dt><dd>${it.piezas}</dd>` : ''}
-        ${it.prev ? `<dt>Prevista</dt><dd>${fmtDate(it.prev)}</dd>` : ''}
-      </dl>`;
+      `<dl class="dl">${clave}${extra}</dl>`;
     openModal('ov-detalle');
   }
 

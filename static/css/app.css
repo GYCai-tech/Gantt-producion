@@ -456,6 +456,9 @@ button { font-family: inherit; }
 /* "Indeterminado" donde iria una hora: en cursiva y apagado para que se lea
    como la ausencia de un dato y no como un valor mas. */
 .tip__indet { font-style: italic; opacity: .75; }
+/* Dato que no se sabe. Lo usan el tooltip y el modal, asi que no lleva
+   el prefijo de ninguno de los dos. */
+.es-indet   { font-style: italic; opacity: .75; }
 .dd-indet   { font-style: italic; color: var(--ink-3); }
 /* Cuanto se ha pasado del teorico. Va en el flujo de la barra y pegado a la
    derecha: el tramo rojo acaba en "ahora", o sea en mitad de la barra, y una
