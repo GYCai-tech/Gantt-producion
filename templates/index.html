@@ -84,7 +84,9 @@
 
 <!-- Modal: detalle (solo lectura) -->
 <div class="overlay" id="ov-detalle">
-  <div class="modal modal--sm">
+  {# `modal--detalle` y no `modal--sm`: esta ventana pasó de 6 datos a 14 y en
+     380 px con letra de 13 se leía apretada. Los demás modales siguen igual. #}
+  <div class="modal modal--detalle">
     <div class="modal__head">
       <div class="modal__title">Orden <b id="d-orden"></b></div>
       <button class="modal__close" onclick="App.closeModal('ov-detalle')">×</button>

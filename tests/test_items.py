@@ -1,13 +1,13 @@
 """La ventana consultada no cambia la ocupación real que necesita la cola."""
 from datetime import date, datetime
 
-#  Sin histórico de montajes: el setup sale del escandallo.
-MONTAJES_TEST = {"trabajo": {}, "maquina": {}}
-
 from app.calculos import cola as cola_mod, fusion as fusion_mod
 from app.erp import cache, cliente, lecturas
 from app.services import produccion
 from tests.test_cola import bono, MEDIAS
+
+#  Sin histórico de montajes: el setup sale del escandallo.
+MONTAJES_TEST = {"trabajo": {}, "maquina": {}}
 
 AHORA = datetime(2026, 9, 7, 12)
 

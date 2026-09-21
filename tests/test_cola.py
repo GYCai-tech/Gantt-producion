@@ -1,13 +1,12 @@
 """Reservas conjuntas y continuidad, con casos de taller sin tocar el ERP."""
 from datetime import datetime
 
-#  Sin histórico de montajes: el setup sale del escandallo, como antes
-#  de que `montajes` fuera un parámetro explícito.
-MONTAJES_TEST = {"trabajo": {}, "maquina": {}}
-
 from app.calculos import cola as cola_mod, estimacion, fusion as fusion_mod
-from app.erp import cache, cliente, lecturas
+from app.erp import lecturas
 from app.services import produccion
+
+#  Sin histórico de montajes: el setup sale del escandallo.
+MONTAJES_TEST = {"trabajo": {}, "maquina": {}}
 
 AHORA = datetime(2026, 9, 7, 12)
 HASTA = datetime(2026, 9, 11, 15)
@@ -410,14 +409,39 @@ def test_el_semaforo_manda_sobre_el_trabajo_a_medias():
     assert [t['bono']['idorden'] for t in tareas] == [1, 2]
 
 
-def test_el_bono_a_medias_se_pinta_como_fabricacion_pendiente(monkeypatch):
+def test_el_bono_a_medias_se_pinta_como_parado(monkeypatch):
+    """Tuvo a alguien fichando y se quedo a medias: eso es PARADA."""
     cola = [bono(cantidad=100, arrancado=True, hechas=40, montado=True)]
     monkeypatch.setattr(lecturas, 'leer_cola', lambda: cola)
     teoricos = {(1, 10): (1, 1)}
     items = produccion.encolar('empleado', {}, HASTA, AHORA, teoricos, MEDIAS, MONTAJES_TEST)
-    assert items[0]['estado'] == 'continuacion'
+    assert items[0]['estado'] == 'parada'
     assert items[0]['reanudado'] is True
     assert items[0]['piezas_pendientes'] == 60
+
+
+def test_haber_arrancado_gana_al_semaforo_en_rojo(monkeypatch):
+    """BLOQUEADA y PARADA no son lo mismo, y el orden de las preguntas manda.
+
+    6610/60 plego 60 de 120 laterales, cerro el fichaje y se quedo sin material.
+    El semaforo lo pone en rojo, asi que salia como "Bloqueada" -- pero un bono
+    que ya tuvo a alguien trabajandolo no es "sin empezar": se PARO."""
+    cola = [bono(cantidad=120, arrancado=True, hechas=60, semaforo='bloqueada')]
+    monkeypatch.setattr(lecturas, 'leer_cola', lambda: cola)
+    items = produccion.encolar('empleado', {}, HASTA, AHORA, {(1, 10): (1, 1)},
+                               MEDIAS, MONTAJES_TEST)
+    assert items[0]['estado'] == 'parada'
+    assert items[0]['semaforo'] == 'bloqueada'   # el rojo se conserva aparte
+
+
+def test_el_que_nunca_arranco_y_esta_en_rojo_es_bloqueada(monkeypatch):
+    """El otro lado de la misma regla: sin fichaje previo, es BLOQUEADA."""
+    cola = [bono(semaforo='bloqueada')]
+    monkeypatch.setattr(lecturas, 'leer_cola', lambda: cola)
+    items = produccion.encolar('empleado', {}, HASTA, AHORA, {(1, 10): (1, 1)},
+                               MEDIAS, MONTAJES_TEST)
+    assert items[0]['estado'] == 'bloqueada'
+    assert items[0]['reanudado'] is False
 
 
 def test_el_aviso_de_todo_bloqueado_es_solo_para_quien_esta_parado():

@@ -59,7 +59,11 @@ const App = (() => {
   const ST_LABEL = {
     plazo: 'En curso', completado: 'Completado',
     retrasada: 'Retrasada', riesgo: 'En riesgo', 'sin-estimar': 'Sin datos fiables',
-    parada: 'Bloqueada', pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
+    //  Dos cosas distintas y el nombre importa en planta: BLOQUEADA es un
+    //  bono que aun no se ha hecho y no se puede empezar; PARADA es uno que
+    //  tuvo a alguien fichando y se quedo a medias.
+    parada: 'Parada', bloqueada: 'Bloqueada',
+    pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
     programado: 'En espera', disponible: 'Disponible',
     'pendiente-cierre': 'Pendiente de cerrar',
     // Lo que queda por fabricar de un bono del que solo esta fichada la
@@ -74,7 +78,10 @@ const App = (() => {
     //  (.tag--sin-estimar) y lo que de verdad dice: falta informacion, no hay
     //  un problema en el bono. El naranja queda para lo que pide accion.
     retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#79859a',
-    parada: '#9a4b52', pausada: '#5b6b8a', parcial: '#c77b1f',
+    //  La parada hereda el ambar del trabajo interrumpido; el granate se
+    //  queda para lo que ni ha empezado.
+    parada: '#b5651d', bloqueada: '#9a4b52',
+    pausada: '#5b6b8a', parcial: '#c77b1f',
     programado: '#5b63b0', disponible: '#1f9254',
     'pendiente-cierre': '#3f7d9e',
     continuacion: '#128fa6',

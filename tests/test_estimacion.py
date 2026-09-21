@@ -7,10 +7,10 @@ casi siempre.
 """
 from datetime import datetime
 
+from app.calculos.estimacion import proyectar
+
 #  Sin histórico de montajes: el setup sale del escandallo.
 MONTAJES_TEST = {"trabajo": {}, "maquina": {}}
-
-from app.calculos.estimacion import proyectar
 
 AHORA = datetime(2026, 9, 4, 12, 0)
 

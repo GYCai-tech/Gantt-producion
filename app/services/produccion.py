@@ -136,9 +136,23 @@ def encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 # que hay que decir es que el dato no es de fiar. Y un bono a
                 # medias no es trabajo "disponible": es fabricacion pendiente,
                 # la misma etiqueta que ya usa el bono que se quedo montando.
-                "estado": ("parada" if semaforo == "bloqueada" else
-                           "sin-estimar" if sin_ritmo else
-                           "continuacion" if tarea["arrancado"] else "disponible"),
+                #  BLOQUEADA y PARADA no son lo mismo, y el orden de estas
+                #  preguntas es lo que las separa:
+                #
+                #    · BLOQUEADA — el bono no se ha hecho todavia, esta en cola
+                #      y el semaforo del ERP dice que ese operario no puede
+                #      ponerse con el.
+                #    · PARADA — hubo un fichaje activo y se paro. El trabajo
+                #      empezo y quedo a medias.
+                #
+                #  Por eso haber arrancado gana al semaforo: 6610/60 plego 60
+                #  de 120 laterales, cerro el fichaje a las 09:54 y se quedo
+                #  sin material; el semaforo lo pone en rojo y salia como
+                #  "Bloqueada", cuando lo que le paso es que se PARO. Un bono
+                #  que ya tuvo a alguien trabajandolo nunca es "no empezado".
+                "estado": ("parada" if tarea["arrancado"] and b["ultimo_fichaje"] else
+                           "bloqueada" if semaforo == "bloqueada" else
+                           "sin-estimar" if sin_ritmo else "disponible"),
                 # Trabajo a medias que se retoma, y cuando se toco por ultima
                 # vez: sin esto el tooltip no explica por que hay 396 piezas
                 # pendientes de un bono de 1080 que nadie ha empezado hoy.
