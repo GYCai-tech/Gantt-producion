@@ -23,7 +23,10 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.routers.api import _HORAS_LINEA_VIVA, _erp, _nombre_completo
+from app.erp.cliente import ErpNoDisponible
+from app.erp.cliente import consultar as _erp
+from app.erp.consultas import HORAS_LINEA_VIVA as _HORAS_LINEA_VIVA
+from app.erp.lecturas import nombre_completo as _nombre_completo
 
 router = APIRouter(prefix="/api")
 
@@ -214,7 +217,7 @@ def get_consultor_bonos(
         try:
             sin_material = {(r["idorden"], r["idbono"])
                             for r in _erp(_SIN_MATERIAL_QUERY, {})}
-        except HTTPException:
+        except ErpNoDisponible:
             print("[consultor] sin material no disponible: "
                   "¿falta la vista Pers_vOrdenes_Consumos?")
             sin_material = set()

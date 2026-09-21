@@ -61,15 +61,43 @@ saldría como dos barras idénticas superpuestas, `api.py` deduplica por
 
 ```
 app/
-  main.py            # FastAPI: monta /static, serializa Decimal/datetime
-  db.py              # engine SQLAlchemy perezoso hacia SQL Server (solo lectura)
-  routers/
-    pages.py         # una ruta HTML: "/"
-    api.py           # /api/grupos, /api/items, /api/lineas, /api/refrescar
-templates/           # base.html + index.html (Jinja2)
-static/css/app.css   # estilos del Gantt
-static/js/app.js     # el motor de render, vanilla JS sin build step
+  main.py          # FastAPI: monta /static, serializa Decimal/datetime,
+                   #   y traduce ErpNoDisponible -> 503 (unico sitio)
+  db.py            # engine SQLAlchemy perezoso hacia SQL Server (solo lectura)
+
+  erp/             # DE DONDE SALEN LOS DATOS
+    cliente.py     #   conexion, ErpNoDisponible
+    consultas.py   #   las constantes SQL
+    lecturas.py    #   leer_lineas, leer_cola, leer_avance, leer_ausencias...
+    cache.py       #   escandallo (600 s), semaforo (120 s)
+
+  calculos/        # QUE SE HACE CON ELLOS -- sin FastAPI, sin SQL, sin reloj
+    calendario.py  #   jornada 07:00-15:00, saltar fines de semana
+    estimacion.py  #   min/pieza, proyeccion de una barra abierta
+    cola.py        #   planificar_cola, reservas de operario y maquina
+    fusion.py      #   fundir trocitos y montaje, barras de continuacion
+
+  services/
+    produccion.py  # EN QUE ORDEN: calcular_items() la usan /api/items Y /api/plan
+
+  routers/         # URLs, parametros y codigos HTTP. Nada mas.
+    pages.py  api.py  plan.py  bonos.py  consultor.py  duplicados.py  ordenes.py
+
+templates/         # Jinja2
+static/js/app.js          # el motor de render, vanilla JS sin build step
+static/js/api-cliente.js  # peticiones: comprueba response.ok y cancela las viejas
 ```
+
+**Las flechas van en un solo sentido** y hay tests que lo vigilan
+(`tests/test_arquitectura.py`): `calculos/` no importa nada de la app salvo a
+si mismo -- es lo que permite probar el motor sin ERP--, ningun router llama a
+otro, y no hay ciclos. `erp/` si usa el vocabulario de `calculos/` (las horas
+de la jornada), que es la unica flecha entre las dos y es deliberada.
+
+**Los errores de datos se traducen a HTTP en un solo punto.** `app/erp/` lanza
+`ErpNoDisponible` sin saber lo que es un 503 y `app/main.py` lo convierte, asi
+que ninguna ruta puede olvidarse y colar un 500. Lo vigila
+`tests/test_errores_http.py` sobre las diez rutas.
 
 **El ERP es solo lectura.** La app nunca escribe en `GOMEZYCRESPO`.
 
@@ -409,6 +437,19 @@ Incluye rutas, estimación, separación de consumos, calendario, reservas
 conjuntas, bonos compartidos y navegación a fechas futuras. Los tests de
 agregación ejecutan la consulta en SQLite adaptando únicamente funciones de
 T-SQL; no sustituyen la validación de SQL Server/ODBC contra el ERP.
+
+Dos redes que conviene conocer antes de tocar nada:
+
+- **`tests/test_contratos_golden.py`** congela la salida de `/api/items`,
+  `/api/grupos` y `/api/plan` con una entrada y una hora fijas
+  (`tests/escenario.py`). El resultado vive en `tests/golden/*.json`. Si falla,
+  has cambiado comportamiento; si el cambio es a propósito, mira el diff y
+  regenera con `REGENERAR=1 pytest tests/test_contratos_golden.py`.
+- **`tests/test_arquitectura.py`** vigila las flechas entre capas.
+
+Los tests marcados `@necesita_v1` comparan contra la implementación anterior al
+refactor y se saltan salvo que se recupere de git; ver
+`tests/referencia.py`.
 
 Comprobación adicional del frontend: `node --check static/js/app.js` (Node
 solo se necesita para esa comprobación, no en la imagen ni para servir la app).

@@ -56,6 +56,11 @@
 
       <div class="areas" id="areas"></div>
 
+      <!-- Unico sitio donde el Gantt cuenta que algo ha fallado. Oculto
+           mientras todo va bien, asi que no cambia nada de la pantalla
+           normal. Mismo patron que el resto de pantallas. -->
+      <div id="gantt-error" class="plan__estado plan__estado--error" hidden></div>
+
       <!-- Gantt -->
       <div class="gantt" id="gantt">
         <div class="gantt__inner" id="gantt-inner">
@@ -79,7 +84,9 @@
 
 <!-- Modal: detalle (solo lectura) -->
 <div class="overlay" id="ov-detalle">
-  <div class="modal modal--sm">
+  {# `modal--detalle` y no `modal--sm`: esta ventana pasó de 6 datos a 14 y en
+     380 px con letra de 13 se leía apretada. Los demás modales siguen igual. #}
+  <div class="modal modal--detalle">
     <div class="modal__head">
       <div class="modal__title">Orden <b id="d-orden"></b></div>
       <button class="modal__close" onclick="App.closeModal('ov-detalle')">×</button>
@@ -95,5 +102,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/api-cliente.js?v={{ static_v }}"></script>
 <script src="/static/js/app.js?v={{ static_v }}"></script>
 {% endblock %}

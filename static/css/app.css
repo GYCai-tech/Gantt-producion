@@ -456,6 +456,9 @@ button { font-family: inherit; }
 /* "Indeterminado" donde iria una hora: en cursiva y apagado para que se lea
    como la ausencia de un dato y no como un valor mas. */
 .tip__indet { font-style: italic; opacity: .75; }
+/* Dato que no se sabe. Lo usan el tooltip y el modal, asi que no lleva
+   el prefijo de ninguno de los dos. */
+.es-indet   { font-style: italic; opacity: .75; }
 .dd-indet   { font-style: italic; color: var(--ink-3); }
 /* Cuanto se ha pasado del teorico. Va en el flujo de la barra y pegado a la
    derecha: el tramo rojo acaba en "ahora", o sea en mitad de la barra, y una
@@ -584,7 +587,10 @@ button { font-family: inherit; }
 .bar.has-paro .bar__sub,
 .bar.has-paro .bar__paro { color: #000; font-weight: 700; }
 .bar__paro { margin-right: 4px; flex-shrink: 0; font-size: 11px; }
-.bar.st-parada  { background: #f4e9ea; border-color: #dcb9bd; color: #7e3a40; }
+/* PARADA: empezo y se quedo a medias. Ambar, como el resto de lo interrumpido. */
+.bar.st-parada  { background: #fdf0e3; border-color: #e8c49a; color: #8a4b12; }
+/* BLOQUEADA: ni ha empezado y no puede. Se queda el granate de siempre. */
+.bar.st-bloqueada { background: #f4e9ea; border-color: #dcb9bd; color: #7e3a40; }
 .bar.st-pausada { background: #eaeef5; border-color: #bcc8dc; color: #45526e; }
 .bar.st-programado { background: #d3d8f7; border-color: #8a93d8; color: #2f3470; }
 .bar.st-disponible { background: var(--verde-bg); border-color: #a8dcbb; color: #156138; }
@@ -647,6 +653,28 @@ button { font-family: inherit; }
 }
 @keyframes pop { from { opacity: 0; transform: scale(.97) translateY(6px); } to { opacity: 1; transform: none; } }
 .modal--sm { width: 380px; }
+
+/* El detalle de una barra: 14 datos, y varios con etiquetas largas ("Tiempo
+   estimado", "Origen del dato") que no caben en la columna de 92 px del `.dl`
+   normal. Mas ancho, mas cuerpo de letra y la columna de etiquetas holgada.
+
+   `max-height` + scroll en el cuerpo porque el numero de filas depende del
+   bono: uno con parada, preparacion y cuadrilla se sale de una pantalla de
+   portatil, y un modal mas alto que la ventana no se puede ni cerrar. */
+.modal--detalle { width: 640px; }
+.modal--detalle .modal__title { font-size: 19px; }
+.modal--detalle .modal__body { padding: 22px; max-height: min(70vh, 640px); overflow-y: auto; }
+.modal--detalle .dl { grid-template-columns: 190px 1fr; gap: 12px 20px; font-size: 16px; }
+.modal--detalle .dl dt { font-weight: 500; }
+.modal--detalle .dl dd { font-weight: 600; }
+.modal--detalle .notice { font-size: 14px; padding: 11px 14px; margin-bottom: 18px; }
+
+/* En pantalla estrecha la rejilla de dos columnas deja las etiquetas sin
+   sitio: pasan a ir encima de su valor. */
+@media (max-width: 620px) {
+  .modal--detalle .dl { grid-template-columns: 1fr; gap: 2px 0; }
+  .modal--detalle .dl dt { margin-top: 10px; }
+}
 .modal__head {
   display: flex; align-items: center; gap: 10px; padding: 16px 18px;
   border-bottom: 1px solid var(--line);

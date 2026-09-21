@@ -40,18 +40,18 @@ def test_el_censo_de_operarios_se_limita_al_departamento_de_planta(monkeypatch):
     gente de planta -- Gilberto, que mantiene el escandallo, es uno-- y
     ocupaban fila en el Gantt y en la rejilla de carga sin trabajo que
     planificar."""
-    from app.routers import api
+    from app.erp import lecturas
+
     capturado = {}
 
     def erp(query, params):
-        capturado.setdefault('consultas', []).append((query, params))
+        capturado.update(query=query, params=params)
         return []
-    monkeypatch.setattr(api, '_erp', erp)
-    api.get_grupos(vista='empleado')
+    monkeypatch.setattr(lecturas, 'consultar', erp)
+    lecturas.leer_censo_empleados()
 
-    censo, params = capturado['consultas'][0]
-    assert 'ed.IdDepartamento = :departamento' in censo
-    assert params == {'departamento': 6}
+    assert 'ed.IdDepartamento = :departamento' in capturado['query']
+    assert capturado['params'] == {'departamento': 6}
 
 
 def test_los_operarios_salen_en_orden_alfabetico_de_verdad(monkeypatch):
@@ -61,7 +61,8 @@ def test_los_operarios_salen_en_orden_alfabetico_de_verdad(monkeypatch):
     Con los 25 operarios reales del ERP eso ponia "ETT1" delante de "Elias",
     "JOSE RAMON" delante de "Javier" y dejaba a "marcos" el ultimo de la lista
     solo por ir en minuscula."""
-    from app.routers import api
+    from app.erp import lecturas
+    from app.services import produccion
 
     censo = [
         {'idempleado': 1, 'nombre': 'marcos', 'apellidos': 'Bello Marquina'},
@@ -71,11 +72,10 @@ def test_los_operarios_salen_en_orden_alfabetico_de_verdad(monkeypatch):
         {'idempleado': 5, 'nombre': 'Javier', 'apellidos': 'Atanes Pérez'},
         {'idempleado': 6, 'nombre': 'Óscar', 'apellidos': 'González Garza'},
     ]
-    #  La primera consulta es el censo; la segunda, las areas por empleado.
-    respuestas = iter([censo, []])
-    monkeypatch.setattr(api, '_erp', lambda q, p: next(respuestas))
+    monkeypatch.setattr(lecturas, 'leer_censo_empleados', lambda: censo)
+    monkeypatch.setattr(lecturas, 'leer_areas_empleado', lambda: [])
 
-    assert [g['nombre'] for g in api.get_grupos(vista='empleado')] == [
+    assert [g['nombre'] for g in produccion.censo(vista='empleado')] == [
         'Elías Calviño Ferro',
         'ETT1 ETT1',
         'Javier Atanes Pérez',
@@ -86,9 +86,9 @@ def test_los_operarios_salen_en_orden_alfabetico_de_verdad(monkeypatch):
 
 
 def test_la_clave_alfabetica_ignora_mayusculas_y_tildes():
-    from app.routers.api import alfabetico
-
     """Las dos cosas que rompian el orden, por separado."""
+    from app.services.produccion import alfabetico
+
     assert alfabetico('Óscar') == alfabetico('oscar')
     assert alfabetico('ETT1') < alfabetico('Isaac')
     #  Una vocal con tilde ordena donde su vocal, no despues de la Z.

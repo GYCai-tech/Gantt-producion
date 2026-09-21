@@ -25,8 +25,11 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Query
 
-from app.routers.api import (JORNADA_FIN, JORNADA_INICIO, _minutos_laborables_entre,
-                             alfabetico, get_grupos, get_items)
+from app.calculos.calendario import (JORNADA_FIN, JORNADA_INICIO,
+                                     minutos_laborables_entre)
+from app.erp.cliente import ErpNoDisponible
+from app.services import produccion
+from app.services.produccion import alfabetico
 
 router = APIRouter()
 
@@ -101,7 +104,7 @@ def _minutos_union(tramos: list) -> float:
     for ini, fin in sorted(tramos):
         arranque = ini if tope is None or ini > tope else tope
         if fin > arranque:
-            total += _minutos_laborables_entre(arranque, fin)
+            total += minutos_laborables_entre(arranque, fin)
         tope = fin if tope is None or fin > tope else tope
     return total
 
@@ -115,12 +118,12 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
     # Lo que queda de cada jornada. Para hoy encoge con el reloj; para el resto
     # es la jornada entera.
     ventanas = {d: _ventana_del_dia(d, ahora) for d in fechas}
-    disponible = {d: _minutos_laborables_entre(*v) for d, v in ventanas.items()}
+    disponible = {d: minutos_laborables_entre(*v) for d, v in ventanas.items()}
 
     # Una sola lectura para toda la ventana: pedir día a día recalcularía la
     # cola desde cero en cada uno y daría planes distintos, porque la
     # ocupación de hoy es la que empuja lo de mañana.
-    items = get_items(
+    items = produccion.calcular_items(
         vista=vista,
         desde=datetime.combine(fechas[0], datetime.min.time()),
         hasta=datetime.combine(fechas[-1] + timedelta(days=1), datetime.min.time()),
@@ -134,7 +137,7 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
             tramo = _tramo_del_dia(it, ventanas[dia])
             if tramo is None:
                 continue
-            minutos = _minutos_laborables_entre(*tramo)
+            minutos = minutos_laborables_entre(*tramo)
             if minutos <= 0:
                 continue
             celda = carga[it["recurso_id"]][dia]
@@ -149,7 +152,7 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
             })
 
     personas = []
-    for g in get_grupos(vista=vista):
+    for g in produccion.censo(vista):
         celdas = []
         for dia in fechas:
             c = carga.get(g["id"], {}).get(dia)

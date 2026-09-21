@@ -1,0 +1,219 @@
+{
+  "dias": [
+    {
+      "disponible": 180,
+      "etiqueta": "Lun 7",
+      "fecha": "2026-09-07",
+      "hoy": true,
+      "min": 360,
+      "personas": 3
+    },
+    {
+      "disponible": 480,
+      "etiqueta": "Mar 8",
+      "fecha": "2026-09-08",
+      "hoy": false,
+      "min": 358,
+      "personas": 2
+    },
+    {
+      "disponible": 480,
+      "etiqueta": "Mié 9",
+      "fecha": "2026-09-09",
+      "hoy": false,
+      "min": 0,
+      "personas": 0
+    }
+  ],
+  "generado": "2026-09-07T12:00:00",
+  "jornada_min": 480,
+  "personas": [
+    {
+      "areas": [
+        "ESTRUCTURAS"
+      ],
+      "dias": [
+        {
+          "bonos": [
+            {
+              "art": "Articulo",
+              "art_id": "A",
+              "estado": "riesgo",
+              "fin_indeterminado": false,
+              "idbono": 10,
+              "idorden": 2,
+              "maquina": "Maquina M2",
+              "min": 105,
+              "tipo": "real"
+            },
+            {
+              "art": "Articulo",
+              "art_id": "A",
+              "estado": "bloqueada",
+              "fin_indeterminado": false,
+              "idbono": 10,
+              "idorden": 4,
+              "maquina": "Maquina M2",
+              "min": 75,
+              "tipo": "programado"
+            }
+          ],
+          "disponible": 180,
+          "fecha": "2026-09-07",
+          "min": 180,
+          "min_bonos": 180,
+          "pct": 100,
+          "simultaneo": false
+        },
+        {
+          "bonos": [
+            {
+              "art": "Articulo",
+              "art_id": "A",
+              "estado": "bloqueada",
+              "fin_indeterminado": false,
+              "idbono": 10,
+              "idorden": 4,
+              "maquina": "Maquina M2",
+              "min": 156,
+              "tipo": "programado"
+            }
+          ],
+          "disponible": 480,
+          "fecha": "2026-09-08",
+          "min": 156,
+          "min_bonos": 156,
+          "pct": 32,
+          "simultaneo": false
+        },
+        {
+          "bonos": [],
+          "disponible": 480,
+          "fecha": "2026-09-09",
+          "min": 0,
+          "min_bonos": 0,
+          "pct": 0,
+          "simultaneo": false
+        }
+      ],
+      "dias_con_trabajo": 2,
+      "id": "2",
+      "nombre": "Bruno Cela",
+      "total_min": 336
+    },
+    {
+      "areas": [
+        "CHAPA"
+      ],
+      "dias": [
+        {
+          "bonos": [
+            {
+              "art": "Articulo",
+              "art_id": "A",
+              "estado": "disponible",
+              "fin_indeterminado": false,
+              "idbono": 10,
+              "idorden": 3,
+              "maquina": "Maquina M1",
+              "min": 29,
+              "tipo": "programado"
+            }
+          ],
+          "disponible": 180,
+          "fecha": "2026-09-07",
+          "min": 29,
+          "min_bonos": 29,
+          "pct": 16,
+          "simultaneo": false
+        },
+        {
+          "bonos": [
+            {
+              "art": "Articulo",
+              "art_id": "A",
+              "estado": "disponible",
+              "fin_indeterminado": false,
+              "idbono": 10,
+              "idorden": 3,
+              "maquina": "Maquina M1",
+              "min": 202,
+              "tipo": "programado"
+            }
+          ],
+          "disponible": 480,
+          "fecha": "2026-09-08",
+          "min": 202,
+          "min_bonos": 202,
+          "pct": 42,
+          "simultaneo": false
+        },
+        {
+          "bonos": [],
+          "disponible": 480,
+          "fecha": "2026-09-09",
+          "min": 0,
+          "min_bonos": 0,
+          "pct": 0,
+          "simultaneo": false
+        }
+      ],
+      "dias_con_trabajo": 2,
+      "id": "1",
+      "nombre": "Ana Boo",
+      "total_min": 231
+    },
+    {
+      "areas": [
+        "CHAPA"
+      ],
+      "dias": [
+        {
+          "bonos": [
+            {
+              "art": "Articulo",
+              "art_id": "A",
+              "estado": "parada",
+              "fin_indeterminado": false,
+              "idbono": 10,
+              "idorden": 5,
+              "maquina": "Maquina M1",
+              "min": 151,
+              "tipo": "programado"
+            }
+          ],
+          "disponible": 180,
+          "fecha": "2026-09-07",
+          "min": 151,
+          "min_bonos": 151,
+          "pct": 84,
+          "simultaneo": false
+        },
+        {
+          "bonos": [],
+          "disponible": 480,
+          "fecha": "2026-09-08",
+          "min": 0,
+          "min_bonos": 0,
+          "pct": 0,
+          "simultaneo": false
+        },
+        {
+          "bonos": [],
+          "disponible": 480,
+          "fecha": "2026-09-09",
+          "min": 0,
+          "min_bonos": 0,
+          "pct": 0,
+          "simultaneo": false
+        }
+      ],
+      "dias_con_trabajo": 1,
+      "id": "3",
+      "nombre": "chus Ávila",
+      "total_min": 151
+    }
+  ],
+  "plantilla": 3,
+  "vista": "empleado"
+}

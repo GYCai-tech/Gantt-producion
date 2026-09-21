@@ -59,7 +59,11 @@ const App = (() => {
   const ST_LABEL = {
     plazo: 'En curso', completado: 'Completado',
     retrasada: 'Retrasada', riesgo: 'En riesgo', 'sin-estimar': 'Sin datos fiables',
-    parada: 'Bloqueada', pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
+    //  Dos cosas distintas y el nombre importa en planta: BLOQUEADA es un
+    //  bono que aun no se ha hecho y no se puede empezar; PARADA es uno que
+    //  tuvo a alguien fichando y se quedo a medias.
+    parada: 'Parada', bloqueada: 'Bloqueada',
+    pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
     programado: 'En espera', disponible: 'Disponible',
     'pendiente-cierre': 'Pendiente de cerrar',
     // Lo que queda por fabricar de un bono del que solo esta fichada la
@@ -74,7 +78,10 @@ const App = (() => {
     //  (.tag--sin-estimar) y lo que de verdad dice: falta informacion, no hay
     //  un problema en el bono. El naranja queda para lo que pide accion.
     retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#79859a',
-    parada: '#9a4b52', pausada: '#5b6b8a', parcial: '#c77b1f',
+    //  La parada hereda el ambar del trabajo interrumpido; el granate se
+    //  queda para lo que ni ha empezado.
+    parada: '#b5651d', bloqueada: '#9a4b52',
+    pausada: '#5b6b8a', parcial: '#c77b1f',
     programado: '#5b63b0', disponible: '#1f9254',
     'pendiente-cierre': '#3f7d9e',
     continuacion: '#128fa6',
@@ -224,10 +231,17 @@ const App = (() => {
     renderEscala();
     montarRueda();
     tickClock(); setInterval(tickClock, 30000);
+    // Si el arranque falla no hay nada que enseñar, asi que lo unico que se
+    // hace es contarlo: antes quedaba la pantalla en blanco y sin mensaje.
     loadGrupos()
-      .then(() => loadItems())
-      .then(() => { setTimeout(scrollToNow, 100); maybeAutoRefresh(); });
-    setInterval(loadItems, 300000);
+      .then(ok => ok ? loadItems() : false)
+      .then(ok => { if (ok) { setTimeout(scrollToNow, 100); maybeAutoRefresh(); } })
+      .catch(marcarFallo);
+    // El auto-refresco de 5 minutos es el que mas daño hacia: la excepcion se
+    // tragaba y en pantalla se quedaba el Gantt ANTERIOR, que ademas tickClock
+    // sigue repintando cada 30 s. El usuario veia datos de hace horas creyendo
+    // que eran de ahora. Ahora `loadItems` nunca se rompe en silencio.
+    setInterval(() => loadItems(), 300000);
   }
 
   const REFRESH_COOLDOWN_MIN = 5;
@@ -240,35 +254,130 @@ const App = (() => {
   function tickClock() {
     $('clock').textContent = new Date().toLocaleString('es-ES',
       { weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' });
+    // El aviso de datos caducados envejece con el reloj: si no, diria "hace 1
+    // min" durante toda la tarde.
+    if (fallo) pintarAviso();
     if (items.length) render();
+  }
+
+  // ── Ultima lectura buena ───────────────────────────────────────────
+  // Que se esta enseñando AHORA y de cuando es. Si una recarga falla se
+  // vuelve a esto: un Gantt viejo pero coherente --dia, zoom, vista y barras
+  // del mismo momento-- sirve para algo; uno con el dia nuevo y las barras
+  // viejas, no. Lo que NO puede pasar es que se vea viejo sin avisar.
+  let ultimoBueno = null;    // Date de la ultima carga que trajo datos
+  let ventanaBuena = null;   // {vista, zi, winStart, allGrupos} de esa carga
+  let fallo = null;          // {mensaje} mientras el aviso este puesto
+
+  function guardarLecturaBuena() {
+    ultimoBueno = new Date();
+    ventanaBuena = { vista, zi, winStart: new Date(winStart), allGrupos };
+    fallo = null;
+    pintarAviso();
+  }
+
+  function marcarFallo(e) {
+    fallo = { mensaje: (e && e.message) || 'Error desconocido' };
+    volverALoBueno();
+    pintarAviso();
+  }
+
+  // Deshace la navegacion que no se ha podido cargar. No toca nada si aun no
+  // hay ninguna lectura buena: en el arranque no hay a donde volver.
+  function volverALoBueno() {
+    if (!ventanaBuena) return;
+    const cambiaVista = ventanaBuena.vista !== vista;
+    vista = ventanaBuena.vista;
+    zi = ventanaBuena.zi;
+    winStart = new Date(ventanaBuena.winStart);
+    allGrupos = ventanaBuena.allGrupos;
+    if (cambiaVista) {
+      [...$('vista-tabs').children].forEach(b => b.classList.toggle('is-active', b.dataset.v === vista));
+      $('gantt-corner').textContent = vista === 'maquina' ? 'Máquinas' : 'Operarios';
+    }
+    buildDays();
+    renderZoom();
+    renderEscala();
+    renderAreas();
+    applyArea();
+    render();
+  }
+
+  function pintarAviso() {
+    const el = $('gantt-error');
+    if (!el) return;
+    if (!fallo) { el.hidden = true; el.textContent = ''; return; }
+    el.hidden = false;
+    if (!ultimoBueno) {
+      el.textContent = `No se pudieron cargar los datos: ${fallo.mensaje}. `
+        + 'No hay nada que mostrar; vuelve a intentarlo con «Actualizar».';
+      return;
+    }
+    const min = (Date.now() - +ultimoBueno) / 60000;
+    const hace = min < 1 ? 'hace menos de un minuto' : 'hace ' + fmtMin(min);
+    const hora = ultimoBueno.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    el.textContent = `Sin contacto con el ERP: ${fallo.mensaje}. `
+      + `Lo que ves es la lectura de las ${hora} (${hace}) y NO se está actualizando.`;
   }
 
   // ── Carga de datos ─────────────────────────────────────────────────
   async function loadGrupos() {
-    allGrupos = await (await fetch(`/api/grupos?vista=${vista}`)).json();
-    renderAreas();
-    applyArea();
+    const t = ApiCliente.turno('grupos');
+    try {
+      const datos = await ApiCliente.cargar(`/api/grupos?vista=${vista}`, { señal: t.señal });
+      if (!t.vigente()) return false;
+      allGrupos = datos;
+      renderAreas();
+      applyArea();
+      return true;
+    } catch (e) {
+      // Una cancelacion es una navegacion posterior, no un fallo: quien la
+      // provoco ya esta pintando lo suyo.
+      if (ApiCliente.cancelada(e) || !t.vigente()) return false;
+      marcarFallo(e);
+      return false;
+    } finally {
+      t.soltar();
+    }
   }
 
+  // Devuelve si la carga acabo pintando datos nuevos. Nunca lanza: el que
+  // llama no tiene que acordarse de poner un .catch() para que la pantalla
+  // diga la verdad.
   async function loadItems() {
     buildDays();
+    // Un solo turno para las dos peticiones: si el usuario cambia de dia, de
+    // zoom o de vista mientras esta en vuelo, se cancela entera y la respuesta
+    // lenta ya no puede pintar el dia equivocado.
+    const t = ApiCliente.turno('items');
     const url = `/api/items?vista=${vista}&desde=${days[0].toISOString()}&hasta=${winEnd.toISOString()}`;
-    // Si el aviso falla, el Gantt se pinta igual: es informacion de mas, no la
-    // pantalla.
-    const [its, avisos] = await Promise.all([
-      fetch(url).then(r => r.json()),
-      fetch(`/api/avisos?vista=${vista}&dia=${ymd(days[0])}`).then(r => r.json()).catch(() => ({})),
-    ]);
-    items = its;
-    sinSalida = avisos.sin_salida || {};
-    ausencias = avisos.ausencias || {};
-    itemMap.clear();
-    items.forEach(i => itemMap.set(String(i.id), i));
-    // Las áreas salen de las barras, así que se recalculan con cada carga.
-    renderAreas();
-    applyArea();
-    render();
-    updateSummary();
+    try {
+      // Si el aviso falla, el Gantt se pinta igual: es informacion de mas, no
+      // la pantalla.
+      const [its, avisos] = await Promise.all([
+        ApiCliente.cargar(url, { señal: t.señal }),
+        ApiCliente.opcional(`/api/avisos?vista=${vista}&dia=${ymd(days[0])}`, {}, { señal: t.señal }),
+      ]);
+      if (!t.vigente()) return false;
+      items = its;
+      sinSalida = avisos.sin_salida || {};
+      ausencias = avisos.ausencias || {};
+      itemMap.clear();
+      items.forEach(i => itemMap.set(String(i.id), i));
+      // Las áreas salen de las barras, así que se recalculan con cada carga.
+      renderAreas();
+      applyArea();
+      render();
+      updateSummary();
+      guardarLecturaBuena();
+      return true;
+    } catch (e) {
+      if (ApiCliente.cancelada(e) || !t.vigente()) return false;
+      marcarFallo(e);
+      return false;
+    } finally {
+      t.soltar();
+    }
   }
 
   // ── Áreas ──────────────────────────────────────────────────────────
@@ -700,18 +809,87 @@ const App = (() => {
     return bar;
   }
 
+  // ── Datos clave de una barra ───────────────────────────────────────
+  //  Los mismos ocho datos, en el mismo orden, al pasar el raton y al pinchar.
+  //  Antes cada sitio ensenaba lo suyo: el tooltip traia la estimacion y el
+  //  modal no, asi que pinchar una barra daba MENOS informacion que rozarla.
+  //
+  //  Devuelve pares [etiqueta, html] y no marcado: el tooltip los pinta como
+  //  filas y el modal como lista de definicion, cada uno con su estilo.
+  //
+  //  Ojo con dos campos, que no estan en todas las barras (medido sobre los
+  //  datos reales del ERP):
+  //
+  //    · `min_estimados` no existe en las programadas. En una barra que aun no
+  //      ha empezado, lo que va a tardar ES `min_restantes`: no hay nada
+  //      consumido que restar.
+  //    · las `trabajado` no tienen estimacion de nada -- ya terminaron -- y en
+  //      su lugar tienen el tiempo real medido.
+  function datosClave(it) {
+    const filas = [];
+    const fin = it.fin_indeterminado
+      ? `<span class="es-indet">Indeterminado</span>`
+      : fmtDt(it.end) + (it.estimado ? ' ~' : '');
+
+    filas.push(['Orden / Bono', `${esc(it.idorden)} / ${it.idbono || '—'}`]);
+    filas.push(['Estado',
+      `<span style="color:${ST_COLOR[it.estado] || '#79859a'}">●</span> ${ST_LABEL[it.estado] || it.estado_label || it.estado}`]);
+    filas.push(['Artículo', esc([it.art_id, it.art].filter(Boolean).join(' · ') || '—')]);
+
+    //  Que se esta haciendo, que NO es `it.operacion`: ese campo trae la
+    //  maquina en la vista de operarios y el operario en la de maquinas. El
+    //  tipo de trabajo real solo lo hay cuando alguien ha fichado; en una
+    //  barra de cola todavia no se sabe, y decir "fabricacion" seria inventar.
+    filas.push(['Operación', it.es_montaje ? '⚙ Montaje de utillaje'
+      : it.tipo_trabajo === 'produccion' ? 'Fabricación'
+      : '<span class="es-indet">Sin fichar todavía</span>']);
+    //  Y la maquina/operario con su nombre verdadero, segun la vista.
+    if (it.operacion) filas.push([vista === 'empleado' ? 'Máquina' : 'Operario', esc(it.operacion)]);
+
+    if (it.tipo === 'trabajado') {
+      //  Terminada: no hay nada que estimar, hay algo medido.
+      //
+      //  `min_real` son los minutos de FABRICACION. Cuando la barra lleva la
+      //  preparacion fundida dentro, decir solo eso parece un error de la
+      //  pantalla: 6751/10 ensenaba "1 min" ocupando de 07:51 a 08:09, porque
+      //  los otros 17 son el montaje. Se dice entero o no se dice.
+      filas.push(['Tiempo real', it.min_real == null ? '—'
+        : it.min_montaje ? `${fmtMin(it.min_real)} de fabricación + ${fmtMin(it.min_montaje)} de preparación`
+        : fmtMin(it.min_real)]);
+      //  El resto de la columna dice DE DONDE sale el numero -- tiempo
+      //  teorico, media del articulo, media de la maquina -- asi que aqui hay
+      //  que decir lo mismo y no "medido, no estimado", que contestaba a otra
+      //  pregunta y no se podia comparar con las demas.
+      filas.push(['Origen del dato', 'fichaje del operario']);
+      filas.push(['Tiempo restante', 'terminado']);
+    } else {
+      const total = it.min_estimados != null ? it.min_estimados : it.min_restantes;
+      filas.push(['Tiempo estimado', it.sin_tiempo
+        ? '<span class="es-indet">Sin tiempo teórico ni media</span>'
+        : total != null ? fmtMin(total) : '—']);
+      filas.push(['Origen del dato', it.sin_tiempo
+        ? '<span class="es-indet">ninguno</span>'
+        : (ORIGEN[it.origen_estimado] || it.origen_estimado || '—')]);
+      filas.push(['Tiempo restante', it.min_restantes != null ? fmtMin(it.min_restantes) : '—']);
+    }
+
+    filas.push(['Hora inicial', fmtDt(it.start)]);
+    filas.push([it.estimado ? 'Fin estimado' : 'Fin', fin]);
+    return filas;
+  }
+
   // ── Tooltip ────────────────────────────────────────────────────────
   function showTip(e, it) {
     const tip = $('tip');
-    const rows = [];
-    if (it.operacion) rows.push(`<div class="tip__row">Operación <span>${esc(it.operacion)}</span></div>`);
-    rows.push(`<div class="tip__row">Bono <span>${it.idbono || '—'}</span></div>`);
+    const rows = datosClave(it).map(([k, v]) => `<div class="tip__row">${k} <span>${v}</span></div>`);
+    //  Debajo de los datos clave, el detalle de siempre.
+    rows.push('<hr>');
     //  La parada explica por que esa barra esta en amarillo. Va arriba, junto
     //  al bono, y no perdida entre los tiempos: es el motivo de la marca.
     if (it.paro) rows.push(`<div class="tip__row">Parada <span>⏻ ${esc(it.paro.motivo)}${
       it.paro.minutos ? ' · ' + fmtMin(it.paro.minutos) : ''}</span></div>`);
-    if (it.es_montaje) rows.push(`<div class="tip__row">Tipo <span>⚙ Montaje de utillaje</span></div>`);
-    // Por que hay una barra proyectada de un bono que ya esta en marcha.
+    // El montaje ya sale arriba, en Operación. Aqui solo por que hay una barra
+    // proyectada de un bono que ya esta en marcha.
     if (it.continuacion) rows.push(`<div class="tip__row">Tipo <span>⏭ Sigue a la preparación en curso</span></div>`);
     if (it.min_montaje) rows.push(`<div class="tip__row">Preparación <span>${fmtMin(it.min_montaje)} · ${it.pct_montaje}% de la barra</span></div>`);
     // El teorico contra lo que de verdad esta costando, que es la lectura que
@@ -732,13 +910,12 @@ const App = (() => {
       if (it.operarios) rows.push(`<div class="tip__row">Operarios <span>${it.operarios}</span></div>`);
     }
     if (it.tipo === 'trabajado' || it.tipo === 'parcial') {
-      if (it.min_real != null) rows.push(`<div class="tip__row">Tiempo real <span>${Math.round(it.min_real)} min</span></div>`);
+      // El tiempo real ya sale arriba en las `trabajado`; aqui solo para las
+      // `parcial`, que no pasan por esa rama de `datosClave`.
+      if (it.tipo === 'parcial' && it.min_real != null) rows.push(`<div class="tip__row">Tiempo real <span>${Math.round(it.min_real)} min</span></div>`);
       if (it.piezas)           rows.push(`<div class="tip__row">Piezas <span>${it.piezas}</span></div>`);
     }
-    const fuente = ORIGEN[it.origen_estimado] || it.origen_estimado;
-    if (it.sin_tiempo) {
-      rows.push(`<div class="tip__row">Estimado <span>sin tiempo teorico ni media</span></div>`);
-    } else if (it.min_pieza != null) {
+    if (!it.sin_tiempo && it.min_pieza != null) {
       if (it.base_estimacion === 'piezas') {
         rows.push(`<div class="tip__row">Piezas <span>${fmtNum(it.piezas_hechas)} de ${fmtNum(it.piezas_objetivo)} · quedan ${fmtNum(it.piezas_pendientes)}</span></div>`);
         // Un bono que aun no ha empezado no tiene ritmo real que comparar.
@@ -750,12 +927,10 @@ const App = (() => {
         rows.push(`<div class="tip__row">Estimado <span>${it.min_estimados} min en total</span></div>`);
         rows.push(`<div class="tip__row">Producción consumida <span>${it.min_consumidos} min${it.excedido ? ' · se ha pasado' : ''}</span></div>`);
       }
-      if (it.min_restantes != null) rows.push(`<div class="tip__row">Le queda <span>${fmtMin(it.min_restantes)}</span></div>`);
       // Sin esto la cuenta no cuadra a la vista: 60 piezas a 5,18 min/pieza
       // son 331 minutos y la barra mide 83, porque el tiempo estimado son
       // minutos-HOMBRE y el eje es un reloj.
       if (it.a_la_vez > 1) rows.push(`<div class="tip__row">Cuadrilla <span>${it.a_la_vez} operarios a la vez · ${fmtMin(it.min_hombre)} de trabajo</span></div>`);
-      rows.push(`<div class="tip__row">Segun <span>${fuente}</span></div>`);
     }
     // Trabajo a medias: sin esto no se entiende que un bono de 1080 piezas
     // solo tenga 396 por hacer sin que nadie lo haya empezado hoy.
@@ -764,22 +939,17 @@ const App = (() => {
         it.ultimo_fichaje ? 'ultimo fichaje ' + fmtDate(it.ultimo_fichaje) : 'sin fichaje abierto'
       }</span></div>`);
     }
-    rows.push(`<div class="tip__row">Inicio <span>${fmtDt(it.start)}</span></div>`);
-    // Sin estimacion fiable o pasado de presupuesto, `end` es donde quedo la
-    // barra al no poder proyectar -- casi siempre "ahora"-- y darlo como hora
-    // de fin dice justo lo contrario de lo que pasa.
-    rows.push(it.fin_indeterminado
-      ? `<div class="tip__row">Fin <span class="tip__indet">Indeterminado</span></div>`
-      : `<div class="tip__row">Fin <span>${fmtDt(it.end)}${it.estimado ? ' ~' : ''}</span></div>`);
+    //  Inicio, fin y estado ya van arriba, en los datos clave.
     if (it.prev) rows.push(`<div class="tip__row">Prevista <span>${fmtDate(it.prev)}</span></div>`);
+    //  Si no hubo nada que anadir al detalle, fuera el separador: un <hr> al
+    //  final del tooltip deja una raya colgando sin nada debajo.
+    if (rows[rows.length - 1] === '<hr>') rows.pop();
     const MARK = { real: '▶ ', trabajado: '✓ ', parcial: '⏸ ' };
-    const badge = `<span style="color:${ST_COLOR[it.estado] || '#79859a'}">●</span> ${ST_LABEL[it.estado] || it.estado_label}`;
     // El codigo va en la cabecera junto a la descripcion: en la barra no cabe
     // -- son 8 digitos fijos y se cortaba a la mitad, que es peor que no
     // ponerlo-- y aqui identifica el articulo sin robarle sitio a nada.
     const art = [it.art_id, it.art].filter(Boolean).map(esc).join(' · ');
-    tip.innerHTML = `<b>${MARK[it.tipo] || ''}${esc(it.idorden)}</b>${art ? ' — ' + art : ''}<hr>${rows.join('')}` +
-                    `<div class="tip__row" style="margin-top:6px">Estado <span>${badge}</span></div>`;
+    tip.innerHTML = `<b>${MARK[it.tipo] || ''}${esc(it.idorden)}</b>${art ? ' — ' + art : ''}<hr>${rows.join('')}`;
     tip.classList.add('is-visible');
     moveTip(e);
   }
@@ -811,20 +981,29 @@ const App = (() => {
     const aviso = it.continuacion
       ? '⏭ Queda por fabricar · el bono está arrancado y de momento solo tiene fichada la preparación'
       : (AVISO[it.tipo] || '');
+    //  Los MISMOS datos clave que el tooltip, en el mismo orden: pinchar una
+    //  barra no puede dar menos informacion que rozarla, que es lo que pasaba.
+    const clave = datosClave(it)
+      .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+    //  Lo que solo tiene sentido aqui, con sitio de sobra.
+    const extra = [
+      [vista === 'empleado' ? 'Operario' : 'Recurso', esc(grp ? grp.nombre : it.recurso_id)],
+      it.operarios && it.a_la_vez > 1 ? ['Cuadrilla', `${it.a_la_vez} a la vez · ${esc(it.operarios)}`] : null,
+      it.piezas_objetivo != null
+        ? ['Piezas', `${fmtNum(it.piezas_hechas || 0)} de ${fmtNum(it.piezas_objetivo)}` +
+            (it.piezas_pendientes != null ? ` · quedan ${fmtNum(it.piezas_pendientes)}` : '')]
+        : (it.piezas != null ? ['Piezas', String(it.piezas)] : null),
+      it.min_pieza != null ? ['Ritmo', `${fmtNum(it.min_pieza)} min/pieza esperado` +
+        (it.min_pieza_real != null ? ` · real ${fmtNum(it.min_pieza_real)}` : '')] : null,
+      it.min_montaje ? ['Preparación', `${fmtMin(it.min_montaje)} · ${it.pct_montaje}% de la barra`] : null,
+      it.paro ? ['Parada', `⏻ ${esc(it.paro.motivo)}${it.paro.minutos ? ' · ' + fmtMin(it.paro.minutos) : ''}`] : null,
+      it.reanudado ? ['A medias', it.ultimo_fichaje ? 'último fichaje ' + fmtDate(it.ultimo_fichaje) : 'sin fichaje abierto'] : null,
+      it.prev ? ['Prevista', fmtDate(it.prev)] : null,
+    ].filter(Boolean).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+
     $('d-body').innerHTML =
       `<div class="notice">${aviso}</div>` +
-      `<dl class="dl">
-        <dt>Operario</dt><dd>${esc(grp ? grp.nombre : it.recurso_id)}</dd>
-        <dt>Bono</dt><dd>${it.idbono || '—'}${it.operacion ? ' · ' + esc(it.operacion) : ''}</dd>
-        <dt>Artículo</dt><dd>${esc([it.art_id, it.art].filter(Boolean).join(' · ') || '—')}</dd>
-        <dt>Inicio</dt><dd>${fmtDt(it.start)}</dd>
-        <dt>Fin</dt><dd>${it.fin_indeterminado ? '<span class="dd-indet">Indeterminado</span>'
-          : fmtDt(it.end) + (it.estimado ? ' <span style="color:var(--ink-3)">(est.)</span>' : '')}</dd>
-        ${it.progreso != null ? `<dt>Progreso</dt><dd>${it.progreso}%</dd>` : ''}
-        ${it.min_real != null ? `<dt>Tiempo real</dt><dd>${Math.round(it.min_real)} min</dd>` : ''}
-        ${it.piezas  != null ? `<dt>Piezas</dt><dd>${it.piezas}</dd>` : ''}
-        ${it.prev ? `<dt>Prevista</dt><dd>${fmtDate(it.prev)}</dd>` : ''}
-      </dl>`;
+      `<dl class="dl">${clave}${extra}</dl>`;
     openModal('ov-detalle');
   }
 
@@ -858,7 +1037,9 @@ const App = (() => {
     const si = $('search-gantt'); if (si) si.value = '';
     [...$('vista-tabs').children].forEach(b => b.classList.toggle('is-active', b.dataset.v === v));
     $('gantt-corner').textContent = v === 'maquina' ? 'Máquinas' : 'Operarios';
-    loadGrupos().then(() => loadItems());
+    // Si el censo no llega, no se piden sus barras: quedarian las de la vista
+    // anterior colgadas de unas filas que no son suyas.
+    loadGrupos().then(ok => { if (ok) loadItems(); });
   }
   function setZoom(i) {
     zi = i;
@@ -950,9 +1131,11 @@ const App = (() => {
       if (estado === 'COMPLETED') {
         localStorage.setItem('gyc_last_refresh', String(Date.now()));
         lbl.textContent = 'Recargando…';
-        await loadGrupos();
-        await loadItems();
-        toast(auto ? 'Datos actualizados al entrar' : 'Datos actualizados desde el ERP');
+        // El ETL ha terminado, pero leer lo que ha dejado puede fallar igual.
+        // Si falla, el aviso de la pantalla ya lo cuenta con detalle.
+        const ok = await loadGrupos() && await loadItems();
+        if (ok) toast(auto ? 'Datos actualizados al entrar' : 'Datos actualizados desde el ERP');
+        else if (!auto) toast('El ETL terminó, pero no se pudieron leer los datos', true);
       } else if (FIN.includes(estado)) {
         if (!auto) toast('El flujo terminó en estado ' + estado, true);
       } else {

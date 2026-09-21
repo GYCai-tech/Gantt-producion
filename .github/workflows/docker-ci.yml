@@ -1,13 +1,25 @@
 name: Integración y Despliegue Continuo (Gantt Producción)
 
+#  Los tests corren en TODAS las ramas, no solo en main.
+#
+#  Antes se disparaba solo con `push` a main, y eso ponía la verja detrás de la
+#  puerta: para saber si algo fallaba había que meterlo en main primero, y si
+#  fallaba, main ya estaba roto. Empujar una rama de trabajo no ejecutaba nada.
+#
+#  Ahora el flujo es: rama -> push -> tests en verde -> merge a main -> despliegue.
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "**" ]
 
 jobs:
   # 🧪 TRABAJO 1: Verificar que el código y el Docker compilan bien en GitHub
   build-and-test:
     runs-on: ubuntu-latest
+    #  Dos pushes seguidos a la misma rama: el test viejo ya no interesa y se
+    #  cancela. Solo aquí; el despliegue NUNCA se cancela a medias (ver abajo).
+    concurrency:
+      group: test-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - name: Clonar el repositorio
         uses: actions/checkout@v4
@@ -20,26 +32,36 @@ jobs:
       - name: Instalar dependencias de test
         run: pip install -r requirements-dev.txt
 
+      #  Los tests no tocan el ERP: usan monkeypatch y SQLite en memoria. No
+      #  hacen falta credenciales, y por eso no se crea ningún .env.
       - name: Ejecutar tests (pytest)
         run: python -m pytest -q
 
-      - name: Crear archivo .env temporal para pruebas
+      #  El Gantt es JavaScript sin paso de compilación, así que un error de
+      #  sintaxis no lo detecta nadie hasta que la pantalla se queda en blanco
+      #  en producción. `node --check` es la única red que tiene.
+      - name: Comprobar la sintaxis del JavaScript
         run: |
-          echo "DATABASE_URL=mock_value" >> .env
-          echo "PORT=8080" >> .env
-          echo "QDRANT_HOST=localhost" >> .env
+          for f in static/js/*.js; do
+            node --check "$f" || exit 1
+          done
 
       - name: Configurar Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Construir Imagen de Docker
-        run: |
-          docker build -t gyc-planificador:ci-test .
+        run: docker build -t gyc-planificador:ci-test .
 
-  # 🚀 TRABAJO 2: Desplegar directamente en el servidor (self-hosted runner)
+  # 🚀 TRABAJO 2: Desplegar en el servidor (self-hosted runner)
   deploy:
     runs-on: self-hosted
-    needs: build-and-test # Solo se ejecuta si el build de arriba dio verde ✅
+    needs: build-and-test          # solo si los tests dieron verde ✅
+    if: github.ref == 'refs/heads/main'
+    #  Sin `cancel-in-progress`: un despliegue a medias deja el contenedor en
+    #  un estado que nadie ha pedido. Si llegan dos, se hacen en fila.
+    concurrency:
+      group: deploy-produccion
+      cancel-in-progress: false
 
     steps:
       - name: Reconstruir y reiniciar el contenedor

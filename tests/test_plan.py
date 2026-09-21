@@ -24,8 +24,8 @@ def item(recurso, ini, fin, tipo='programado', estado='disponible', orden=1):
 
 
 def montar(monkeypatch, items, grupos=None, ahora=AHORA):
-    monkeypatch.setattr(pl, 'get_items', lambda **kw: items)
-    monkeypatch.setattr(pl, 'get_grupos', lambda **kw: grupos or
+    monkeypatch.setattr(pl.produccion, 'calcular_items', lambda *a, **kw: items)
+    monkeypatch.setattr(pl.produccion, 'censo', lambda *a, **kw: grupos or
                         [{'id': '1', 'nombre': 'Operario 1', 'areas': ['CHAPA']}])
     monkeypatch.setattr(pl, 'date', type('D', (date,), {'today': classmethod(lambda c: HOY)}))
     monkeypatch.setattr(pl, 'datetime',
@@ -192,8 +192,9 @@ def test_la_carga_tambien_se_puede_ver_por_maquina(monkeypatch):
     """En la vista de maquinas el grupo trae un `area` suelto en vez de la
     lista que trae el operario."""
     pedido = {}
-    monkeypatch.setattr(pl, 'get_items', lambda **kw: pedido.update(kw) or [])
-    monkeypatch.setattr(pl, 'get_grupos', lambda **kw: [
+    monkeypatch.setattr(pl.produccion, 'calcular_items',
+                        lambda vista=None, **kw: pedido.update(dict(kw, vista=vista)) or [])
+    monkeypatch.setattr(pl.produccion, 'censo', lambda *a, **kw: [
         {'id': '044', 'nombre': 'Retractiladora GARPER', 'sub': 'Matrícula 044', 'area': 'EMBALAJE'}])
     monkeypatch.setattr(pl, 'date', type('D', (date,), {'today': classmethod(lambda c: HOY)}))
     monkeypatch.setattr(pl, 'datetime',

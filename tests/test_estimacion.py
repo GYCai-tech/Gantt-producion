@@ -7,7 +7,10 @@ casi siempre.
 """
 from datetime import datetime
 
-from app.routers.api import _proyectar
+from app.calculos.estimacion import proyectar
+
+#  Sin histórico de montajes: el setup sale del escandallo.
+MONTAJES_TEST = {"trabajo": {}, "maquina": {}}
 
 AHORA = datetime(2026, 9, 4, 12, 0)
 
@@ -41,7 +44,7 @@ def _avance(minutos, piezas, operarios=1, montaje=0):
 
 def test_con_piezas_declaradas_lo_que_queda_sale_de_las_piezas_pendientes():
     item = _item()
-    _proyectar(item, _linea(600), AHORA, {}, _medias(5.6), _avance(minutos=3400, piezas=360))
+    proyectar(item, _linea(600), AHORA, {}, _medias(5.6), MONTAJES_TEST, _avance(minutos=3400, piezas=360))
 
     assert item["base_estimacion"] == "piezas"
     assert item["piezas_pendientes"] == 240
@@ -56,9 +59,9 @@ def test_el_tiempo_que_gasto_otro_operario_no_acorta_lo_que_queda():
     """El fallo que motivó el cambio: restando minutos, un bono que cambia de
     manos le carga a quien lo tiene ahora el tiempo del compañero anterior."""
     solo = _item()
-    _proyectar(solo, _linea(600), AHORA, {}, _medias(5.6), _avance(minutos=1675, piezas=360))
+    proyectar(solo, _linea(600), AHORA, {}, _medias(5.6), MONTAJES_TEST, _avance(minutos=1675, piezas=360))
     compartido = _item()
-    _proyectar(compartido, _linea(600), AHORA, {}, _medias(5.6), _avance(minutos=3400, piezas=360))
+    proyectar(compartido, _linea(600), AHORA, {}, _medias(5.6), MONTAJES_TEST, _avance(minutos=3400, piezas=360))
 
     # Mismas piezas hechas => mismo trabajo pendiente, gastara lo que gastara
     # quien pasó antes por el bono.
@@ -74,7 +77,7 @@ def test_pasarse_del_presupuesto_se_marca_con_el_tramo_rojo_no_con_ambar():
     y "esto aun no ha pasado" a la derecha."""
     item = _item()
     # 3.400 min para 360 piezas = 9,44 min/pieza frente a 5,6 esperados.
-    _proyectar(item, _linea(600), AHORA, {}, _medias(5.6), _avance(minutos=3400, piezas=360))
+    proyectar(item, _linea(600), AHORA, {}, _medias(5.6), MONTAJES_TEST, _avance(minutos=3400, piezas=360))
 
     assert item["excedido"] is True
     assert item["min_exceso"] > 0           # 3.400 gastados sobre 3.360 de presupuesto
@@ -91,7 +94,7 @@ def test_ir_lento_sin_agotar_el_presupuesto_si_marca_riesgo():
     item = _item()
     # 200 min para 20 piezas = 10 min/pieza frente a 5,6; pero el bono entero
     # presupuesta 600 x 5,6 = 3.360, asi que todavia no se ha pasado.
-    _proyectar(item, _linea(600), AHORA, {}, _medias(5.6), _avance(minutos=200, piezas=20))
+    proyectar(item, _linea(600), AHORA, {}, _medias(5.6), MONTAJES_TEST, _avance(minutos=200, piezas=20))
 
     assert item["excedido"] is True
     assert "min_exceso" not in item
@@ -101,7 +104,7 @@ def test_ir_lento_sin_agotar_el_presupuesto_si_marca_riesgo():
 def test_un_desvio_dentro_de_la_tolerancia_no_marca_riesgo():
     item = _item()
     # 6,0 min/pieza frente a 5,6: un 7 %, por debajo del 15 % de tolerancia.
-    _proyectar(item, _linea(600), AHORA, {}, _medias(5.6), _avance(minutos=360 * 6.0, piezas=360))
+    proyectar(item, _linea(600), AHORA, {}, _medias(5.6), MONTAJES_TEST, _avance(minutos=360 * 6.0, piezas=360))
 
     assert item["excedido"] is False
     assert item["estado"] == "plazo"
@@ -109,7 +112,7 @@ def test_un_desvio_dentro_de_la_tolerancia_no_marca_riesgo():
 
 def test_sin_piezas_declaradas_cae_al_presupuesto_de_minutos():
     item = _item()
-    _proyectar(item, _linea(100), AHORA, {}, _medias(10.0), _avance(minutos=200, piezas=0))
+    proyectar(item, _linea(100), AHORA, {}, _medias(10.0), MONTAJES_TEST, _avance(minutos=200, piezas=0))
 
     assert item["base_estimacion"] == "minutos"
     assert item["min_estimados"] == 1000            # 100 piezas x 10 min
@@ -119,7 +122,7 @@ def test_sin_piezas_declaradas_cae_al_presupuesto_de_minutos():
 
 def test_sin_piezas_y_pasado_de_presupuesto_se_marca_el_exceso():
     item = _item()
-    _proyectar(item, _linea(100), AHORA, {}, _medias(10.0), _avance(minutos=1200, piezas=0))
+    proyectar(item, _linea(100), AHORA, {}, _medias(10.0), MONTAJES_TEST, _avance(minutos=1200, piezas=0))
 
     assert item["excedido"] is True
     assert item["min_exceso"] == 200        # 1.200 gastados sobre 1.000
@@ -129,7 +132,7 @@ def test_sin_piezas_y_pasado_de_presupuesto_se_marca_el_exceso():
 def test_el_tiempo_teorico_gana_a_la_media():
     item = _item()
     teoricos = {(6372, 30): (30.0, 2.0)}            # setup 30 min, 2 min/pieza
-    _proyectar(item, _linea(600), AHORA, teoricos, _medias(5.6), _avance(minutos=0, piezas=0))
+    proyectar(item, _linea(600), AHORA, teoricos, _medias(5.6), MONTAJES_TEST, _avance(minutos=0, piezas=0))
 
     assert item["origen_estimado"] == "teorico"
     assert item["min_pieza"] == 2.0
@@ -140,7 +143,7 @@ def test_el_tiempo_teorico_gana_a_la_media():
 def test_el_setup_no_se_cobra_si_el_bono_ya_arranco():
     item = _item()
     teoricos = {(6372, 30): (30.0, 2.0)}
-    _proyectar(item, _linea(600), AHORA, teoricos, _medias(5.6), _avance(minutos=100, piezas=0))
+    proyectar(item, _linea(600), AHORA, teoricos, _medias(5.6), MONTAJES_TEST, _avance(minutos=100, piezas=0))
 
     assert item["min_estimados"] == 600 * 2          # la preparacion ya esta pagada
 
@@ -148,7 +151,7 @@ def test_el_setup_no_se_cobra_si_el_bono_ya_arranco():
 def test_sin_teorico_ni_media_se_marca_sin_tiempo():
     item = _item()
     vacias = {"articulo": {}, "trabajo": {}, "maquina": {}}
-    _proyectar(item, _linea(600), AHORA, {}, vacias, _avance(minutos=100, piezas=0))
+    proyectar(item, _linea(600), AHORA, {}, vacias, MONTAJES_TEST, _avance(minutos=100, piezas=0))
 
     assert item["sin_tiempo"] is True
     assert item["estado"] == "sin-estimar"
@@ -157,23 +160,23 @@ def test_sin_teorico_ni_media_se_marca_sin_tiempo():
 
 def test_una_media_con_pocos_bonos_no_se_usa():
     item = _item()
-    _proyectar(item, _linea(600), AHORA, {}, _medias(5.6, n=2), _avance(minutos=100, piezas=0))
+    proyectar(item, _linea(600), AHORA, {}, _medias(5.6, n=2), MONTAJES_TEST, _avance(minutos=100, piezas=0))
 
     assert item["sin_tiempo"] is True                 # hacen falta al menos 3 bonos
 
 
 def test_dos_operarios_a_la_vez_terminan_en_la_mitad_de_reloj():
     uno = _item()
-    _proyectar(uno, _linea(600), AHORA, {}, _medias(5.6), _avance(3400, 360, operarios=1))
+    proyectar(uno, _linea(600), AHORA, {}, _medias(5.6), MONTAJES_TEST, _avance(3400, 360, operarios=1))
     dos = _item()
-    _proyectar(dos, _linea(600), AHORA, {}, _medias(5.6), _avance(3400, 360, operarios=2))
+    proyectar(dos, _linea(600), AHORA, {}, _medias(5.6), MONTAJES_TEST, _avance(3400, 360, operarios=2))
 
     assert dos["min_restantes"] == uno["min_restantes"] // 2
 
 
 def test_el_montaje_no_provoca_falsa_alerta_de_ritmo():
     item = _item()
-    _proyectar(item, _linea(100), AHORA, {}, _medias(1),
+    proyectar(item, _linea(100), AHORA, {}, _medias(1), MONTAJES_TEST,
                _avance(minutos=10, piezas=10, montaje=60))
     assert item['min_pieza_real'] == 1
     assert item['estado'] == 'plazo'
@@ -184,7 +187,7 @@ def test_el_montaje_no_provoca_falsa_alerta_de_ritmo():
 
 def test_sin_piezas_el_montaje_no_descuenta_presupuesto_de_produccion():
     item = _item()
-    _proyectar(item, _linea(100), AHORA, {}, _medias(1),
+    proyectar(item, _linea(100), AHORA, {}, _medias(1), MONTAJES_TEST,
                _avance(minutos=10, piezas=0, montaje=60))
     assert item['min_estimados'] == 100
     assert item['min_restantes'] == 90
@@ -192,7 +195,7 @@ def test_sin_piezas_el_montaje_no_descuenta_presupuesto_de_produccion():
 
 def test_montaje_terminado_no_se_vuelve_a_cobrar_al_iniciar_produccion():
     item = _item()
-    _proyectar(item, _linea(100), AHORA, {(6372, 30): (60, 1)}, _medias(1),
+    proyectar(item, _linea(100), AHORA, {(6372, 30): (60, 1)}, _medias(1), MONTAJES_TEST,
                _avance(minutos=0, piezas=0, montaje=60))
     assert item['min_estimados'] == 100
     assert item['min_restantes'] == 100
@@ -200,7 +203,7 @@ def test_montaje_terminado_no_se_vuelve_a_cobrar_al_iniciar_produccion():
 
 def test_todas_las_piezas_hechas_siguen_pendientes_de_cierre():
     item = _item()
-    _proyectar(item, _linea(100), AHORA, {}, _medias(1),
+    proyectar(item, _linea(100), AHORA, {}, _medias(1), MONTAJES_TEST,
                _avance(minutos=500, piezas=100, montaje=60))
     assert item['estado'] == 'pendiente-cierre'
     assert item['excedido'] is False
@@ -209,14 +212,14 @@ def test_todas_las_piezas_hechas_siguen_pendientes_de_cierre():
 
 def test_sin_dato_de_avance_no_se_inventa_que_el_bono_acaba_de_empezar():
     item = _item()
-    _proyectar(item, _linea(100), AHORA, {}, _medias(1), {})
+    proyectar(item, _linea(100), AHORA, {}, _medias(1), MONTAJES_TEST, {})
     assert item['sin_tiempo'] is True
     assert 'fin_estimado' not in item
 
 
 def test_proyeccion_fuera_de_jornada_empieza_el_siguiente_laborable():
     item = _item()
-    _proyectar(item, _linea(100), AHORA.replace(hour=16), {}, _medias(1),
+    proyectar(item, _linea(100), AHORA.replace(hour=16), {}, _medias(1), MONTAJES_TEST,
                _avance(minutos=10, piezas=10))
     assert item['fin_estimado'] == datetime(2026, 9, 7, 8, 30)
 
@@ -227,7 +230,7 @@ def test_sin_estimacion_el_fin_no_se_da_por_bueno():
     reconocer que no se sabe cuanto dura."""
     item = _item()
     vacias = {"articulo": {}, "trabajo": {}, "maquina": {}}
-    _proyectar(item, _linea(600), AHORA, {}, vacias, _avance(minutos=100, piezas=0))
+    proyectar(item, _linea(600), AHORA, {}, vacias, MONTAJES_TEST, _avance(minutos=100, piezas=0))
 
     assert item["estado"] == "sin-estimar"
     assert item["end"] == AHORA               # la barra sigue acabando aqui
@@ -236,7 +239,7 @@ def test_sin_estimacion_el_fin_no_se_da_por_bueno():
 
 def test_pasado_de_presupuesto_el_fin_tampoco_se_da_por_bueno():
     item = _item()
-    _proyectar(item, _linea(100), AHORA, {}, _medias(10.0), _avance(minutos=1200, piezas=0))
+    proyectar(item, _linea(100), AHORA, {}, _medias(10.0), MONTAJES_TEST, _avance(minutos=1200, piezas=0))
 
     assert item["min_exceso"] == 200
     assert item["fin_indeterminado"] is True
@@ -246,7 +249,7 @@ def test_con_las_piezas_hechas_el_fin_si_se_sabe():
     """Aqui el trabajo SI ha terminado; lo unico que falta es cerrar el
     fichaje. No es lo mismo que no saber cuando acaba."""
     item = _item()
-    _proyectar(item, _linea(100), AHORA, {}, _medias(1),
+    proyectar(item, _linea(100), AHORA, {}, _medias(1), MONTAJES_TEST,
                _avance(minutos=500, piezas=100, montaje=60))
 
     assert item["estado"] == "pendiente-cierre"
@@ -259,7 +262,7 @@ def test_la_media_de_la_maquina_no_promete_una_hora_de_fin():
     item = _item()
     solo_maquina = {"articulo": {}, "trabajo": {},
                     "maquina": {"015": {"n": 10, "minutos": 1000.0, "piezas": 1000.0}}}
-    _proyectar(item, _linea(600), AHORA, {}, solo_maquina, _avance(minutos=100, piezas=10))
+    proyectar(item, _linea(600), AHORA, {}, solo_maquina, MONTAJES_TEST, _avance(minutos=100, piezas=10))
 
     assert item["origen_estimado"] == "media_maquina"
     assert item["estado"] == "sin-estimar"
@@ -273,7 +276,7 @@ def test_un_escandallo_disparatado_no_se_cree_y_cae_al_historico():
     pintaba una barra de 13 dias."""
     item = _item()
     teoricos = {(6372, 30): (0.0, 345.0)}
-    _proyectar(item, _linea(50), AHORA, teoricos, _medias(5.86), _avance(minutos=0, piezas=0))
+    proyectar(item, _linea(50), AHORA, teoricos, _medias(5.86), MONTAJES_TEST, _avance(minutos=0, piezas=0))
 
     assert item["origen_estimado"] == "media_articulo"
     assert item["min_pieza"] == 5.86
@@ -285,7 +288,7 @@ def test_un_escandallo_razonable_sigue_ganando_a_la_media():
     entre 0,9x y 1,5x del historico."""
     item = _item()
     teoricos = {(6372, 30): (0.0, 7.55)}          # 1,45x sobre 5,2
-    _proyectar(item, _linea(50), AHORA, teoricos, _medias(5.2), _avance(minutos=0, piezas=0))
+    proyectar(item, _linea(50), AHORA, teoricos, _medias(5.2), MONTAJES_TEST, _avance(minutos=0, piezas=0))
 
     assert item["origen_estimado"] == "teorico"
     assert item["min_pieza"] == 7.55
@@ -295,7 +298,7 @@ def test_sin_historico_con_que_contrastar_el_escandallo_se_respeta():
     """No hay con que compararlo, asi que se usa: es mejor dato que ninguno."""
     item = _item()
     vacias = {"articulo": {}, "trabajo": {}, "maquina": {}}
-    _proyectar(item, _linea(50), AHORA, {(6372, 30): (0.0, 345.0)}, vacias,
+    proyectar(item, _linea(50), AHORA, {(6372, 30): (0.0, 345.0)}, vacias, MONTAJES_TEST,
                _avance(minutos=0, piezas=0))
 
     assert item["origen_estimado"] == "teorico"

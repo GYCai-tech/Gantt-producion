@@ -32,7 +32,7 @@ from datetime import datetime
 
 from fastapi import APIRouter
 
-from app.routers.api import _erp
+from app.erp.cliente import consultar as _erp
 
 router = APIRouter()
 
