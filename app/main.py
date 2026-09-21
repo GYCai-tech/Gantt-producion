@@ -42,7 +42,11 @@ app = FastAPI(
 #  version anterior: el frontend lo ensena tal cual.
 @app.exception_handler(ErpNoDisponible)
 def _erp_no_disponible(request: Request, exc: ErpNoDisponible):
-    return _JSONResponse(status_code=503, content={"detail": str(exc)})
+    #  `JSONResponse` y no `_JSONResponse`: el detalle es siempre texto, no hay
+    #  Decimal ni datetime que codificar, y asi el cuerpo sale byte a byte como
+    #  el que servia FastAPI cuando cada lectura lanzaba su propia
+    #  HTTPException. Comprobado contra main con el ERP inalcanzable.
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
