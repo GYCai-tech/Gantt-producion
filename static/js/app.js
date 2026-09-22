@@ -611,30 +611,43 @@ const App = (() => {
           return d !== 0 ? d : (TIPO_PRIO[a.tipo] ?? 3) - (TIPO_PRIO[b.tipo] ?? 3);
         });
 
-      // Las dos vistas usan los mismos intervalos calculados por el servidor.
+      // Las dos vistas usan los mismos intervalos calculados por el servidor,
+      // pero NO reparten igual los carriles, porque la fila no significa lo
+      // mismo en cada una.
       //
-      // El carril se reparte POR BONO, no por barra. Un bono llega partido en
-      // varias barras --lo trabajado ayer, lo que esta en curso, lo proyectado,
-      // cada sesion de fichaje-- y repartiendolas de una en una cada trozo
-      // cogia el primer carril libre: el mismo bono aparecia arriba en un
-      // tramo y abajo en el siguiente, y no habia forma de seguirlo en
-      // horizontal. Ordenar por hora de inicio arreglaba solo el caso de la
-      // barra "real"; el salto seguia en cuanto habia un hueco entre sesiones
-      // y otro bono se colaba en medio.
+      // EN OPERARIOS: un carril por MAQUINA. La fila de una persona se lee
+      // como "que maquinas lleva", una por linea, y todos los bonos de la
+      // misma maquina van seguidos en la suya. Agrupando por bono, la Celula
+      // de Plegado de Javier salia bien --sus tres bonos son de la misma
+      // maquina-- pero la GRANDINI, la guillotina y la Trumpf caian juntas en
+      // el carril de abajo solo porque no se solapaban entre si, y ahi ya no
+      // habia forma de ver que eran tres maquinas distintas.
       //
-      // Ahora el bono reserva su carril desde su PRIMERA barra hasta la ULTIMA
-      // y no lo suelta. Cuesta algun carril de mas --un bono con un hueco
-      // grande lo mantiene ocupado-- y ese es justo el precio de que la fila
-      // se lea de izquierda a derecha.
-      const porBono = new Map();
+      // Cuesta altura: quien toca cinco maquinas ocupa cinco carriles aunque
+      // no haga dos cosas a la vez. Es el precio de que una maquina sea
+      // siempre la misma linea, que es lo que hace legible el trabajo
+      // simultaneo. Medido: 5 maquinas como mucho en un dia, 7 en cinco dias.
+      //
+      // EN MAQUINAS: la fila YA es una maquina, asi que agrupar por maquina
+      // daria un solo carril y esconderia los solapes. Ahi se sigue agrupando
+      // por BONO, que era el reparto de siempre: un bono llega partido en
+      // varias barras --lo trabajado ayer, lo que esta en curso, lo
+      // proyectado-- y repartiendolas de una en una cada trozo cogia el
+      // primer carril libre, con el mismo bono saltando de linea. Reserva su
+      // carril desde su PRIMERA barra hasta la ULTIMA y no lo suelta.
+      const porMaquina = vista === 'empleado';
+      const grupos = new Map();
       its.forEach(it => {
-        //  Sin bono identificable, cada barra va por su cuenta: mejor eso que
+        //  Sin clave identificable, cada barra va por su cuenta: mejor eso que
         //  amontonar cosas sin relacion en el mismo carril.
-        const k = it.idbono != null ? `${it.idorden}/${it.idbono}` : `_${it.id ?? Math.random()}`;
+        const k = porMaquina
+          ? (it.matricula || it.operacion || `_${it.id ?? Math.random()}`)
+          : (it.idbono != null ? `${it.idorden}/${it.idbono}`
+                               : `_${it.id ?? Math.random()}`);
         const s = +new Date(it.start), e = +new Date(it.end);
-        const g = porBono.get(k);
+        const g = grupos.get(k);
         if (g) { g.start = Math.min(g.start, s); g.end = Math.max(g.end, e); g.items.push(it); }
-        else porBono.set(k, { start: s, end: e, items: [it] });
+        else grupos.set(k, { start: s, end: e, items: [it] });
       });
 
       //  El carril se guarda APARTE y no en el propio item (`it._lane`): con
@@ -643,8 +656,11 @@ const App = (() => {
       //  carril a las anteriores.
       const laneDe = new Map();
       const laneEnd = [];
-      [...porBono.values()].sort((a, b) => a.start - b.start).forEach(g => {
-        let lane = laneEnd.findIndex(end => end <= g.start);
+      [...grupos.values()].sort((a, b) => a.start - b.start).forEach(g => {
+        //  Por maquina NO se reutiliza carril: dos maquinas distintas nunca
+        //  comparten linea aunque no se pisen en el tiempo, que es justo lo
+        //  que habia que arreglar. Por bono si, que es el reparto de antes.
+        let lane = porMaquina ? -1 : laneEnd.findIndex(end => end <= g.start);
         if (lane === -1) { lane = laneEnd.length; laneEnd.push(g.end); }
         else laneEnd[lane] = g.end;
         g.items.forEach(it => laneDe.set(it, lane));
@@ -692,7 +708,7 @@ const App = (() => {
       //  pierde ahi, pero la maquina ya la nombra la linea de arriba y quien
       //  esta en ella es lo que no se sabia).
       label.innerHTML = `<div class="row__name">${esc(grp.nombre)}</div>` +
-                        `<div class="row__sub">${esc(sub || '')}${lanes > 1 ? ` · ${lanes} paralelos` : ''}</div>` +
+                        `<div class="row__sub">${esc(sub || '')}${lanes > 1 ? ` · ${lanes} ${vista === 'empleado' ? 'máquinas' : 'paralelos'}` : ''}</div>` +
                         (ausente
                           ? `<div class="row__aviso row__aviso--ausente">${esc(ausente.motivo)}${franja ? ` · ${franja}` : ''}</div>`
                           : atascado

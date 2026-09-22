@@ -4,7 +4,7 @@ Cada caso se corre dos veces —módulo nuevo y router— y se comparan las dos
 salidas. Es la única forma de asegurar que sacar `montajes` a parámetro no
 movió ningún bono de sitio.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -49,11 +49,19 @@ def plan(cola, ocupado=None, hasta=HASTA):
                                      _teoricos(cola), MEDIAS, MONTAJES)
 
 
+#  `bono` y `asignados` son los mismos diccionarios de entrada; lo que
+#  interesa comparar es la colocación y sus cifras.
+#
+#  `min_atencion` y `desatendida` quedan fuera porque la v1 no los tiene: no
+#  existía la idea de que una máquina pudiera trabajar sola. Sin `atencion`
+#  valen siempre `duracion` y False, así que no esconden ninguna diferencia
+#  de colocación —eso se comprueba abajo, en
+#  `test_sin_atencion_reserva_como_siempre`.
+_FUERA = ("bono", "asignados", "min_atencion", "desatendida")
+
+
 def _comparable(tareas):
-    #  `bono` y `asignados` son los mismos diccionarios de entrada; lo que
-    #  interesa comparar es la colocación y sus cifras.
-    return [{k: v for k, v in t.items() if k not in ("bono", "asignados")}
-            for t in tareas]
+    return [{k: v for k, v in t.items() if k not in _FUERA} for t in tareas]
 
 
 CASOS = {
@@ -151,3 +159,121 @@ def test_sin_salida_solo_cuenta_al_parado_con_todo_en_rojo():
     assert calc_cola.sin_salida(lista, set()) == {"1": 2, "2": 1}
     assert calc_cola.sin_salida(lista, {"1"}) == {"2": 1}
     assert calc_cola.sin_salida(lista, set()) == api._sin_salida(lista, set())
+
+
+# ── máquinas que trabajan solas ─────────────────────────────────────
+#  `bono()` usa M1 y `_teoricos` da (setup 1 min, 1 min/pieza), así que un
+#  bono de 100 piezas dura 101 minutos: 1 de preparación y 100 de producción.
+
+def plan_con(cola, atencion, ocupado=None, hasta=HASTA):
+    return calc_cola.planificar_cola(cola, ocupado or {}, hasta, AHORA,
+                                     _teoricos(cola), MEDIAS, MONTAJES, atencion)
+
+
+def test_sin_atencion_reserva_como_siempre():
+    #  El parámetro nuevo no puede mover nada mientras esté vacío: es lo que
+    #  permite que los tests diferenciales contra la v1 sigan valiendo.
+    entrada = [bono(1, 1, "M1"), bono(2, 1, "M2")]
+    assert _comparable(plan(entrada)) == _comparable(plan_con(entrada, {}))
+    for tarea in plan(entrada):
+        assert tarea["desatendida"] is False
+        assert tarea["min_atencion"] == tarea["duracion"]
+
+
+def test_la_maquina_que_va_sola_suelta_al_operario():
+    primero, segundo = plan_con([bono(1, 1, "M1"), bono(2, 1, "M2")], {"M1": 0.2})
+    #  101 minutos de bono; al operario le cuestan 1 de montaje + 20 de
+    #  vigilancia sobre los 100 de producción.
+    assert primero["min_atencion"] == 21
+    assert primero["desatendida"] is True
+    #  Y el siguiente bono no espera a que la inyectora termine: espera a que
+    #  la persona quede libre.
+    assert primero["start"] == AHORA
+    assert segundo["start"] == AHORA + timedelta(minutes=21)
+
+
+def test_la_barra_sigue_durando_lo_que_dura_el_bono():
+    #  Lo que encoge es la reserva, no el dibujo: en la fila del operario
+    #  tiene que verse la máquina corriendo bajo su nombre hasta el final.
+    tarea, = plan_con([bono(1, 1, "M1")], {"M1": 0.2})
+    assert tarea["end"] - tarea["start"] == timedelta(minutes=101)
+    assert tarea["huecos"]["1"] == (tarea["start"], tarea["end"])
+    assert tarea["duracion"] == 101
+
+
+def test_la_preparacion_no_se_descuenta_nunca():
+    #  Montar el utillaje lo hace la persona entera aunque luego la máquina
+    #  vaya sola: con atención 0 sigue costando el montaje.
+    tarea, = plan_con([bono(1, 1, "M1")], {"M1": 0.0})
+    assert tarea["min_atencion"] == 1
+
+
+def test_un_bono_sin_estimar_no_se_descuenta():
+    #  Su bloque nominal es un hueco puesto a ojo; aplicarle una fracción
+    #  sería afinar una conjetura.
+    tarea, = calc_cola.planificar_cola([bono(1, 1, "M1")], {}, HASTA, AHORA,
+                                       {}, MEDIAS, MONTAJES, {"M1": 0.1})
+    assert tarea["sin_tiempo"] is True
+    assert tarea["min_atencion"] == calc_cola.MIN_BLOQUE_SIN_TIEMPO
+
+
+def test_no_lleva_mas_de_tres_maquinas_a_la_vez():
+    entrada = [bono(i, 1, f"M{i}") for i in range(1, 5)]
+    atencion = {f"M{i}": 0.1 for i in range(1, 5)}
+    tareas = plan_con(entrada, atencion)
+    #  Los tres primeros se encadenan por los 11 minutos de atención...
+    assert [t["start"] for t in tareas[:3]] == [
+        AHORA, AHORA + timedelta(minutes=11), AHORA + timedelta(minutes=22)]
+    #  ...y el cuarto espera a que se libere la primera máquina, no a la
+    #  atención: ya lleva tres encima.
+    assert tareas[3]["start"] == tareas[0]["end"]
+
+
+def test_la_linea_abierta_en_maquina_sola_no_ata_al_operario():
+    fin = AHORA + timedelta(minutes=100)
+    activo = {"idempleado": "1", "matricula": "M1", "libre_desde": fin}
+    ocupado = calc_cola.ocupacion_actual([activo], HASTA, AHORA, {"M1": 0.2})
+    assert ocupado[("maquina", "M1")] == [(AHORA, fin)]
+    assert ocupado[("empleado", "1")] == [(AHORA, AHORA + timedelta(minutes=20))]
+    #  Suelto pero responsable: cuenta para el tope de simultáneas.
+    assert ocupado[("vigila", "1")] == [(AHORA, fin)]
+
+
+# ── medir_atencion ──────────────────────────────────────────────────
+
+def _linea(empleado, matricula, desde_h, horas):
+    ini = datetime(2026, 9, 7, desde_h)
+    return {"idempleado": empleado, "matricula": matricula,
+            "inicio": ini, "fin": ini + timedelta(hours=horas)}
+
+
+def test_medir_atencion_no_distingue_quien_va_solo():
+    #  Esta es la razón de que la ficha decida y la medida no: el solape es
+    #  SIMÉTRICO. La máquina que cicla sola y el trabajo manual que se hace
+    #  mientras tanto salen los dos como "desatendidos", y solo producción
+    #  sabe cuál de los dos puede quedarse sin nadie delante.
+    lineas = [_linea("1", "AUTO", 7, 4), _linea("1", "MANO", 7, 2)]
+    medido = calc_cola.medir_atencion(lineas, min_horas=1)
+    assert medido["AUTO"] == 0.5    # 2 de sus 4 horas con otra cosa abierta
+    assert medido["MANO"] == 0.0    # las 2 suyas, enteras
+
+
+def test_medir_atencion_cuenta_la_union_y_no_la_suma():
+    #  Con tres máquinas a la vez, sumar los solapes por pares daría más
+    #  minutos solapados que fichados y una atención negativa.
+    lineas = [_linea("1", "AUTO", 7, 4), _linea("1", "A", 7, 2), _linea("1", "B", 7, 2)]
+    assert calc_cola.medir_atencion(lineas, min_horas=1)["AUTO"] == 0.5
+
+
+def test_medir_atencion_ignora_lo_que_no_tiene_historico():
+    lineas = [_linea("1", "AUTO", 7, 4), _linea("1", "POCO", 7, 1)]
+    medido = calc_cola.medir_atencion(lineas, min_horas=2)
+    assert "POCO" not in medido
+    assert "AUTO" in medido
+
+
+def test_operarios_distintos_no_se_solapan_entre_si():
+    #  Dos personas en dos máquinas a la vez no hacen automática a ninguna.
+    lineas = [_linea("1", "AUTO", 7, 4), _linea("2", "OTRA", 7, 4)]
+    medido = calc_cola.medir_atencion(lineas, min_horas=1)
+    assert medido == {"AUTO": 1.0, "OTRA": 1.0}

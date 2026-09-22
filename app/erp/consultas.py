@@ -34,6 +34,18 @@ DIAS_BONO_ARRANCADO = 10
 #  Cuánto histórico se mira para las medias y los montajes.
 HIST_MESES = 18
 
+#  Cuánto histórico se mira para medir la atención que pide cada máquina.
+#  Seis meses y no dieciocho como las medias: el ritmo de una máquina no
+#  cambia, pero la forma de repartir el trabajo sí, y lo que hace falta saber
+#  aquí es cómo se trabaja AHORA, no cómo se trabajaba hace año y medio.
+ATENCION_MESES = 6
+
+#  Horas fichadas por debajo de las cuales no se mide la atención de una
+#  máquina. Con menos, un par de días raros mandan sobre el dato y el plan
+#  acabaría soltando al operario por una casualidad. Sin medida se le trata
+#  como atendida, que es como se comporta hoy: nunca se inventa capacidad.
+ATENCION_MIN_HORAS = 20
+
 
 # ─────────────────────────────────────────────────────────────────────
 #  Líneas de bono: la actividad real que acompaña a la previsión de cola
@@ -273,6 +285,49 @@ WHERE obl.IdOperacion IN (1, 2)
   AND DATEDIFF(minute, obl.Hinicial, obl.Hfinal) BETWEEN 1 AND 480
   AND obl.Hinicial >= DATEADD(month, :meses, GETDATE())
 GROUP BY obl.Matricula, ob.IdTrabajo
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  ATENCIÓN: qué parte del tiempo de una máquina necesita a alguien encima
+# ─────────────────────────────────────────────────────────────────────
+#  Una inyectora cicla sola: el operario monta el molde, arranca y se va a
+#  otra cosa. El fichaje sigue abierto porque mide el BONO, no a la persona,
+#  y de ahí salía que el planificador diera por ocupado a quien no lo está.
+#
+#  Esto se mide, no se declara: para cada línea cerrada, qué parte de su
+#  duración transcurrió mientras ese MISMO operario tenía otra línea abierta.
+#  Si la máquina trabaja sola, su tiempo aparecerá solapado una y otra vez.
+#
+#  Medido sobre 6 meses (11.923 líneas): el 12,9% de lo fichado es trabajo
+#  simultáneo, y sale concentrado en máquinas concretas —inyectoras, la
+#  Trumpf TruPunch, la célula robotizada, las enderezadoras—, no repartido.
+#  El reparto es bimodal: trece máquinas por debajo del 40% de atención y el
+#  resto al 100%, sin apenas nada en medio.
+#
+#  Se traen las líneas en crudo porque la cuenta es una UNIÓN de intervalos:
+#  sumar los solapes por pares contaría dos veces al operario que lleva tres
+#  máquinas a la vez y daría atenciones negativas. La unión la hace
+#  `app.calculos.cola.medir_atencion`; aquí solo se lee.
+#
+#  El tope de 960 minutos descarta el fichaje fantasma que nadie cerró, igual
+#  que el de 480 en SQL_MONTAJE.
+# ─────────────────────────────────────────────────────────────────────
+
+SQL_ATENCION = """
+SELECT
+    obl.IdEmpleado AS idempleado,
+    obl.Matricula  AS matricula,
+    obl.Hinicial   AS inicio,
+    obl.Hfinal     AS fin
+FROM Ordenes_Bonos_Lineas obl
+WHERE obl.IdEmpleado IS NOT NULL
+  AND obl.Matricula  IS NOT NULL
+  AND obl.Hinicial   IS NOT NULL
+  AND obl.Hfinal     IS NOT NULL
+  AND obl.Hfinal     > obl.Hinicial
+  AND DATEDIFF(minute, obl.Hinicial, obl.Hfinal) BETWEEN 1 AND 960
+  AND obl.Hinicial  >= DATEADD(month, :meses, GETDATE())
 """
 
 

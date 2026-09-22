@@ -7,6 +7,11 @@ services:
       - "70:8000"
     env_file:
       - .env
+    volumes:
+      # Qué máquinas pueden trabajar solas lo declara producción, y cambiarlo
+      # no debería obligar a reconstruir la aplicación. En solo lectura: la
+      # app la lee, nunca la escribe.
+      - ./maquinas-auto.txt:/app/maquinas-auto.txt:ro
     environment:
       # Sin esto el contenedor va en UTC y `date.today()` / la conversion de
       # la ventana que manda el frontend se irian un dia entero.
