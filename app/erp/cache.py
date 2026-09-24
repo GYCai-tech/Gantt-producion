@@ -46,6 +46,7 @@ _cache_estima = {"ts": None, "teoricos": {}, "medias": {"articulo": {}, "trabajo
                  "montajes": {"trabajo": {}, "maquina": {}}}
 
 _cache_semaforo = {"ts": None, "mapa": {}}
+_cache_carretillero = {"ts": None, "mapa": {}}
 
 #  La atención cambia aún menos que las medias —es el comportamiento de una
 #  máquina sobre seis meses— pero comparte TTL con ellas para no inventar una
@@ -171,6 +172,27 @@ def cargar_semaforo() -> dict:
     _cache_semaforo.update(ts=ahora, mapa=mapa)
     return mapa
 
+
+def cargar_semaforo_carretillero() -> dict:
+    """{(idorden, idbono): 'disponible'|'bloqueada'} del semáforo del carretillero.
+
+    Mismo TTL y misma degradación que el del operario. Un color que no esté en
+    el catálogo no se traduce: queda fuera del mapa y `semaforo_efectivo` lo
+    trata como desconocido, que respeta el rojo del operario.
+    """
+    ahora = datetime.now()
+    ts = _cache_carretillero["ts"]
+    if ts is not None and (ahora - ts).total_seconds() < SEMAFORO_TTL_S:
+        return _cache_carretillero["mapa"]
+    try:
+        filas = consultar(consultas.SQL_SEMAFORO_CARRETILLERO)
+    except ErpNoDisponible:
+        print("[items] semáforo del carretillero no disponible, se reutiliza la caché")
+        return _cache_carretillero["mapa"]
+    mapa = {(r["idorden"], r["idbono"]): consultas.SEMAFORO[r["color"]]
+            for r in filas if r["color"] in consultas.SEMAFORO}
+    _cache_carretillero.update(ts=ahora, mapa=mapa)
+    return mapa
 
 
 # ─────────────────────────────────────────────────────────────────────

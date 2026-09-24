@@ -477,6 +477,22 @@ FROM persV_DatosAsociadoEmpleado v
 WHERE ob.IdEstado IN (0, 1)
 """
 
+#  El semáforo del CARRETILLERO, uno por bono. Verde cuando todo el material
+#  del bono está ubicado en los almacenes 2 o 3 con stock suficiente, listo
+#  para llevarlo a la máquina (ver la vista legible
+#  `PersVTrazaMaterialCarretillero`, que usa esta misma función). Rojo cuando
+#  el material no está: esa es la falta de material de verdad, a diferencia del
+#  rojo del operario, que casi siempre es "aún no está junto a mi máquina".
+#  Ver `app.calculos.cola.semaforo_efectivo`.
+SQL_SEMAFORO_CARRETILLERO = """
+SELECT b.idorden, b.idbono, col.color
+FROM (SELECT DISTINCT v.idorden, v.IdBono AS idbono
+      FROM persV_DatosAsociadoEmpleado v
+          JOIN Ordenes_Bonos ob ON ob.IdOrden = v.idorden AND ob.IdBono = v.IdBono
+      WHERE ob.IdEstado IN (0, 1)) b
+    OUTER APPLY dbo.persFTrazaMaterialCarretilleroColor(b.idorden, b.idbono) col
+"""
+
 
 # ─────────────────────────────────────────────────────────────────────
 #  AUSENCIAS (PORTALHR)

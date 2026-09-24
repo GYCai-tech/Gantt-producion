@@ -27,6 +27,7 @@ from sqlalchemy import bindparam, text
 #  depende de dónde empieza y acaba. Es la ÚNICA dependencia de `app/erp/`
 #  hacia `app/calculos/`.
 from app.calculos.calendario import JORNADA_FIN, JORNADA_INICIO
+from app.calculos.cola import semaforo_efectivo
 import app.erp.cache as cache
 import app.erp.consultas as consultas
 from app.erp.cliente import ErpNoDisponible, consultar, ejecutar
@@ -201,16 +202,24 @@ def leer_cola() -> list[dict]:
                       {"dias_arrancado": -consultas.DIAS_BONO_ARRANCADO,
                        "horas_viva": -consultas.HORAS_LINEA_VIVA})
     semaforo = cache.cargar_semaforo()
+    carretillero = cache.cargar_semaforo_carretillero()
     cola, vistas = [], set()
     for r in filas:
         clave = (r["idorden"], r["idbono"], r["idempleado"])
         if clave in vistas:
             continue
         vistas.add(clave)
+        # Si el ERP no devuelve color, se asume disponible: es preferible
+        # ofrecer trabajo de más que esconderlo por un fallo de la función.
+        erp = semaforo.get(clave, 'disponible')
         cola.append({
-            # Si el ERP no devuelve color, se asume disponible: es preferible
-            # ofrecer trabajo de más que esconderlo por un fallo de la función.
-            "semaforo":          semaforo.get(clave, 'disponible'),
+            # El rojo del operario solo bloquea si además falta el material
+            # en almacén y nadie ha empezado el bono. Ver `semaforo_efectivo`.
+            "semaforo":          semaforo_efectivo(
+                                     erp, carretillero.get((r["idorden"], r["idbono"])),
+                                     empezado=r["ultimo_fichaje"] is not None),
+            # El color tal cual lo da el ERP, para poder explicar la diferencia.
+            "semaforo_erp":      erp,
             "idorden":           r["idorden"],
             "idbono":            r["idbono"],
             "idempleado":        r["idempleado"],

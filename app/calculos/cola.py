@@ -18,6 +18,34 @@ MIN_BLOQUE_SIN_TIEMPO = 60
 _PRIO_SEMAFORO = {'en_curso': 0, 'disponible': 1, 'bloqueada': 2}
 
 
+def semaforo_efectivo(erp: str, carretillero: str | None, empezado: bool) -> str:
+    """Cuándo un bono está bloqueado DE VERDAD para planificar.
+
+    El rojo del semáforo del operario no significa "no hay material": se pone
+    verde cuando TODO el material, en su cantidad completa, está ya en la
+    ubicación de la máquina (`ARTICULOS_MAQUINAS.IdUbicacion_Libre`). Deducido
+    de los datos el 2026-09-24, acierta el 92% de 206 bonos. O sea, el rojo es
+    casi siempre "el carretillero aún no lo ha traído".
+
+    Para planificar los próximos días eso no es un bloqueo, es cuestión de
+    horas. Lo que sí bloquea es que el material NO EXISTA ubicado en almacén,
+    y eso lo dice el semáforo del carretillero
+    (`persFTrazaMaterialCarretilleroColor`): de 68 bonos con él en rojo, 64
+    estaban también en rojo para el operario.
+
+    Y un bono que ya tiene fichajes no está bloqueado: en planta se empieza
+    aunque el material no esté completo (lo confirmó producción), y el 6483/90
+    de Elías llevaba 90 piezas hechas con el semáforo en rojo.
+
+    Con el carretillero desconocido (None) se respeta el rojo del ERP: sin ese
+    dato no hay con qué contradecirlo.
+    """
+    if erp != 'bloqueada':
+        return erp
+    if empezado or carretillero == 'disponible':
+        return 'disponible'
+    return 'bloqueada'
+
 #  A partir de cuántos asignados un bono se trata como CUADRILLA: trabajan a la
 #  vez y el tiempo estimado —que son minutos-HOMBRE— se reparte entre ellos.
 #

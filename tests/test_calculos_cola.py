@@ -277,3 +277,37 @@ def test_operarios_distintos_no_se_solapan_entre_si():
     lineas = [_linea("1", "AUTO", 7, 4), _linea("2", "OTRA", 7, 4)]
     medido = calc_cola.medir_atencion(lineas, min_horas=1)
     assert medido == {"AUTO": 1.0, "OTRA": 1.0}
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  Cuándo un bono está bloqueado DE VERDAD
+# ─────────────────────────────────────────────────────────────────────
+#  El rojo del operario es casi siempre "el material aún no está junto a la
+#  máquina". Solo bloquea si además falta en almacén (carretillero en rojo) y
+#  nadie lo ha empezado.
+
+from app.calculos.cola import semaforo_efectivo
+
+
+def test_rojo_del_operario_con_el_material_en_almacen_no_bloquea():
+    """El 6668/50 de Elías: varillas en 07-00-E-04, la máquina es la E-05."""
+    assert semaforo_efectivo('bloqueada', 'disponible', empezado=False) == 'disponible'
+
+
+def test_rojo_en_los_dos_semaforos_y_sin_empezar_bloquea():
+    assert semaforo_efectivo('bloqueada', 'bloqueada', empezado=False) == 'bloqueada'
+
+
+def test_un_bono_empezado_no_esta_bloqueado_aunque_falte_material():
+    """En planta se empieza sin el material completo: el 6483/90 de Elías
+    llevaba 90 piezas con el semáforo en rojo."""
+    assert semaforo_efectivo('bloqueada', 'bloqueada', empezado=True) == 'disponible'
+
+
+def test_sin_dato_del_carretillero_manda_el_rojo_del_erp():
+    assert semaforo_efectivo('bloqueada', None, empezado=False) == 'bloqueada'
+
+
+def test_verde_y_azul_no_cambian():
+    assert semaforo_efectivo('disponible', 'bloqueada', empezado=False) == 'disponible'
+    assert semaforo_efectivo('en_curso', None, empezado=False) == 'en_curso'

@@ -72,11 +72,13 @@ def erp(monkeypatch):
         ts=None, teoricos={}, medias={"articulo": {}, "trabajo": {}, "maquina": {}},
         montajes={"trabajo": {}, "maquina": {}})
     cache._cache_semaforo.update(ts=None, mapa={})
+    cache._cache_carretillero.update(ts=None, mapa={})
     yield estado
     cache._cache_estima.update(
         ts=None, teoricos={}, medias={"articulo": {}, "trabajo": {}, "maquina": {}},
         montajes={"trabajo": {}, "maquina": {}})
     cache._cache_semaforo.update(ts=None, mapa={})
+    cache._cache_carretillero.update(ts=None, mapa={})
 
 
 def _revienta(sql, params):
@@ -276,7 +278,7 @@ def test_una_ausencia_parcial_se_cuenta_por_lo_que_queda_de_jornada(ini, fin, es
 
 def test_la_cola_se_deduplica_por_bono_y_operario(erp):
     def responder(sql, params):
-        if "persFTrazaordenesOperariosColor" in sql:
+        if "persFTrazaordenesOperariosColor" in sql or "persFTrazaMaterialCarretilleroColor" in sql:
             return []
         fila = {"idorden": 5, "idbono": 10, "idempleado": 3, "nombre": "chus",
                 "apellidos": "Ávila", "ordenar": None, "matricula": " M1 ",
@@ -324,3 +326,24 @@ def test_el_empleado_comodin_del_erp_no_es_un_operario():
     Salía en todas las pantallas como un operario más; producción pidió quitarlo."""
     from app.erp import consultas
     assert "IdEmpleado <> 0" in consultas.SQL_CENSO_EMPLEADOS
+
+
+def test_la_cola_combina_los_dos_semaforos(erp):
+    """El rojo del operario solo bloquea con el carretillero también en rojo."""
+    def responder(sql, params):
+        if "persFTrazaMaterialCarretilleroColor" in sql:
+            return [{"idorden": 1, "idbono": 10, "color": "000204051"},     # material en almacén
+                    {"idorden": 2, "idbono": 10, "color": "255051051"}]     # falta de verdad
+        if "persFTrazaordenesOperariosColor" in sql:
+            return [{"idorden": 1, "idbono": 10, "idempleado": 7, "color": "255051051"},
+                    {"idorden": 2, "idbono": 10, "idempleado": 7, "color": "255051051"}]
+        if "persV_DatosAsociadoEmpleado" in sql:
+            base = {"idempleado": 7, "nombre": "Ana", "apellidos": "", "ordenar": 0,
+                    "matricula": "M1", "descrip_maquina": "M", "area": "CHAPA",
+                    "descrip_salida": "A", "objetivo": 10, "fabricadas": 0, "idtrabajo": 1,
+                    "idestado": 0, "idarticulo_salida": "A", "ultimo_fichaje": None, "montajes": 0}
+            return [dict(base, idorden=1, idbono=10), dict(base, idorden=2, idbono=10)]
+        return []
+    erp["responder"] = responder
+    sem = {(b["idorden"], b["semaforo"], b["semaforo_erp"]) for b in lecturas.leer_cola()}
+    assert sem == {(1, "disponible", "bloqueada"), (2, "bloqueada", "bloqueada")}
