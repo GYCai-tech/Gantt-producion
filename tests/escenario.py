@@ -128,3 +128,18 @@ def fingir_erp(monkeypatch):
     monkeypatch.setattr(lecturas, "leer_avance", lambda *a: {k: dict(v) for k, v in AVANCE.items()})
     monkeypatch.setattr(cache, "cargar_estimaciones",
                         lambda: (dict(TEORICOS), MEDIAS, MONTAJES))
+    #  La atención de las máquinas SE FINGE VACÍA, y eso no es un descuido.
+    #  Sin este parche `cargar_atencion` se salta el escenario y abre una
+    #  conexión de verdad al ERP: mide seis meses de fichajes en vivo, tarda
+    #  minutos y —lo grave— mete datos de producción dentro de un golden que
+    #  existe justo para no depender de ellos. El escenario dejaba de ser
+    #  reproducible y el golden cambiaba solo con que alguien fichara.
+    #
+    #  Vacío equivale a "todas las máquinas piden atención completa", que es
+    #  el comportamiento de siempre y el que ya fijan los goldens. Lo que
+    #  hacen las máquinas desatendidas se prueba aparte, en
+    #  `tests/test_calculos_cola.py`, donde la atención entra por parámetro.
+    monkeypatch.setattr(cache, "cargar_atencion", lambda: {})
+    #  Lo mismo con la lista de automáticas que usa la hoja del día: leería el
+    #  `maquinas-auto.txt` real y el golden dependería de lo que ponga producción.
+    monkeypatch.setattr(cache, "maquinas_automaticas", lambda: set())

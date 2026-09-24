@@ -22,6 +22,13 @@ COPY app ./app
 COPY templates ./templates
 COPY static ./static
 
+# La ficha de máquinas que trabajan solas. Es un dato de producción, no
+# código, y por eso docker-compose la monta encima para poder cambiarla sin
+# reconstruir. Va también en la imagen para que un despliegue sin el montaje
+# siga funcionando: sin ficha no hay máquinas automáticas y la cola trata
+# todo como atendido, que es como se comportaba antes de que existiera.
+COPY maquinas-auto.txt .
+
 # Usuario no-root
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser

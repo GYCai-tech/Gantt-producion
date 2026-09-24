@@ -113,7 +113,12 @@ CASOS_CONTINUAR = {
 @necesita_v1
 def test_continuar_da_lo_mismo_que_el_router(nombre):
     nuevos, viejos = copy.deepcopy(CASOS_CONTINUAR[nombre]), copy.deepcopy(CASOS_CONTINUAR[nombre])
-    assert fusion.continuar(nuevos, AHORA) == api._continuar(viejos, AHORA)
+    #  `matricula` no está en la v1: la continuación empezó a heredarla para
+    #  que el Gantt la ponga en el carril de SU máquina y no le abra uno
+    #  propio. Se compara todo lo demás, que es lo que no puede moverse.
+    salida = [{k: v for k, v in b.items() if k != "matricula"}
+              for b in fusion.continuar(nuevos, AHORA)]
+    assert salida == api._continuar(viejos, AHORA)
     #  Y en los dos casos la clave interna se consume: no llega al frontend.
     assert all("_pendiente" not in it for it in nuevos)
 

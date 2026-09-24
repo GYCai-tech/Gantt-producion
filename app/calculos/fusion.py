@@ -178,6 +178,11 @@ def continuar(items: list[dict], ahora: datetime) -> list[dict]:
         barras.append({
             "id":          f"C-{it['idorden']}-{it['idbono']}-{it['recurso_id']}",
             "recurso_id":  it["recurso_id"],
+            # La continuación se fabrica en la MISMA máquina que la barra de
+            # la que sale. Sin heredarla, el Gantt no sabía que era la misma y
+            # le daba un carril propio: la WAFIOS 1 de Elías salía partida en
+            # dos líneas, la del fichaje abierto y la de lo que le queda.
+            "matricula":   it.get("matricula", ""),
             "tipo":        "programado",
             "estado":      "sin-estimar" if sin_ritmo else "continuacion",
             "continuacion": True,

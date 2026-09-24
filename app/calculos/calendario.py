@@ -3,7 +3,7 @@
 Es la base de toda proyección: sin él, una barra que empieza a las 14:50 y dura
 una hora acabaría a las 15:50, de noche y con la planta vacía.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 JORNADA_INICIO = 7
 #  Medido sobre 6 meses de fichajes: el ultimo cierre del dia es 15:01 en 38
@@ -13,6 +13,14 @@ JORNADA_INICIO = 7
 #  capacidad inflada en toda proyeccion. Debe coincidir con WORK_FIN en app.js
 #  o las barras se pintan en el pixel equivocado.
 JORNADA_FIN    = 15
+
+#  El descanso de 11:00 a 11:15. La PROYECCIÓN no lo descuenta (ver
+#  `sumar_laborables`): el Gantt lo pinta como una banda y las barras lo
+#  atraviesan. Lo usan solo los informes que cuentan el tiempo efectivo del
+#  operario, como la hoja del día, donde la jornada es de 7h45 y no de 8.
+#  Debe coincidir con BREAK en app.js.
+DESCANSO_INICIO = time(11, 0)
+DESCANSO_FIN    = time(11, 15)
 
 
 def siguiente_hueco(dt: datetime) -> datetime:

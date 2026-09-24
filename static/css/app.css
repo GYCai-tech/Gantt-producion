@@ -587,8 +587,13 @@ button { font-family: inherit; }
 .bar.has-paro .bar__sub,
 .bar.has-paro .bar__paro { color: #000; font-weight: 700; }
 .bar__paro { margin-right: 4px; flex-shrink: 0; font-size: 11px; }
-/* PARADA: empezo y se quedo a medias. Ambar, como el resto de lo interrumpido. */
-.bar.st-parada  { background: #fdf0e3; border-color: #e8c49a; color: #8a4b12; }
+/*  Aqui vivia `.bar.st-parada`, la parada DEDUCIDA del comportamiento (bono
+    arrancado, con fichajes y sin nadie encima). Se quito: de las ocho barras
+    que marcaba, tres tenian cero piezas hechas --solo el montaje fichado, o
+    sea maquina lista esperando, que no es una parada-- y las otras cinco no
+    se distinguian entre "se paro hace una hora" y "lleva cuatro dias".
+    La unica parada que se pinta es la ANOTADA (`.bar.has-paro`, arriba), que
+    ademas dice el motivo. */
 /* BLOQUEADA: ni ha empezado y no puede. Se queda el granate de siempre. */
 .bar.st-bloqueada { background: #f4e9ea; border-color: #dcb9bd; color: #7e3a40; }
 .bar.st-pausada { background: #eaeef5; border-color: #bcc8dc; color: #45526e; }
@@ -602,6 +607,20 @@ button { font-family: inherit; }
    en planta, solo cerrarlo. Azul informativo, no ambar de aviso. */
 .bar.st-pendiente-cierre { background: #e7f1f6; border-color: #a9cbdc; color: #2c5c74; }
 .bar.st-parcial { background: #eef1f5; border-color: #cdd5e0; color: #59657a; }
+
+/* Sesion en curso cuyo fin la estimacion NO sabe: la barra llega hasta ahora
+   y crece con el reloj. El borde derecho va discontinuo y sin redondear para
+   que no se lea como un final -- no es que el trabajo acabe ahi, es que a
+   partir de ahi no se sabe nada. Un borde recto y solido prometia una hora de
+   fin que el propio tooltip desmiente con "Fin: Indeterminado". */
+.bar--creciendo {
+  border-right: 2px dashed currentColor;
+  border-top-right-radius: 2px;
+  border-bottom-right-radius: 2px;
+}
+/* El tramo de exceso muere en ese mismo borde: su esquina redondeada volvia a
+   dibujar el final que la barra acaba de dejar de prometer. */
+.bar--creciendo .bar__exceso { border-radius: 0; }
 
 /* Relleno de lo ya trabajado dentro de una barra en curso: la parte solida
    llega hasta "ahora" y el resto, tenue, es lo estimado que queda. Antes esto
@@ -777,6 +796,81 @@ button { font-family: inherit; }
 .plan__intro p  { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.55; max-width: 84ch; }
 .plan__intro a  { color: var(--accent); }
 
+/* ── Leyenda del Gantt ──────────────────────────────────────────────
+   Los cuadritos son `.bar` de verdad con sus clases `st-*`, asi que heredan
+   el fondo, el borde y el rayado de las barras reales. Aqui solo se les da
+   tamano y se apaga lo que en una barra de 34 px sobra: el texto, el
+   triangulo de "en riesgo" y el minimo de altura.
+
+   Va DEBAJO del diagrama a proposito. Encima ya hay dos filas de controles y
+   la tira de areas; una tercera dejaba el Gantt empezando a media pantalla, y
+   esto es material de consulta, no algo que se mire en cada carga.          */
+.leyenda { margin: 12px 2px 4px; border-top: 1px solid var(--line); padding-top: 10px; }
+.leyenda__tit {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--ink-2);
+  cursor: pointer; user-select: none; width: fit-content;
+  padding: 3px 9px 3px 7px; border-radius: 7px;
+}
+.leyenda__tit:hover { background: var(--surface-2); color: var(--ink-1); }
+/* Fuera el triangulo del navegador: cada uno pinta el suyo y ninguno encaja
+   con el resto de la pantalla. El de abajo es el mismo chevron que ya se usa
+   en las barras, y gira al abrir. */
+.leyenda__tit::-webkit-details-marker { display: none; }
+.leyenda__tit { list-style: none; }
+.leyenda__tit::before {
+  content: "▸"; font-size: 10px; color: var(--ink-3);
+  transition: transform .15s; display: inline-block;
+}
+.leyenda[open] .leyenda__tit::before { transform: rotate(90deg); }
+.leyenda[open] .leyenda__tit { color: var(--ink-1); }
+
+.gantt__leyenda {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin: 10px 2px 4px; padding-left: 7px;
+}
+.gantt__lg { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-2); }
+.gantt__lg-tit {
+  font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.gantt__lg-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
+.gantt__lg-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; font-size: 13px; color: var(--ink-2);
+}
+/* La barra-muestra: el tamano manda sobre lo que trae `.bar`.
+
+   OJO con `position`: tiene que seguir siendo `relative`. El rayado de
+   `.bar--programado` es un `::after` con `inset: 0`, asi que en cuanto el
+   cuadrito deja de estar posicionado el pseudoelemento se va a buscar el
+   siguiente ancestro y el rayado se come la leyenda entera.             */
+.gantt__lg .bar {
+  position: relative; width: 34px; height: 15px; min-height: 0;
+  padding: 0; border-radius: 4px; flex-shrink: 0; cursor: default;
+}
+/* El triangulo de "en riesgo" SE QUEDA aunque ya no tenga con quien
+   confundirse --antes compartia ambar con "parada"--, porque la barra de
+   verdad lo lleva y la leyenda tiene que ensenar lo que se ve en pantalla. */
+.gantt__lg .bar::before { content: none; }
+.gantt__lg .bar.st-riesgo::before {
+  content: "▲"; margin: 0 auto; font-size: 9px; line-height: 1;
+}
+/* Los cuadritos de la fila de marcas no son un estado: van en gris neutro
+   para que el color no se lea como informacion que no es. */
+.gantt__lg .bar.gantt__lg--neutro {
+  background: #eef1f5; border-color: #cdd5e0; color: #7a8698;
+}
+.gantt__lg .bar:hover { box-shadow: none; filter: none; }
+/* El tramo rojo de exceso, sin necesidad de un hijo en el DOM. Va con la
+   especificidad subida a proposito: `.bar.st-plazo` ya fija un `background`
+   y le ganaba a una clase suelta, asi que el cuadrito salia liso.        */
+.gantt__lg .bar.gantt__lg--exceso {
+  background-image: linear-gradient(to right,
+    transparent 0 58%, var(--rojo) 58% calc(58% + 2px),
+    rgba(200, 32, 45, .42) calc(58% + 2px) 100%);
+}
+
 .plan__leyenda { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 16px 0 10px; }
 .plan__lg { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
 .plan__lg--fin { margin-left: auto; color: var(--ink-3); }
@@ -839,10 +933,11 @@ tbody .plan__pers span {
 .plan__cifra { margin-top: 6px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .plan__cifra span { font-weight: 400; color: var(--ink-3); margin-left: 5px; font-size: 11px; }
 .plan__c[data-p] { cursor: help; }
-/* Un bono bloqueado o sin estimacion fiable dentro del dia: la carga es la
-   misma pero lo que se puede prometer, no. */
-.plan__c.tiene-dudoso { box-shadow: inset 0 -3px 0 var(--ambar); }
-.plan__c.tiene-parada { box-shadow: inset 0 -3px 0 var(--rojo); }
+/* Aqui vivian dos rayas en el borde inferior de la celda: .tiene-parada (roja,
+   bonos a medias) y .tiene-dudoso (ambar, sin estimacion fiable). Retiradas
+   las dos: marcaban 33 celdas, ninguna figuraba en la leyenda -- no habia como
+   saber que querian decir -- y lo que contaban ya se ve en el Gantt. Esta
+   rejilla es para leer carga, y las rayas competian con el porcentaje. */
 
 .tip__sub { font-size: 11.5px; color: var(--ink-3); margin: -2px 0 7px; line-height: 1.45; }
 /* ============================================================
@@ -1093,4 +1188,83 @@ tbody .plan__pers span {
 
 @media (max-width: 900px) {
   .ord__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ===================== Hoja del día ===================== */
+/*  Se imprime la víspera y se cuelga para toda la planta. En pantalla se ve
+    como una hoja de papel, para que lo que se ve sea lo que se imprime. */
+.hoja { flex: 1; min-height: 0; overflow: auto; padding: 16px 16px 32px; }
+.hoja__barra {
+  max-width: 820px; margin: 0 auto 12px; display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: flex-end; gap: 8px;
+}
+.hoja__estado { max-width: 820px; margin: 0 auto; padding: 28px 2px; color: var(--ink-2); font-size: 13.5px; }
+.hoja__estado--error { color: var(--rojo); }
+.hoja__papel {
+  max-width: 820px; margin: 0 auto; padding: 28px 30px 22px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow-1);
+}
+.hoja__cab { padding-bottom: 10px; margin-bottom: 12px; border-bottom: 2px solid var(--ink); }
+.hoja__marca { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); }
+.hoja__fecha { margin: 2px 0 0; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+
+.hoja__tabla { width: 100%; border-collapse: collapse; font-size: 12px; }
+.hoja__tabla th, .hoja__tabla td {
+  padding: 5px 6px; text-align: left; vertical-align: top;
+  border-bottom: 1px solid var(--line); overflow-wrap: break-word;
+}
+.hoja__tabla thead th {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--ink-2); border-bottom: 1px solid var(--ink-3);
+}
+/*  Cada operario es un bloque: la raya gruesa arriba es lo que permite
+    encontrarse de un vistazo en una hoja colgada. */
+.hoja__op { border-top: 1.5px solid var(--ink-2); }
+.hoja__quien th {
+  padding-top: 7px; font-size: 12.5px; font-weight: 700; color: var(--ink);
+  background: var(--surface-2); border-bottom: 1px solid var(--line);
+}
+.hoja__quien span { margin-left: 8px; font-size: 10.5px; font-weight: 500; color: var(--ink-2); }
+.hoja__hora, .hoja__bono { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hoja__bono { font-weight: 600; }
+.hoja__bono span { font-weight: 400; color: var(--ink-2); }
+/*  Lo que hace sola una máquina automática, debajo de la hora del montaje. */
+.hoja__maq { display: block; font-size: 9.5px; line-height: 1.15; color: var(--ink-2); }
+.hoja__vacio { padding: 24px 6px; text-align: center; color: var(--ink-2); }
+
+@media print {
+  @page { size: A4 portrait; margin: 8mm 10mm; }
+  /*  El resto de la app fija alturas a pantalla completa para el Gantt. Al
+      imprimir hay que soltarlas o sale solo lo que cabía en la ventana. */
+  html, body { height: auto; display: block; background: #fff; }
+  .app-navbar, .hoja__barra { display: none !important; }
+  .hoja { overflow: visible; padding: 0; }
+  .hoja__estado { display: none; }
+  .hoja__papel { max-width: none; padding: 0; border: 0; border-radius: 0; box-shadow: none; }
+  /*  Con 8,5 pt el artículo y la máquina partían en dos renglones casi todas
+      las filas y la hoja pasaba a tres páginas; con 8 pt caben en una. */
+  .hoja__tabla { font-size: 8pt; line-height: 1.1; }
+  /*  Anchos fijos solo en papel, ajustados para que quepa en dos hojas A4 sin
+      que ninguna cifra se parta. En pantalla la tabla se ajusta al contenido. */
+  .hoja__tabla { table-layout: fixed; }
+  .hoja__tabla col.c-hora { width: 11%; }     /* "07:00–≈11:26" sin pisar la orden */
+  .hoja__tabla col.c-bono { width: 8%; }
+  .hoja__tabla col.c-maq  { width: 31%; }
+  .hoja__tabla thead { display: table-header-group; }   /* se repite en cada hoja */
+  .hoja__op { break-inside: avoid; page-break-inside: avoid; }
+  /*  Los bloques largos sí se pueden partir, pero nunca entre el nombre y su
+      primer bono ni por la mitad de una fila. */
+  .hoja__op--largo { break-inside: auto; page-break-inside: auto; }
+  .hoja__quien { break-after: avoid; page-break-after: avoid; }
+  .hoja__op tr { break-inside: avoid; page-break-inside: avoid; }
+  /*  Poco relleno a propósito. Cada operario va entero en una hoja (no se parte
+      su bloque), y el hueco que eso deja al pie de la primera página puede ser
+      de un bloque entero: sin este margen, un bono más mañana la llevaba a tres. */
+  .hoja__tabla th, .hoja__tabla td { padding: 1px 3px; }
+  .hoja__quien th { font-size: 9pt; padding-top: 1px; background: #eef1f5; }
+  .hoja__fecha { font-size: 15pt; }
+  .hoja__cab { padding-bottom: 5px; margin-bottom: 6px; }
+  .hoja__tabla thead th { padding-top: 0; padding-bottom: 2px; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }

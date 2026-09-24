@@ -34,6 +34,18 @@ DIAS_BONO_ARRANCADO = 10
 #  Cuánto histórico se mira para las medias y los montajes.
 HIST_MESES = 18
 
+#  Cuánto histórico se mira para medir la atención que pide cada máquina.
+#  Seis meses y no dieciocho como las medias: el ritmo de una máquina no
+#  cambia, pero la forma de repartir el trabajo sí, y lo que hace falta saber
+#  aquí es cómo se trabaja AHORA, no cómo se trabajaba hace año y medio.
+ATENCION_MESES = 6
+
+#  Horas fichadas por debajo de las cuales no se mide la atención de una
+#  máquina. Con menos, un par de días raros mandan sobre el dato y el plan
+#  acabaría soltando al operario por una casualidad. Sin medida se le trata
+#  como atendida, que es como se comporta hoy: nunca se inventa capacidad.
+ATENCION_MIN_HORAS = 20
+
 
 # ─────────────────────────────────────────────────────────────────────
 #  Líneas de bono: la actividad real que acompaña a la previsión de cola
@@ -101,7 +113,13 @@ ORDER BY obl.Fecha
 #  encajar, un replace no falla — se queda sin sustituir y la consulta sale sin
 #  filtrar o revienta con los parámetros sin bindear, que es un 503 opaco.
 FILTRO_RANGO    = "CAST(obl.Fecha AS date) BETWEEN :desde AND :hasta"
-FILTRO_ABIERTAS = "obl.Hfinal IS NULL AND obl.Hinicial BETWEEN :limite AND :ahora"
+#  «Abierta» es siempre «abierta EN :ahora», no «abierta ahora mismo». Con
+#  el reloj en vivo son lo mismo; con el reloj congelado para la foto de las
+#  06:55 no: a las 12:56 la línea que estaba en marcha a las 06:55 ya tiene
+#  Hfinal, y un `Hfinal IS NULL` a secas la tiraba. La foto salía sin una
+#  sola barra de trabajo real.
+FILTRO_ABIERTAS = ("(obl.Hfinal IS NULL OR obl.Hfinal > :ahora)"
+                   " AND obl.Hinicial BETWEEN :limite AND :ahora")
 
 
 def consulta_lineas(filtro: str) -> str:
@@ -142,6 +160,10 @@ SQL_CENSO_EMPLEADOS = """
         FROM Ordenes_Bonos_Lineas obl
             JOIN Empleados_Datos ed ON obl.IdEmpleado = ed.IdEmpleado
         WHERE ed.IdDepartamento = :departamento
+          --  El 0 es el comodín del ERP, "Empleado Prueba0 (Sin Definir)": no es
+          --  una persona. Salía en el Gantt, en la carga y en la hoja del día como
+          --  un operario más sin trabajo. Producción pidió quitarlo (2026-09-24).
+          AND obl.IdEmpleado <> 0
     """
 
 #  El área de un operario no es su departamento del ERP sino la de las
@@ -273,6 +295,49 @@ WHERE obl.IdOperacion IN (1, 2)
   AND DATEDIFF(minute, obl.Hinicial, obl.Hfinal) BETWEEN 1 AND 480
   AND obl.Hinicial >= DATEADD(month, :meses, GETDATE())
 GROUP BY obl.Matricula, ob.IdTrabajo
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  ATENCIÓN: qué parte del tiempo de una máquina necesita a alguien encima
+# ─────────────────────────────────────────────────────────────────────
+#  Una inyectora cicla sola: el operario monta el molde, arranca y se va a
+#  otra cosa. El fichaje sigue abierto porque mide el BONO, no a la persona,
+#  y de ahí salía que el planificador diera por ocupado a quien no lo está.
+#
+#  Esto se mide, no se declara: para cada línea cerrada, qué parte de su
+#  duración transcurrió mientras ese MISMO operario tenía otra línea abierta.
+#  Si la máquina trabaja sola, su tiempo aparecerá solapado una y otra vez.
+#
+#  Medido sobre 6 meses (11.923 líneas): el 12,9% de lo fichado es trabajo
+#  simultáneo, y sale concentrado en máquinas concretas —inyectoras, la
+#  Trumpf TruPunch, la célula robotizada, las enderezadoras—, no repartido.
+#  El reparto es bimodal: trece máquinas por debajo del 40% de atención y el
+#  resto al 100%, sin apenas nada en medio.
+#
+#  Se traen las líneas en crudo porque la cuenta es una UNIÓN de intervalos:
+#  sumar los solapes por pares contaría dos veces al operario que lleva tres
+#  máquinas a la vez y daría atenciones negativas. La unión la hace
+#  `app.calculos.cola.medir_atencion`; aquí solo se lee.
+#
+#  El tope de 960 minutos descarta el fichaje fantasma que nadie cerró, igual
+#  que el de 480 en SQL_MONTAJE.
+# ─────────────────────────────────────────────────────────────────────
+
+SQL_ATENCION = """
+SELECT
+    obl.IdEmpleado AS idempleado,
+    obl.Matricula  AS matricula,
+    obl.Hinicial   AS inicio,
+    obl.Hfinal     AS fin
+FROM Ordenes_Bonos_Lineas obl
+WHERE obl.IdEmpleado IS NOT NULL
+  AND obl.Matricula  IS NOT NULL
+  AND obl.Hinicial   IS NOT NULL
+  AND obl.Hfinal     IS NOT NULL
+  AND obl.Hfinal     > obl.Hinicial
+  AND DATEDIFF(minute, obl.Hinicial, obl.Hfinal) BETWEEN 1 AND 960
+  AND obl.Hinicial  >= DATEADD(month, :meses, GETDATE())
 """
 
 
@@ -452,20 +517,43 @@ WITH ausencia AS (
     FROM PORTALHR.dbo.Employees_Holidays h
     WHERE h.StatusId = 1
       AND CAST(h.[date] AS date) = :dia
-), resuelta AS (
-    --  Una baja pesa más que un permiso: si alguien tiene las dos el mismo día
-    --  manda la baja, que es la que explica de verdad por qué no está.
-    SELECT ce.IdEmpleado AS idempleado,
-           a.motivo,
-           a.desde, a.hasta, a.parcial, a.hora_ini, a.hora_fin,
-           ROW_NUMBER() OVER (PARTITION BY ce.IdEmpleado ORDER BY a.prioridad) AS rn
+), cruzada AS (
+    --  El cruce con el ERP es por el código de tarjeta. Si en PORTALHR falta
+    --  ese código, por el nombre completo, sin tildes ni mayúsculas, y solo si
+    --  el nombre da UN empleado: un homónimo no se adivina.
+    --
+    --  Es un apaño a un dato mal puesto, no el cruce normal. Ángel Diéguez
+    --  tiene en PORTALHR una baja del 01/01/2025 al 31/12/2026 y la ficha sin
+    --  AccessId, así que la app nunca le encontraba la baja y la hoja del día
+    --  lo contaba como disponible. Lo correcto es rellenar su AccessId en
+    --  PORTALHR (en el ERP su codigotag es el de su tarjeta); con eso este
+    --  camino deja de usarse solo.
+    SELECT COALESCE(por_tag.IdEmpleado,
+                    CASE WHEN por_nombre.n = 1 THEN por_nombre.IdEmpleado END) AS idempleado,
+           a.motivo, a.desde, a.hasta, a.parcial, a.hora_ini, a.hora_fin, a.prioridad
     FROM ausencia a
-        JOIN PORTALHR.dbo.Employees e           ON e.EmployeeId = a.EmployeeId
+        JOIN PORTALHR.dbo.Employees e ON e.EmployeeId = a.EmployeeId
         --  Sin este guardarraíl, un tag vacío casaría '' = '' y cruzaría gente
         --  sin ninguna relación. Hoy no ocurre (medido: 0 casos), pero basta un
         --  codigotag en blanco para que ocurra.
-        JOIN GOMEZYCRESPO.dbo.Conf_Empleados ce ON ce.codigotag = e.AccessId
-                                               AND LTRIM(RTRIM(e.AccessId)) <> ''
+        LEFT JOIN GOMEZYCRESPO.dbo.Conf_Empleados por_tag
+               ON por_tag.codigotag = e.AccessId
+              AND LTRIM(RTRIM(ISNULL(e.AccessId, ''))) <> ''
+        OUTER APPLY (
+            SELECT MIN(ed.IdEmpleado) AS IdEmpleado, COUNT(*) AS n
+            FROM GOMEZYCRESPO.dbo.Empleados_Datos ed
+            WHERE LTRIM(RTRIM(ISNULL(e.AccessId, ''))) = ''
+              AND UPPER(LTRIM(RTRIM(ed.Nombre)) + ' ' + LTRIM(RTRIM(ed.Apellidos)))
+                  COLLATE Latin1_General_CI_AI
+                = UPPER(LTRIM(RTRIM(e.FullName))) COLLATE Latin1_General_CI_AI
+        ) por_nombre
+), resuelta AS (
+    --  Una baja pesa más que un permiso: si alguien tiene las dos el mismo día
+    --  manda la baja, que es la que explica de verdad por qué no está.
+    SELECT idempleado, motivo, desde, hasta, parcial, hora_ini, hora_fin,
+           ROW_NUMBER() OVER (PARTITION BY idempleado ORDER BY prioridad) AS rn
+    FROM cruzada
+    WHERE idempleado IS NOT NULL
 )
 SELECT idempleado, motivo, desde, hasta, parcial, hora_ini, hora_fin
 FROM resuelta WHERE rn = 1

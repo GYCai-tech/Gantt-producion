@@ -153,6 +153,14 @@ ESCENARIOS = [
 ]
 
 
+#  Campos que `proyectar` añadió DESPUÉS de la v1 y que por tanto no pueden
+#  compararse contra ella. Los tres salieron de dejar de prometer un fin que
+#  la estimación no sabe (65dbbe3): cuánto falta a teórico, cuánto al ritmo
+#  observado y si el presupuesto ya estaba agotado al abrir la sesión.
+_ANADIDAS = {"min_restantes_teoricos", "min_restantes_ritmo_real",
+             "presupuesto_agotado_antes"}
+
+
 @pytest.mark.parametrize("caso", ESCENARIOS, ids=[c[0] for c in ESCENARIOS])
 @necesita_v1
 def test_proyectar_da_lo_mismo_que_el_router(caso, montajes_en_la_global):
@@ -160,7 +168,11 @@ def test_proyectar_da_lo_mismo_que_el_router(caso, montajes_en_la_global):
     nuevo, viejo = _item(), _item()
     estimacion.proyectar(nuevo, linea, AHORA, teoricos, medias, MONTAJES, avance)
     api._proyectar(viejo, linea, AHORA, teoricos, medias, avance)
-    assert nuevo == viejo
+    #  Las claves que la v1 no tiene se comparan aparte: aquí lo que se
+    #  vigila es que no se haya movido nada de lo que ya existía. Ver
+    #  `_AÑADIDAS` para qué son y desde cuándo.
+    assert {k: v for k, v in nuevo.items() if k not in _ANADIDAS} == viejo
+    assert set(nuevo) - set(viejo) <= _ANADIDAS
 
 
 def test_proyectar_reparte_los_minutos_hombre(montajes_en_la_global):

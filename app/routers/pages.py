@@ -50,6 +50,17 @@ def planificacion(request: Request):
     )
 
 
+@router.get("/hoja-del-dia", response_class=HTMLResponse)
+def hoja_del_dia(request: Request):
+    """La hoja que se imprime la víspera y se cuelga para toda la planta: qué
+    tiene que hacer cada operario ese día. Lee el mismo `/api/plan` que la
+    rejilla de carga, así que no hay un segundo cálculo que pueda discrepar."""
+    return templates.TemplateResponse(
+        request, "hoja_dia.html",
+        {"current_page": "hoja", "static_v": _static_v()},
+    )
+
+
 @router.get("/ordenes-no-asignadas", response_class=HTMLResponse)
 def ordenes_no_asignadas(request: Request):
     return templates.TemplateResponse(
@@ -80,3 +91,4 @@ def consultor_bonos(request: Request):
         request, "consultor_bonos.html",
         {"current_page": "consultor", "static_v": _static_v()},
     )
+

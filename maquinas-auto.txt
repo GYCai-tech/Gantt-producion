@@ -1,0 +1,11 @@
+201	Célula de Plegado Robotizada
+089	Inyectora BATTENFELD ECO 110/350 B6
+104	Inyectora BATTENFELD ECO 110/350 B6 (2)
+073	Inyectora JM 170+
+102	Punzonadora Trumpf TruPunch 3000
+501	INYECTORA DEU 5000 (entrada)
+078	INYECTORA DEU 5000
+502	Inyectora JM 250 (entrada)
+074	Inyectora JM 250
+0751	INYECTORA JM 110 ENTRADA
+075	Inyectora JM 110

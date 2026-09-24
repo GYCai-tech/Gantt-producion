@@ -59,10 +59,10 @@ const App = (() => {
   const ST_LABEL = {
     plazo: 'En curso', completado: 'Completado',
     retrasada: 'Retrasada', riesgo: 'En riesgo', 'sin-estimar': 'Sin datos fiables',
-    //  Dos cosas distintas y el nombre importa en planta: BLOQUEADA es un
-    //  bono que aun no se ha hecho y no se puede empezar; PARADA es uno que
-    //  tuvo a alguien fichando y se quedo a medias.
-    parada: 'Parada', bloqueada: 'Bloqueada',
+    //  BLOQUEADA es un bono que aun no se ha hecho y no se puede empezar. No
+    //  hay "parada" deducida: la unica parada que se pinta es la ANOTADA en
+    //  el ERP, y esa va por `it.paro` / `.has-paro`, no por el estado.
+    bloqueada: 'Bloqueada',
     pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
     programado: 'En espera', disponible: 'Disponible',
     'pendiente-cierre': 'Pendiente de cerrar',
@@ -78,9 +78,8 @@ const App = (() => {
     //  (.tag--sin-estimar) y lo que de verdad dice: falta informacion, no hay
     //  un problema en el bono. El naranja queda para lo que pide accion.
     retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#79859a',
-    //  La parada hereda el ambar del trabajo interrumpido; el granate se
-    //  queda para lo que ni ha empezado.
-    parada: '#b5651d', bloqueada: '#9a4b52',
+    //  El granate se queda para lo que ni ha empezado.
+    bloqueada: '#9a4b52',
     pausada: '#5b6b8a', parcial: '#c77b1f',
     programado: '#5b63b0', disponible: '#1f9254',
     'pendiente-cierre': '#3f7d9e',
@@ -223,12 +222,73 @@ const App = (() => {
   }
 
   // ── Arranque ───────────────────────────────────────────────────────
+  // ── Leyenda ────────────────────────────────────────────────────────
+  //  Los cuadritos son BARRAS DE VERDAD: llevan las mismas clases
+  //  `bar st-<estado>` que pinta el Gantt, asi que el color sale del mismo
+  //  sitio del CSS. Una leyenda con los colores copiados a mano es una
+  //  leyenda que miente en cuanto alguien retoca un tono.
+  //
+  //  Solo se listan los estados que el Gantt llega a pintar. `ST_LABEL` tiene
+  //  algunos mas --retrasada, pausada-- que hoy no produce ningun camino del
+  //  backend; ponerlos seria inventar casos que nadie va a ver.
+  const LEYENDA_ESTADOS = [
+    //  [estado, clase de tipo cuando SIEMPRE aparece con ella]
+    ['plazo',            'bar--real'],
+    ['continuacion',     'bar--programado'],   // siempre proyectada
+    ['pendiente-cierre', ''],
+    ['completado',       'bar--trabajado'],
+    ['disponible',       'bar--programado'],
+    ['bloqueada',        'bar--programado'],
+    ['riesgo',           ''],
+    ['sin-estimar',      ''],
+  ];
+
+  //  Lo que no es color va aparte, porque responde a otra pregunta: el color
+  //  dice EN QUE ESTA el bono y esto dice COMO SE LEE la barra.
+  function renderLeyenda() {
+    const caja = $('gantt-leyenda');
+    if (!caja) return;
+    const chip = (clases, texto) =>
+      `<span class="gantt__lg"><i class="bar ${clases}"></i>${esc(texto)}</span>`;
+    const icono = (ico, texto) =>
+      `<span class="gantt__lg"><b class="gantt__lg-ico">${ico}</b>${esc(texto)}</span>`;
+
+    caja.innerHTML =
+      '<span class="gantt__lg-tit">Estado</span>' +
+      LEYENDA_ESTADOS.map(([st, tipo]) =>
+        chip(`st-${st} ${tipo}`, ST_LABEL[st] || st)).join('') +
+      '<span class="gantt__lg-sep"></span>' +
+      '<span class="gantt__lg-tit">Cómo se lee</span>' +
+      chip('gantt__lg--neutro bar--programado', 'Rayada: previsión, aún no ha pasado') +
+      chip('gantt__lg--neutro bar--creciendo', 'Borde discontinuo: no se sabe cuándo acaba') +
+      chip('gantt__lg--neutro gantt__lg--exceso', 'Tramo rojo: pasado de presupuesto') +
+      icono('⚙', 'Incluye montaje de utillaje') +
+      //  El amarillo fuerte es ahora la UNICA parada que se pinta, asi que en
+      //  la leyenda tiene que verse el color, no solo el simbolo.
+      chip('has-paro', '⏻ Amarilla: parada anotada en el ERP');
+
+    //  Que siga abierta si el usuario la abrio. El plegado en si lo hace el
+    //  <details> nativo; esto solo recuerda como la dejo. Va en try/catch
+    //  porque en ventana privada leer localStorage puede lanzar, y entonces
+    //  lo correcto es enseñarla plegada, no quedarse sin leyenda.
+    const caja2 = $('leyenda-caja');
+    if (!caja2) return;
+    try {
+      caja2.open = localStorage.getItem('gyc_leyenda') === '1';
+    } catch (e) { /* sin memoria: plegada, que es el valor por defecto */ }
+    caja2.addEventListener('toggle', () => {
+      try { localStorage.setItem('gyc_leyenda', caja2.open ? '1' : '0'); }
+      catch (e) { /* no poder recordarlo no puede romper la pantalla */ }
+    });
+  }
+
   function init() {
     const now = new Date();
     winStart = startOfDay(now);
     buildDays();
     renderZoom();
     renderEscala();
+    renderLeyenda();
     montarRueda();
     tickClock(); setInterval(tickClock, 30000);
     // Si el arranque falla no hay nada que enseñar, asi que lo unico que se
@@ -611,30 +671,43 @@ const App = (() => {
           return d !== 0 ? d : (TIPO_PRIO[a.tipo] ?? 3) - (TIPO_PRIO[b.tipo] ?? 3);
         });
 
-      // Las dos vistas usan los mismos intervalos calculados por el servidor.
+      // Las dos vistas usan los mismos intervalos calculados por el servidor,
+      // pero NO reparten igual los carriles, porque la fila no significa lo
+      // mismo en cada una.
       //
-      // El carril se reparte POR BONO, no por barra. Un bono llega partido en
-      // varias barras --lo trabajado ayer, lo que esta en curso, lo proyectado,
-      // cada sesion de fichaje-- y repartiendolas de una en una cada trozo
-      // cogia el primer carril libre: el mismo bono aparecia arriba en un
-      // tramo y abajo en el siguiente, y no habia forma de seguirlo en
-      // horizontal. Ordenar por hora de inicio arreglaba solo el caso de la
-      // barra "real"; el salto seguia en cuanto habia un hueco entre sesiones
-      // y otro bono se colaba en medio.
+      // EN OPERARIOS: un carril por MAQUINA. La fila de una persona se lee
+      // como "que maquinas lleva", una por linea, y todos los bonos de la
+      // misma maquina van seguidos en la suya. Agrupando por bono, la Celula
+      // de Plegado de Javier salia bien --sus tres bonos son de la misma
+      // maquina-- pero la GRANDINI, la guillotina y la Trumpf caian juntas en
+      // el carril de abajo solo porque no se solapaban entre si, y ahi ya no
+      // habia forma de ver que eran tres maquinas distintas.
       //
-      // Ahora el bono reserva su carril desde su PRIMERA barra hasta la ULTIMA
-      // y no lo suelta. Cuesta algun carril de mas --un bono con un hueco
-      // grande lo mantiene ocupado-- y ese es justo el precio de que la fila
-      // se lea de izquierda a derecha.
-      const porBono = new Map();
+      // Cuesta altura: quien toca cinco maquinas ocupa cinco carriles aunque
+      // no haga dos cosas a la vez. Es el precio de que una maquina sea
+      // siempre la misma linea, que es lo que hace legible el trabajo
+      // simultaneo. Medido: 5 maquinas como mucho en un dia, 7 en cinco dias.
+      //
+      // EN MAQUINAS: la fila YA es una maquina, asi que agrupar por maquina
+      // daria un solo carril y esconderia los solapes. Ahi se sigue agrupando
+      // por BONO, que era el reparto de siempre: un bono llega partido en
+      // varias barras --lo trabajado ayer, lo que esta en curso, lo
+      // proyectado-- y repartiendolas de una en una cada trozo cogia el
+      // primer carril libre, con el mismo bono saltando de linea. Reserva su
+      // carril desde su PRIMERA barra hasta la ULTIMA y no lo suelta.
+      const porMaquina = vista === 'empleado';
+      const grupos = new Map();
       its.forEach(it => {
-        //  Sin bono identificable, cada barra va por su cuenta: mejor eso que
+        //  Sin clave identificable, cada barra va por su cuenta: mejor eso que
         //  amontonar cosas sin relacion en el mismo carril.
-        const k = it.idbono != null ? `${it.idorden}/${it.idbono}` : `_${it.id ?? Math.random()}`;
+        const k = porMaquina
+          ? (it.matricula || it.operacion || `_${it.id ?? Math.random()}`)
+          : (it.idbono != null ? `${it.idorden}/${it.idbono}`
+                               : `_${it.id ?? Math.random()}`);
         const s = +new Date(it.start), e = +new Date(it.end);
-        const g = porBono.get(k);
+        const g = grupos.get(k);
         if (g) { g.start = Math.min(g.start, s); g.end = Math.max(g.end, e); g.items.push(it); }
-        else porBono.set(k, { start: s, end: e, items: [it] });
+        else grupos.set(k, { start: s, end: e, items: [it] });
       });
 
       //  El carril se guarda APARTE y no en el propio item (`it._lane`): con
@@ -643,8 +716,11 @@ const App = (() => {
       //  carril a las anteriores.
       const laneDe = new Map();
       const laneEnd = [];
-      [...porBono.values()].sort((a, b) => a.start - b.start).forEach(g => {
-        let lane = laneEnd.findIndex(end => end <= g.start);
+      [...grupos.values()].sort((a, b) => a.start - b.start).forEach(g => {
+        //  Por maquina NO se reutiliza carril: dos maquinas distintas nunca
+        //  comparten linea aunque no se pisen en el tiempo, que es justo lo
+        //  que habia que arreglar. Por bono si, que es el reparto de antes.
+        let lane = porMaquina ? -1 : laneEnd.findIndex(end => end <= g.start);
         if (lane === -1) { lane = laneEnd.length; laneEnd.push(g.end); }
         else laneEnd[lane] = g.end;
         g.items.forEach(it => laneDe.set(it, lane));
@@ -692,7 +768,7 @@ const App = (() => {
       //  pierde ahi, pero la maquina ya la nombra la linea de arriba y quien
       //  esta en ella es lo que no se sabia).
       label.innerHTML = `<div class="row__name">${esc(grp.nombre)}</div>` +
-                        `<div class="row__sub">${esc(sub || '')}${lanes > 1 ? ` · ${lanes} paralelos` : ''}</div>` +
+                        `<div class="row__sub">${esc(sub || '')}${lanes > 1 ? ` · ${lanes} ${vista === 'empleado' ? 'máquinas' : 'paralelos'}` : ''}</div>` +
                         (ausente
                           ? `<div class="row__aviso row__aviso--ausente">${esc(ausente.motivo)}${franja ? ` · ${franja}` : ''}</div>`
                           : atascado
@@ -715,8 +791,28 @@ const App = (() => {
   }
 
   function buildBar(it, W, top) {
+    //  Una sesion en curso cuyo fin la propia estimacion declara
+    //  INDETERMINADO no se dibuja hasta ese fin: se dibuja hasta AHORA, y
+    //  crece con el reloj mientras el fichaje siga abierto (la vista se
+    //  recarga sola cada 5 min, ver el setInterval de loadItems).
+    //
+    //  `it.end` NO se toca: la cola lo necesita para reservar el recurso, y
+    //  cambiarlo moveria el plan. Lo que cambia es lo que se ensena. Pintar
+    //  esa proyeccion convertia un hueco reconocido en una prediccion firme:
+    //  6625/10, con 2 piezas de 1500 y el presupuesto ya agotado, estiraba la
+    //  barra hasta el 24 de septiembre. Ahora el borde derecho es "lo que
+    //  lleva", que es lo unico que de verdad se sabe.
+    //
+    //  Solo cuando "ahora" cae DENTRO de la ventana que se esta mirando. Al
+    //  navegar a otro dia, `workX(ahora)` se pega al borde (0 o W) y la barra
+    //  se quedaba en 0px de ancho: desaparecia de la pantalla. En un dia que
+    //  no es hoy no hay reloj que seguir, asi que se dibuja como siempre.
+    const xAhora = workX(new Date());
+    const creciendo = it.en_curso && it.fin_indeterminado
+                      && xAhora > 0 && xAhora < W;
     let lx = workX(it.start), rx = workX(it.end);
     if (rx <= 0 || lx >= W) return null;
+    if (creciendo) rx = xAhora;
     lx = clamp(lx, 0, W); rx = clamp(rx, 0, W);
     const w = Math.max(rx - lx, 6);
 
@@ -726,6 +822,7 @@ const App = (() => {
     //  haber tenido una averia igualmente, asi que no es un estado mas.
     bar.className = `bar bar--${it.tipo} st-${it.estado}`
                   + (it.estimado ? ' is-estimado' : '')
+                  + (creciendo ? ' bar--creciendo' : '')
                   + (it.paro ? ' has-paro' : '');
     bar.style.left = lx + 'px'; bar.style.width = w + 'px';
     bar.style.top = top + 'px'; bar.style.height = BAR_H + 'px';
@@ -781,12 +878,19 @@ const App = (() => {
     // Se exige `min_exceso` y no solo que `fin_teorico` caiga dentro: como el
     // fin de una barra abierta es "ahora", el corte teorico queda unos segundos
     // por detras y pintaba una astilla roja en bonos que no se han pasado.
+    //
+    // Y el rojo llega SOLO hasta ahora, nunca hasta el final de la barra,
+    // aunque de `fin_teorico` en adelante todo sea exceso. El motivo no es que
+    // el resto este dentro del presupuesto -- no lo esta -- sino que ahi no hay
+    // nada que afirmar: en cuanto hay `min_exceso`, `estimacion.py` marca
+    // `fin_indeterminado` y el tooltip ensena "Fin: Indeterminado", porque
+    // pasado el presupuesto lo que queda por delante es justo lo que el modelo
+    // no supo prever. El borde derecho de la barra es un relleno, no una
+    // prediccion. Se probo a rayar ese tramo de rojo ("exceso que viene") y es
+    // peor: pinta una certeza sobre el unico trozo del que la app dice
+    // expresamente que no sabe nada.
     if (it.fin_teorico && it.min_exceso_barra) {
       const xTeorico = workX(new Date(it.fin_teorico));
-      // El exceso llega hasta AHORA, no hasta el final de la barra: en una
-      // barra abierta el final es el fin PROYECTADO, y pintar de rojo trabajo
-      // que aun no ha ocurrido hacia que el tramo midiera 155 min mientras la
-      // etiqueta decia "+18". Ahora el largo del rojo y la cifra coinciden.
       const xAhora = Math.min(lx + w, workX(new Date()));
       if (xTeorico < xAhora - 1) {
         const ex = document.createElement('div');
@@ -904,6 +1008,20 @@ const App = (() => {
       if (it.min_exceso_barra && it.min_exceso_barra < it.min_exceso) {
         rows.push(`<div class="tip__row">De esta sesión <span>${fmtMin(it.min_exceso_barra)} de más</span></div>`);
       }
+      // Sin esto, el tramo sin teñir de la barra se lee como "lo que queda
+      // va dentro de lo previsto", y lo que pasa es que el presupuesto ya
+      // estaba gastado antes de empezar.
+      if (it.presupuesto_agotado_antes) {
+        rows.push(`<div class="tip__row">Presupuesto <span style="color:#ff9a9a">agotado antes de abrir esta sesión: toda ella es exceso</span></div>`);
+      }
+    }
+    // Lo que falta cuesta una cosa segun el escandallo y otra al ritmo que
+    // lleva el bono. La barra dibuja la primera -- es la que manda sobre la
+    // cola --, asi que la segunda hay que decirla o no se ve por ningun lado.
+    if (it.min_restantes_ritmo_real != null
+        && it.min_restantes_ritmo_real > it.min_restantes_teoricos) {
+      rows.push(`<div class="tip__row">Falta <span>${fmtMin(it.min_restantes_teoricos)} a teórico · `
+        + `<span style="color:#ff9a9a">${fmtMin(it.min_restantes_ritmo_real)} al ritmo real</span></span></div>`);
     }
     if (it.tipo === 'real') {
       if (it.progreso_piezas != null) rows.push(`<div class="tip__row">Progreso <span>${it.progreso_piezas}% de las piezas</span></div>`);

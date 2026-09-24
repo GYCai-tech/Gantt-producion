@@ -52,6 +52,16 @@ def dia_local(dt: datetime) -> date:
     return (dt.astimezone() if dt.tzinfo else dt).date()
 
 
+def maquinas_automaticas() -> set:
+    """Las matrículas de `maquinas-auto.txt`. Ver `cache.maquinas_automaticas`."""
+    return cache.maquinas_automaticas()
+
+
+def ausencias(dia: date) -> dict:
+    """{idempleado: ausencia} de PORTALHR para ese día. Degrada a {}."""
+    return lecturas.leer_ausencias(dia)
+
+
 # ─────────────────────────────────────────────────────────────────────
 #  CENSO (las filas del Gantt y de la rejilla)
 # ─────────────────────────────────────────────────────────────────────
@@ -91,14 +101,15 @@ def censo(vista: str) -> list[dict]:
 #  COLA (las barras "programado")
 # ─────────────────────────────────────────────────────────────────────
 def encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
-            ahora: datetime, teoricos, medias, montajes) -> list[dict]:
+            ahora: datetime, teoricos, medias, montajes,
+            atencion: dict | None = None) -> list[dict]:
     """Proyecta el mismo plan en filas de operarios o de máquinas.
 
     Es la costura entre lectura y cálculo: lee la cola del ERP y se la pasa a
     `planificar_cola`, que ya no sabe de dónde vino.
     """
     plan = planificar_cola(lecturas.leer_cola(), ocupado_hasta, hasta_dt,
-                           ahora, teoricos, medias, montajes)
+                           ahora, teoricos, medias, montajes, atencion)
     items = []
     for tarea in plan:
         b = tarea["bono"]
@@ -127,6 +138,12 @@ def encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
             items.append({
                 "id": f"P-{b['idorden']}-{b['idbono']}-{b['matricula']}-{rid}",
                 "recurso_id": rid,
+                # La barra real ya traía la matrícula; la proyectada no, y el
+                # Gantt la necesita para repartir los carriles por máquina:
+                # `operacion` es el NOMBRE de la máquina y dos pueden
+                # compartirlo (la 089 y la 104 son las dos "BATTENFELD ECO
+                # 110/350 B6"), así que no sirve como identidad.
+                "matricula": (b["matricula"] or "").strip(),
                 "tipo": "programado",
                 # El bloqueo gana a la falta de estimacion: que no se sepa
                 # cuanto tarda no cambia el plan, que no se pueda empezar si.
@@ -136,23 +153,29 @@ def encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 # que hay que decir es que el dato no es de fiar. Y un bono a
                 # medias no es trabajo "disponible": es fabricacion pendiente,
                 # la misma etiqueta que ya usa el bono que se quedo montando.
-                #  BLOQUEADA y PARADA no son lo mismo, y el orden de estas
-                #  preguntas es lo que las separa:
+                #  Un bono de la cola NO se marca como parada, y esto se probo
+                #  contra los datos antes de quitarlo. La regla era "arrancado
+                #  en el ERP + tiene fichajes + nadie encima ahora", y eso lo
+                #  cumple demasiada gente para lo poco que dice: ocho barras,
+                #  y tres de ellas con CERO piezas hechas -- 6660/10 y 6728/10
+                #  solo tenian fichado el montaje, o sea maquina montada
+                #  esperando a arrancar, que es lo contrario de una parada.
+                #  Las otras cinco tampoco se distinguian entre si: 6563/10 se
+                #  toco esta manana a las 11:00 y 6627/10 llevaba cuatro dias
+                #  sin tocar, y las dos salian del mismo amarillo.
                 #
-                #    · BLOQUEADA — el bono no se ha hecho todavia, esta en cola
-                #      y el semaforo del ERP dice que ese operario no puede
-                #      ponerse con el.
-                #    · PARADA — hubo un fichaje activo y se paro. El trabajo
-                #      empezo y quedo a medias.
+                #  "Parada" se queda para lo que alguien ANOTO en el ERP
+                #  (`paro`, de Ordenes_Bonos_Lineas_Inc), que ademas dice el
+                #  motivo. Deducirla del comportamiento daba mas ruido que
+                #  aviso.
                 #
-                #  Por eso haber arrancado gana al semaforo: 6610/60 plego 60
-                #  de 120 laterales, cerro el fichaje a las 09:54 y se quedo
-                #  sin material; el semaforo lo pone en rojo y salia como
-                #  "Bloqueada", cuando lo que le paso es que se PARO. Un bono
-                #  que ya tuvo a alguien trabajandolo nunca es "no empezado".
-                "estado": ("parada" if tarea["arrancado"] and b["ultimo_fichaje"] else
-                           "bloqueada" if semaforo == "bloqueada" else
-                           "sin-estimar" if sin_ritmo else "disponible"),
+                #  BLOQUEADA si conserva su nombre, que es la mitad buena del
+                #  cambio: son los bonos que el semaforo del ERP pone en rojo
+                #  para ESE operario. Volver a llamarlos "Parada" -- como antes
+                #  de 5caad91 -- pintaba 84 barras en vez de 8.
+                "estado": ("bloqueada" if semaforo == "bloqueada" else
+                           "sin-estimar" if sin_ritmo else
+                           "continuacion" if tarea["arrancado"] else "disponible"),
                 # Trabajo a medias que se retoma, y cuando se toco por ultima
                 # vez: sin esto el tooltip no explica por que hay 396 piezas
                 # pendientes de un bono de 1080 que nadie ha empezado hoy.
@@ -178,6 +201,13 @@ def encolar(vista: str, ocupado_hasta: dict, hasta_dt: datetime,
                 "min_restantes": round(tarea["duracion"]),
                 "min_hombre": round(tarea["min_hombre"]),
                 "a_la_vez": tarea["a_la_vez"],
+                # La máquina cicla sola: la barra dura lo que dura el bono,
+                # pero al operario solo le cuesta `min_atencion`. Por eso su
+                # fila puede tener dos barras encima a la vez sin que sea un
+                # error de reparto.
+                "desatendida": tarea["desatendida"],
+                "min_atencion": round(tarea["min_atencion"]),
+                "min_preparacion": round(tarea["min_preparacion"]),
                 "base_estimacion": "piezas",
             })
     return items
@@ -203,6 +233,9 @@ def calcular_items(vista: str, desde=None, hasta=None) -> list[dict]:
     por_id.update({(l["idorden"], l["idbono"], l["idlinea"]): l for l in abiertas})
     lineas = list(por_id.values())
     teoricos, medias, montajes = cache.cargar_estimaciones()
+    # Qué máquinas trabajan solas y cuánta atención piden. Vacío si no hay
+    # ficha o no se pudo leer: entonces todo ata al operario, como siempre.
+    atencion = cache.cargar_atencion()
     avance = lecturas.leer_avance([l for l in lineas if l["abierta"]], ahora)
     paradas = lecturas.leer_paradas()
 
@@ -272,8 +305,10 @@ def calcular_items(vista: str, desde=None, hasta=None) -> list[dict]:
         ids_abiertas = {f"{l['idorden']}-{l['idbono']}-{l['idlinea']}" for l in abiertas}
         ocupado_hasta = ocupacion_actual(
             [it for it in items if it["id"] in ids_abiertas], hasta_dt, ahora,
+            atencion,
         )
-        cola = encolar(vista, ocupado_hasta, hasta_dt, ahora, teoricos, medias, montajes)
+        cola = encolar(vista, ocupado_hasta, hasta_dt, ahora, teoricos, medias,
+                       montajes, atencion)
     else:
         cola = []
 

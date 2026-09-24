@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}GYC · Hoja del día{% endblock %}
+
+{% block body %}
+<main class="hoja">
+  <!-- Los controles van aquí y no en la barra de navegación: con el selector de
+       días al lado del menú, los enlaces se partían en tres renglones y el botón
+       de imprimir se quedaba fuera de la pantalla. Al imprimir no salen. -->
+  <div class="hoja__barra">
+    <div class="segmented hoja__dias" id="hoja-dias"></div>
+    <button class="btn-refresh" onclick="Hoja.cargar()" title="Volver a proyectar con los datos del ERP">
+      <svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      <span>Actualizar</span>
+    </button>
+    <button class="btn-refresh hoja__imprimir" onclick="window.print()" title="Imprimir la hoja de este día">
+      <svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+      <span>Imprimir</span>
+    </button>
+  </div>
+
+  <div id="hoja-cargando" class="hoja__estado">Proyectando el plan…</div>
+  <div id="hoja-error" class="hoja__estado hoja__estado--error" hidden></div>
+
+  <article id="hoja-papel" class="hoja__papel" hidden>
+    <header class="hoja__cab">
+      <div class="hoja__marca">GYC · Plan de producción</div>
+      <h1 class="hoja__fecha" id="hoja-fecha"></h1>
+    </header>
+
+    <table class="hoja__tabla" id="hoja-tabla">
+      <colgroup>
+        <col class="c-hora"><col class="c-bono"><col class="c-art"><col class="c-maq">
+      </colgroup>
+      <thead>
+        <tr>
+          <th>Hora</th><th>Orden · bono</th><th>Artículo</th><th>Máquina</th>
+        </tr>
+      </thead>
+      <!-- Un <tbody> por operario, que pinta hoja_dia.js: es lo que permite
+           que al imprimir no se parta un operario entre dos hojas. -->
+    </table>
+
+  </article>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/api-cliente.js?v={{ static_v }}"></script>
+<script src="/static/js/hoja_dia.js?v={{ static_v }}"></script>
+{% endblock %}

@@ -17,6 +17,7 @@ MIN_BLOQUE_SIN_TIEMPO = 60
 #  cada grupo sigue mandando la secuencia manual del ERP.
 _PRIO_SEMAFORO = {'en_curso': 0, 'disponible': 1, 'bloqueada': 2}
 
+
 #  A partir de cuántos asignados un bono se trata como CUADRILLA: trabajan a la
 #  vez y el tiempo estimado —que son minutos-HOMBRE— se reparte entre ellos.
 #
@@ -35,8 +36,78 @@ _PRIO_SEMAFORO = {'en_curso': 0, 'disponible': 1, 'bloqueada': 2}
 #  es mayoría y con cuatro es la norma.
 _MIN_CUADRILLA = 3
 
+#  Cuántas máquinas puede llevar una persona A LA VEZ. No es una constante
+#  técnica sino una política, y sale de lo que ya se hace: medido sobre 6
+#  meses, dos máquinas desatendidas simultáneas son 463 h, tres son 141 h y
+#  cuatro bajan a 5 h. Dos es corriente, tres pasa, cuatro no.
+#
+#  Hace falta un tope porque la atención no acota nada por sí sola: con una
+#  inyectora al 10%, un bono de cinco horas solo ata al operario media hora y
+#  el reparto le colgaría cinco máquinas sin despeinarse.
+_MAX_SIMULTANEAS = 3
 
-def ocupacion_actual(items: list[dict], hasta: datetime, ahora: datetime) -> dict:
+
+def _minutos_cubiertos(linea: dict, otras: list[dict]) -> float:
+    """Minutos de `linea` que caen dentro de la UNIÓN de `otras`.
+
+    La unión y no la suma: quien lleva tres máquinas a la vez tiene cada línea
+    solapada por dos, y sumarlas daría más minutos solapados que minutos
+    fichados —atenciones negativas—. Lo que se pregunta es "¿estaba haciendo
+    otra cosa?", que se responde una sola vez por minuto.
+    """
+    tramos = []
+    for o in otras:
+        ini, fin = max(linea["inicio"], o["inicio"]), min(linea["fin"], o["fin"])
+        if fin > ini:
+            tramos.append((ini, fin))
+    total, tope = 0.0, None
+    for ini, fin in sorted(tramos):
+        arranque = ini if tope is None or ini > tope else tope
+        if fin > arranque:
+            total += (fin - arranque).total_seconds() / 60
+        tope = fin if tope is None or fin > tope else tope
+    return total
+
+
+def medir_atencion(lineas: list[dict], min_horas: float) -> dict[str, float]:
+    """{matricula: fracción de su tiempo que necesita a alguien encima}.
+
+    Se mide sobre fichajes cerrados: para cada línea, qué parte transcurrió
+    mientras el MISMO operario tenía otra abierta. Una máquina que cicla sola
+    aparece solapada una y otra vez; una que exige manos, nunca.
+
+    Es una costumbre observada, no una especificación: dice lo que se hizo, no
+    lo que la máquina permite. Por eso no decide sola qué máquina es
+    automática —eso lo declara producción— sino cuánta atención pide una de
+    las que ya están declaradas, que es el número que nadie puede mantener a
+    mano.
+
+    Las máquinas con poco histórico se quedan fuera y quien las mire no
+    encontrará nada: sin medida el plan las trata como atendidas, que es
+    exactamente como se comporta hoy.
+    """
+    por_persona_dia: dict = {}
+    for l in lineas:
+        clave = (str(l["idempleado"]), l["inicio"].date())
+        por_persona_dia.setdefault(clave, []).append(l)
+
+    acc: dict = {}
+    for grupo in por_persona_dia.values():
+        for i, l in enumerate(grupo):
+            matricula = str(l["matricula"] or "").strip()
+            if not matricula:
+                continue
+            a = acc.setdefault(matricula, [0.0, 0.0])
+            a[0] += _minutos_cubiertos(l, [o for j, o in enumerate(grupo) if j != i])
+            a[1] += (l["fin"] - l["inicio"]).total_seconds() / 60
+
+    return {m: max(0.0, 1.0 - solapado / total)
+            for m, (solapado, total) in acc.items()
+            if total >= min_horas * 60}
+
+
+def ocupacion_actual(items: list[dict], hasta: datetime, ahora: datetime,
+                     atencion: dict | None = None) -> dict:
     """Reserva operario y máquina hasta que `proyectar` dice que se liberan.
 
     `libre_desde` responde a "¿cuándo queda libre el recurso?", que no es el
@@ -53,15 +124,29 @@ def ocupacion_actual(items: list[dict], hasta: datetime, ahora: datetime) -> dic
     mañana de 07:09 a 07:41 la marcaba ocupada desde ahora mismo, y a José
     Ramón —libre hoy a las 11:47, con sus dos bonos en esa máquina— se le iba
     todo a mañana por un trabajo que ni siquiera empieza hoy.
+
+    Sin `atencion` reserva a los dos por igual, que es como se comportaba
+    antes de que existiera este parámetro.
     """
     ocupado: dict = {}
     for it in items:
         fin = it.get("libre_desde")
         if fin is None:
             fin = max(hasta, ahora)
-        for tipo, rid in (("empleado", it["idempleado"]), ("maquina", it["matricula"])):
-            if rid and fin > ahora:
-                ocupado.setdefault((tipo, str(rid)), []).append((ahora, fin))
+        # La máquina que cicla sola no ata a quien la vigila. Sin esto, el
+        # operario con una inyectora abierta a las 09:00 no recibía NADA en lo
+        # que quedaba de día: es el mismo error que en la cola, pero sobre
+        # trabajo real, que es la parte fiable de la proyección.
+        cuanto = (atencion or {}).get(str(it.get("matricula") or "").strip(), 1.0)
+        fin_persona = fin if cuanto >= 1 else ahora + (fin - ahora) * cuanto
+        for tipo, rid, hasta_cuando in (("empleado", it["idempleado"], fin_persona),
+                                        ("maquina", it["matricula"], fin)):
+            if rid and hasta_cuando > ahora:
+                ocupado.setdefault((tipo, str(rid)), []).append((ahora, hasta_cuando))
+        # Aunque esté suelto sigue siendo responsable de ella: cuenta para el
+        # tope de máquinas simultáneas.
+        if atencion and cuanto < 1 and it["idempleado"] and fin > ahora:
+            ocupado.setdefault(("vigila", str(it["idempleado"])), []).append((ahora, fin))
     return ocupado
 
 
@@ -76,17 +161,70 @@ def hueco_para(intervalos: list, desde: datetime, dur: float) -> tuple:
     El bucle avanza siempre —cada choque devuelve un fin posterior al instante
     probado— así que termina.
     """
+    t = hueco_compartido([(intervalos, dur, 0)], desde)
+    return t, sumar_laborables(t, dur)
+
+
+def hueco_compartido(requisitos: list[tuple], desde: datetime) -> datetime:
+    """El primer instante en que se cumplen TODOS los requisitos a la vez.
+
+    Cada requisito es `(intervalos, duración, tope)`: cuántos solapes tolera
+    ese recurso. Con `tope` a 0 es exclusivo —una máquina no hace dos cosas—
+    y con 2 admite dos cosas ya en marcha, que es lo que permite que una
+    persona vigile varias máquinas sin que el plan lo trate como un choque.
+
+    Hace falta que sea conjunto y no una cadena de llamadas porque las
+    duraciones son DISTINTAS: la máquina hay que tenerla libre las cinco
+    horas del bono y al operario solo la media hora que le presta. Buscar
+    hueco para cada uno por separado daría dos instantes que no tienen por
+    qué coincidir.
+
+    Termina por lo mismo que antes: cada espera devuelve un fin posterior al
+    instante probado, así que `t` solo avanza.
+    """
     t = siguiente_hueco(desde)
-    while True:
-        fin = sumar_laborables(t, dur)
-        choque = max((b for a, b in intervalos if a < fin and t < b), default=None)
-        if choque is None:
-            return t, fin
-        t = siguiente_hueco(choque)
+    for _ in range(400):
+        espera = None
+        for intervalos, dur, tope in requisitos:
+            fin = sumar_laborables(t, dur)
+            chocan = sorted(b for a, b in intervalos if a < fin and t < b)
+            if len(chocan) <= tope:
+                continue
+            # Hay que esperar a que se libere lo justo para bajar al tope: el
+            # que antes acabe de los que sobran, no el último de todos.
+            candidato = chocan[len(chocan) - tope - 1]
+            if espera is None or candidato > espera:
+                espera = candidato
+        if espera is None:
+            return t
+        t = siguiente_hueco(espera)
+    return t
+
+
+def _requisitos(ocupa_maquina: list, ocupa_persona: list, vigila: list,
+                dur_maquina: float, dur_persona: float, desatendida: bool) -> list:
+    """Los tres recursos que tiene que haber libres para colocar un bono."""
+    reqs = [(ocupa_maquina, dur_maquina, 0), (ocupa_persona, dur_persona, 0)]
+    if desatendida:
+        # Ya en marcha puede tener _MAX_SIMULTANEAS - 1, porque esta cuenta
+        # también.
+        reqs.append((vigila, dur_maquina, _MAX_SIMULTANEAS - 1))
+    return reqs
+
+
+def _reservar(ocupado: dict, rid: str, arranque: datetime,
+              dur_maquina: float, dur_persona: float, desatendida: bool) -> None:
+    """Apunta lo que este bono le quita al operario, y lo que solo vigila."""
+    ocupado.setdefault(("empleado", rid), []).append(
+        (arranque, sumar_laborables(arranque, dur_persona)))
+    if desatendida:
+        ocupado.setdefault(("vigila", rid), []).append(
+            (arranque, sumar_laborables(arranque, dur_maquina)))
 
 
 def planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
-                    ahora: datetime, teoricos, medias, montajes) -> list[dict]:
+                    ahora: datetime, teoricos, medias, montajes,
+                    atencion: dict | None = None) -> list[dict]:
     """Una previsión de la cola pendiente, con un hueco propio por operario.
 
     Un bono con varios asignados NO espera a que coincidan todos. El ERP los
@@ -111,6 +249,17 @@ def planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
     por un trabajo que ni siquiera empieza hoy. El orden de prioridad no
     cambia —semáforo, secuencia, orden—: lo que cambia es que una tarea puede
     caer ANTES que otra ya colocada si le cabe en un hueco que aquella dejó.
+
+    MÁQUINAS QUE TRABAJAN SOLAS. `atencion` trae, por matrícula, qué parte
+    del bono necesita a alguien encima. Un bono en una inyectora ocupa la
+    MÁQUINA de principio a fin pero solo ata a la PERSONA mientras la
+    necesita: monta el molde, arranca y se va a otra cosa. Sin este
+    diccionario los dos recursos reservan lo mismo, que es como se comportaba
+    esto antes y por qué el 12,9% del trabajo real de la planta no cabía en
+    ninguna proyección.
+
+    La preparación no se descuenta nunca: montar el utillaje ocupa a la
+    persona entera, y el ERP ya la ficha aparte (ver OPERACION_MONTAJE).
 
     La prioridad es semáforo, secuencia manual y orden/bono; el cálculo es
     conservador y no intenta optimizar huecos ni reasignar trabajo del ERP.
@@ -169,28 +318,52 @@ def planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
         # por ella entre sí, pero el bono se fabrica una vez, así que cada uno
         # se mide contra la misma disponibilidad.
         ocupa_maquina = list(ocupado.get(maquina, ())) if maquina else []
+
+        # Lo que el bono le cuesta a la PERSONA, que no es lo que dura.
+        # La preparación se paga entera y solo la producción se descuenta.
+        # Un bono sin estimar no se toca: su bloque nominal es un hueco
+        # reservado a ojo y aplicarle una fracción sería afinar una conjetura.
+        cuanto = (atencion or {}).get((b["matricula"] or "").strip(), 1.0)
+        setup_reloj = setup / len(asignados) if cuadrilla else setup
+        if sin_tiempo or cuanto >= 1:
+            dur_persona = dur_reloj
+        else:
+            dur_persona = setup_reloj + cuanto * max(0.0, dur_reloj - setup_reloj)
+        desatendida = dur_persona < dur_reloj
+
         huecos = {}
         if cuadrilla:
             # Trabajan JUNTOS, así que hace falta un hueco en el que estén
             # libres todos a la vez. Es lo contrario del caso de abajo y por
             # eso convive con él: ahí "asignado" significa "que lo coja quien
             # pueda" y esperar a los demás vaciaba colas enteras.
-            intervalos = ocupa_maquina + [
+            intervalos = [
                 iv for a in asignados
                 for iv in ocupado.get(("empleado", str(a["idempleado"])), ())
             ]
-            arranque, remate = hueco_para(intervalos, ahora, dur_reloj)
+            vigila = [iv for a in asignados
+                      for iv in ocupado.get(("vigila", str(a["idempleado"])), ())]
+            arranque = hueco_compartido(
+                _requisitos(ocupa_maquina, intervalos, vigila,
+                            dur_reloj, dur_persona, desatendida), ahora)
             for a in asignados:
-                clave = ("empleado", str(a["idempleado"]))
-                ocupado.setdefault(clave, []).append((arranque, remate))
-                huecos[str(a["idempleado"])] = (arranque, remate)
+                _reservar(ocupado, str(a["idempleado"]), arranque,
+                          dur_reloj, dur_persona, desatendida)
+                huecos[str(a["idempleado"])] = (arranque,
+                                                sumar_laborables(arranque, dur_reloj))
         else:
             for a in asignados:
-                clave = ("empleado", str(a["idempleado"]))
-                arranque, remate = hueco_para(
-                    list(ocupado.get(clave, ())) + ocupa_maquina, ahora, dur_reloj)
-                ocupado.setdefault(clave, []).append((arranque, remate))
-                huecos[str(a["idempleado"])] = (arranque, remate)
+                rid = str(a["idempleado"])
+                arranque = hueco_compartido(
+                    _requisitos(ocupa_maquina, list(ocupado.get(("empleado", rid), ())),
+                                list(ocupado.get(("vigila", rid), ())),
+                                dur_reloj, dur_persona, desatendida), ahora)
+                _reservar(ocupado, rid, arranque, dur_reloj, dur_persona, desatendida)
+                # La barra se pinta con lo que dura el BONO, no con lo que le
+                # cuesta a la persona: en su fila tiene que verse la máquina
+                # corriendo bajo su nombre hasta que termina. Lo que encoge es
+                # la reserva, no el dibujo.
+                huecos[rid] = (arranque, sumar_laborables(arranque, dur_reloj))
 
         inicio, fin = min(huecos.values())
         if maquina:
@@ -210,6 +383,13 @@ def planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
             # bono de cuadrilla dice "83 min" para 60 piezas a 5,18 min/pieza y
             # no hay forma de cuadrar la cuenta.
             "min_hombre": dur, "a_la_vez": len(asignados) if cuadrilla else 1,
+            # Cuánto de la barra ata de verdad al operario. Con la máquina
+            # atendida coincide con `duracion` y no hay nada que explicar.
+            "min_atencion": dur_persona, "desatendida": desatendida,
+            # La preparación va al principio de la barra y en minutos de reloj.
+            # No cambia nada del plan: la usa la hoja del día, que en las
+            # máquinas automáticas solo cuenta al operario el montaje.
+            "min_preparacion": 0.0 if sin_tiempo else setup_reloj,
         })
     return plan
 

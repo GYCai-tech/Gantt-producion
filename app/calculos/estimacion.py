@@ -47,6 +47,13 @@ _MONTAJE_POR_DEFECTO_MIN = 31
 #  sin margen, el ámbar sería ruido.
 _TOLERANCIA_RITMO = 0.15
 
+#  Cuánto del bono hay que llevar hecho para que su ritmo observado sirva para
+#  extrapolar lo que falta. Al principio de un bono el ritmo es casi todo
+#  preparación: con 2 piezas de 1500 salían 704,5 min/pieza, y extrapolar eso a
+#  las 1498 restantes anunciaba «17.589 h al ritmo real». El dato es cierto y
+#  no significa nada, así que por debajo de este avance no se ofrece.
+_AVANCE_MINIMO_PARA_EXTRAPOLAR = 0.20
+
 
 def minutos_montaje(linea: dict, montajes: dict) -> float:
     """Cuánto suele durar montar el utillaje de este bono, en minutos.
@@ -232,6 +239,17 @@ def proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias,
         item["piezas_pendientes"] = pendientes
         item["min_pieza_real"]    = round(ritmo_real, 3)
         item["progreso_piezas"]   = round(hechas / objetivo * 100)
+        # Lo que falta, medido con el ritmo que de verdad lleva este bono y no
+        # con el del escandallo. NO cambia la barra: `restante` sigue mandando
+        # sobre `end`, porque mover eso movería también la cola, la ocupación y
+        # el plan entero, y esa es una decisión de reglas de producción, no un
+        # arreglo de pintado. Pero el tooltip ya puede decirlo: en 6372/30
+        # quedan 133 piezas que el escandallo paga a 735 min y que al ritmo
+        # real (8,364 min/pieza frente a 5,523) son 1112 — casi una jornada
+        # más de la que dibuja la barra.
+        item["min_restantes_teoricos"] = round(restante)
+        if hechas / objetivo >= _AVANCE_MINIMO_PARA_EXTRAPOLAR:
+            item["min_restantes_ritmo_real"] = round(pendientes * ritmo_real)
         # Un bono que ya ha hecho todas sus piezas no puede ir "lento": no le
         # queda trabajo. Marcarlo en ámbar era ruido -- no hay nada que corregir
         # en planta, hay que cerrar el fichaje.
@@ -264,6 +282,13 @@ def proyectar(item: dict, linea: dict, ahora: datetime, teoricos, medias,
         resto           = item["min_estimados"] - consumido_antes
         item["fin_teorico"] = (item["start"] if resto <= 0
                                else sumar_laborables(item["start"], resto))
+        # El presupuesto ya estaba gastado ANTES de abrir esta sesión, así que
+        # la sesión entera es exceso y no solo el tramo que va de `fin_teorico`
+        # a ahora. Sin esta marca, 6372/30 —3748 min gastados de un presupuesto
+        # de 3314 antes de empezar la barra de las 11:16— enseñaba un 18% rojo
+        # y un 82% con el color normal, que se lee como "el grueso va en plazo"
+        # cuando no hay un solo minuto de esa barra dentro del teórico.
+        item["presupuesto_agotado_antes"] = resto <= 0
         if consumido > item["min_estimados"]:
             item["min_exceso"] = round(consumido - item["min_estimados"])
             # Y cuánto de ese exceso ha ocurrido DENTRO de esta barra. Hacen
