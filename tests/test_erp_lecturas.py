@@ -317,3 +317,10 @@ def test_las_consultas_llevan_las_constantes_que_toca(erp):
     lecturas.leer_cola()
     assert vistos == {"dias_arrancado": -consultas.DIAS_BONO_ARRANCADO,
                       "horas_viva": -consultas.HORAS_LINEA_VIVA}
+
+
+def test_el_empleado_comodin_del_erp_no_es_un_operario():
+    """El IdEmpleado 0 es "Empleado Prueba0 (Sin Definir)", el comodín de AHORA.
+    Salía en todas las pantallas como un operario más; producción pidió quitarlo."""
+    from app.erp import consultas
+    assert "IdEmpleado <> 0" in consultas.SQL_CENSO_EMPLEADOS

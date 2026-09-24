@@ -25,8 +25,9 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Query
 
-from app.calculos.calendario import (JORNADA_FIN, JORNADA_INICIO,
-                                     minutos_laborables_entre)
+from app.calculos.calendario import (DESCANSO_FIN, DESCANSO_INICIO, JORNADA_FIN,
+                                     JORNADA_INICIO, minutos_laborables_entre,
+                                     sumar_laborables)
 from app.erp.cliente import ErpNoDisponible
 from app.services import produccion
 from app.services.produccion import alfabetico
@@ -88,6 +89,112 @@ def _tramo_del_dia(item: dict, ventana: tuple):
     return (ini, fin) if fin > ini else None
 
 
+def _jornadas_de(item: dict) -> list[date]:
+    """Los días laborables en los que esta barra ocupa algo de jornada.
+
+    Es la barra ENTERA, no la ventana que se está pidiendo: lo que necesita la
+    hoja del día es poder decir "día 2 de 3" de un bono que empezó ayer. Se
+    cuenta por jornada con minutos, no por fecha de calendario, para que una
+    barra que acaba justo a las 07:00 no aparezca como un día más que no toca.
+    """
+    dias, d = [], item["start"].date()
+    while d <= item["end"].date():
+        if d.weekday() < 5:
+            apertura = datetime.combine(d, datetime.min.time()).replace(hour=JORNADA_INICIO)
+            cierre = datetime.combine(d, datetime.min.time()).replace(hour=JORNADA_FIN)
+            tramo = _tramo_del_dia(item, (apertura, cierre))
+            if tramo and minutos_laborables_entre(*tramo) > 0:
+                dias.append(d)
+        d += timedelta(days=1)
+    return dias
+
+
+def _piezas_del_dia(item: dict, minutos_dia: float, ahora: datetime):
+    """Cuántas de las piezas pendientes caen en este trozo de la barra.
+
+    Es un reparto proporcional al tiempo: si al bono le quedan 1.200 piezas y
+    este día se lleva un tercio de lo que le queda de barra, le tocan unas 400.
+    Es una aproximación —el ritmo no es constante— y la hoja lo dice con "≈".
+    Sin piezas pendientes conocidas no se inventa nada.
+    """
+    pendientes = item.get("piezas_pendientes")
+    if pendientes is None:
+        return None
+    resto = minutos_laborables_entre(max(item["start"], ahora), item["end"])
+    if resto <= 0:
+        return round(pendientes)
+    return round(pendientes * min(1.0, minutos_dia / resto))
+
+
+def _sin_descanso(ini: datetime, fin: datetime) -> float:
+    """Minutos laborables de [ini, fin) quitando el descanso de 11:00 a 11:15.
+
+    Es la medida de la hoja del día, que cuenta lo que TRABAJA el operario:
+    una jornada completa son 7h45, no 8. La proyección no lo hace así a
+    propósito (ver `calendario.DESCANSO_INICIO`)."""
+    total = minutos_laborables_entre(ini, fin)
+    d = ini.date()
+    while d <= fin.date():
+        if d.weekday() < 5:
+            desde = max(ini, datetime.combine(d, DESCANSO_INICIO))
+            hasta = min(fin, datetime.combine(d, DESCANSO_FIN))
+            if hasta > desde:
+                total -= (hasta - desde).total_seconds() / 60
+        d += timedelta(days=1)
+    return total
+
+
+def _union_sin_descanso(ventanas: list) -> float:
+    """El tiempo efectivo de una persona en un día: la unión de sus ventanas
+    —lo simultáneo cuenta una vez, igual que en la rejilla— sin el descanso."""
+    total, actual = 0.0, None
+    for ini, fin in sorted(ventanas):
+        if actual and ini <= actual[1]:
+            actual = (actual[0], max(actual[1], fin))
+            continue
+        if actual:
+            total += _sin_descanso(*actual)
+        actual = (ini, fin)
+    return total + (_sin_descanso(*actual) if actual else 0.0)
+
+
+def _ventana_operario(item: dict, tramo: tuple, automaticas: set):
+    """El trozo de este tramo en el que el operario trabaja de verdad, o None.
+
+    En una máquina de `maquinas-auto.txt` al operario solo le cuenta el
+    MONTAJE: la producción la hace la máquina sola. Lo decidió producción para
+    la hoja del día —es el tiempo efectivo de la persona— y solo para ella; el
+    plan y la rejilla de carga siguen igual.
+
+      · barra real de montaje  → cuenta entera, está montando;
+      · barra real de producción, o la fabricación que sigue a un montaje en
+        curso → no cuenta nada, la máquina va sola;
+      · bono programado → cuenta su preparación, que va al principio de la
+        barra. Si la máquina ya estaba montada, esa preparación es 0.
+
+    En cualquier otra máquina la persona está ocupada todo el tramo.
+    """
+    if (item.get("matricula") or "").strip() not in automaticas:
+        return tramo
+    if item["tipo"] == "real":
+        return tramo if item.get("es_montaje") else None
+    preparacion = item.get("min_preparacion") or 0
+    if preparacion <= 0:
+        return None
+    fin_montaje = sumar_laborables(item["start"], preparacion)
+    ini, fin = max(tramo[0], item["start"]), min(tramo[1], fin_montaje)
+    #  Menos de un minuto no es un montaje, es el sobrante de uno que empezó a
+    #  las 14:59 del día anterior: en la hoja salía como "07:00–07:00".
+    return (ini, fin) if (fin - ini).total_seconds() >= 60 else None
+
+
+def _falta_entero(ausencia):
+    """El motivo si la ausencia tapa el día entero; None si no falta o es parcial."""
+    if not ausencia or ausencia.get("parcial"):
+        return None
+    return ausencia.get("motivo") or "Ausencia"
+
+
 def _minutos_union(tramos: list) -> float:
     """Los minutos que el recurso está ocupado, contando UNA vez lo simultáneo.
 
@@ -111,10 +218,15 @@ def _minutos_union(tramos: list) -> float:
 
 @router.get("/api/plan")
 def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
-             vista: str = Query("empleado", pattern="^(maquina|empleado)$")):
+             vista: str = Query("empleado", pattern="^(maquina|empleado)$"),
+             ausencias: bool = False):
+    """`ausencias=true` lo pide la hoja del día: quien falta el día entero no
+    se cuenta. La rejilla de carga no lo pide y no paga esas consultas."""
     hoy = date.today()
     ahora = datetime.now()
     fechas = _dias_laborables(hoy, dias)
+    faltan = ({d: produccion.ausencias(d) for d in fechas}
+              if ausencias and vista == "empleado" else {})
     # Lo que queda de cada jornada. Para hoy encoge con el reloj; para el resto
     # es la jornada entera.
     ventanas = {d: _ventana_del_dia(d, ahora) for d in fechas}
@@ -129,10 +241,12 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
         hasta=datetime.combine(fechas[-1] + timedelta(days=1), datetime.min.time()),
     )
 
-    carga = defaultdict(lambda: defaultdict(lambda: {"tramos": [], "bonos": []}))
+    automaticas = produccion.maquinas_automaticas()
+    carga = defaultdict(lambda: defaultdict(lambda: {"tramos": [], "bonos": [], "operario": []}))
     for it in items:
         if it["tipo"] not in _TIPOS:
             continue
+        jornadas = _jornadas_de(it)
         for dia in fechas:
             tramo = _tramo_del_dia(it, ventanas[dia])
             if tramo is None:
@@ -142,6 +256,9 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
                 continue
             celda = carga[it["recurso_id"]][dia]
             celda["tramos"].append(tramo)
+            op = _ventana_operario(it, tramo, automaticas)
+            if op:
+                celda["operario"].append(op)
             celda["bonos"].append({
                 "idorden": it["idorden"], "idbono": it["idbono"],
                 "art_id": it.get("art_id"), "art": it.get("art"),
@@ -149,6 +266,30 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
                 "estado": it["estado"], "tipo": it["tipo"],
                 "min": round(minutos),
                 "fin_indeterminado": bool(it.get("fin_indeterminado")),
+                # Lo que necesita la hoja del día, que se imprime la víspera y
+                # se cuelga para toda la planta. La rejilla de carga no lo usa.
+                #  · a qué hora empieza y acaba ESTE trozo, dentro de este día;
+                #  · si el bono viene de un día anterior o sigue al siguiente,
+                #    y qué día de cuántos es: una orden de tres días tiene que
+                #    leerse como tal, no como tres trabajos sueltos;
+                #  · las piezas: las pendientes del bono y el reparto
+                #    aproximado de este día.
+                "inicio": tramo[0], "fin": tramo[1],
+                "viene": dia in jornadas and jornadas.index(dia) > 0,
+                "sigue": dia in jornadas and jornadas.index(dia) < len(jornadas) - 1,
+                "dia_n": jornadas.index(dia) + 1 if dia in jornadas else 1,
+                "dias_n": max(1, len(jornadas)),
+                "piezas_objetivo": it.get("piezas_objetivo") or it.get("piezas"),
+                "piezas_pendientes": (round(it["piezas_pendientes"])
+                                      if it.get("piezas_pendientes") is not None else None),
+                "piezas_dia": _piezas_del_dia(it, minutos, ahora),
+                #  El tiempo EFECTIVO del operario, para la hoja del día: en
+                #  las máquinas automáticas solo el montaje, y en todas sin el
+                #  descanso de 11:00 a 11:15.
+                "automatica": (it.get("matricula") or "").strip() in automaticas,
+                "op_inicio": op[0] if op else None,
+                "op_fin": op[1] if op else None,
+                "min_operario": round(_sin_descanso(*op)) if op else 0,
             })
 
     personas = []
@@ -173,6 +314,13 @@ def get_plan(dias: int = Query(5, ge=1, le=_MAX_DIAS),
                 # señal de sobrecarga, no un error que haya que recortar.
                 "pct": round(100 * minutos / queda) if queda > 0 else 0,
                 "bonos": sorted(c["bonos"], key=lambda b: -b["min"]) if c else [],
+                # Para la hoja del día: lo que trabaja de verdad la persona y
+                # lo que tiene de jornada, las dos sin el descanso (7h45).
+                "min_operario": round(_union_sin_descanso(c["operario"])) if c else 0,
+                "disponible_operario": round(_sin_descanso(*ventanas[dia])),
+                # Quien falta el día ENTERO (baja, vacaciones...). Una ausencia
+                # parcial no cuenta aquí: el resto de la jornada sí trabaja.
+                "ausencia": _falta_entero(faltan.get(dia, {}).get(str(g["id"]))),
             })
         # En la vista de máquinas el grupo trae un `area` suelto en vez de la
         # lista que trae el operario.

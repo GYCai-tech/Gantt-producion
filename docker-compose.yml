@@ -22,4 +22,6 @@ services:
 
 # Nota: el código (app/templates/static) va dentro de la imagen.
 # Tras cambiar código/plantillas:  docker compose up -d --build
+# La ficha de máquinas automáticas va montada: basta editarla y esperar al
+# TTL de la caché (10 min) o reiniciar el contenedor. No hace falta rebuild.
 # Para hot-reload en desarrollo, ver docker-compose.dev.yml

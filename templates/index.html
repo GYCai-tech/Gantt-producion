@@ -75,6 +75,15 @@
         </div>
       </div>
 
+      <!-- Que significa cada color. La tira la rellena App desde las mismas
+           clases CSS que pintan las barras, para que no pueda desviarse.
+           Plegada por defecto: se consulta al principio y luego estorba. El
+           <details> nativo hace el plegado sin una linea de JavaScript. -->
+      <details class="leyenda" id="leyenda-caja">
+        <summary class="leyenda__tit">Leyenda de colores</summary>
+        <div class="gantt__leyenda" id="gantt-leyenda"></div>
+      </details>
+
     </main>
   </div>
 </div>

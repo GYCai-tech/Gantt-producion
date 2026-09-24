@@ -409,29 +409,38 @@ def test_el_semaforo_manda_sobre_el_trabajo_a_medias():
     assert [t['bono']['idorden'] for t in tareas] == [1, 2]
 
 
-def test_el_bono_a_medias_se_pinta_como_parado(monkeypatch):
-    """Tuvo a alguien fichando y se quedo a medias: eso es PARADA."""
+def test_el_bono_a_medias_es_fabricacion_pendiente(monkeypatch):
+    """Tuvo a alguien fichando y se quedo a medias: es trabajo que CONTINUA.
+
+    No se marca como parada. Esa deduccion se probo contra la cola real y
+    daba ruido: de ocho barras, tres tenian cero piezas hechas --solo el
+    montaje fichado, o sea maquina lista esperando-- y las otras cinco no
+    distinguian "se paro hace una hora" de "lleva cuatro dias". La unica
+    parada que se pinta es la ANOTADA en el ERP, que ademas dice el motivo."""
     cola = [bono(cantidad=100, arrancado=True, hechas=40, montado=True)]
     monkeypatch.setattr(lecturas, 'leer_cola', lambda: cola)
     teoricos = {(1, 10): (1, 1)}
     items = produccion.encolar('empleado', {}, HASTA, AHORA, teoricos, MEDIAS, MONTAJES_TEST)
-    assert items[0]['estado'] == 'parada'
+    assert items[0]['estado'] == 'continuacion'
     assert items[0]['reanudado'] is True
     assert items[0]['piezas_pendientes'] == 60
 
 
-def test_haber_arrancado_gana_al_semaforo_en_rojo(monkeypatch):
-    """BLOQUEADA y PARADA no son lo mismo, y el orden de las preguntas manda.
+def test_el_semaforo_en_rojo_gana_aunque_el_bono_este_a_medias(monkeypatch):
+    """Arrancado y en rojo: manda el rojo, y la etiqueta es BLOQUEADA.
 
-    6610/60 plego 60 de 120 laterales, cerro el fichaje y se quedo sin material.
-    El semaforo lo pone en rojo, asi que salia como "Bloqueada" -- pero un bono
-    que ya tuvo a alguien trabajandolo no es "sin empezar": se PARO."""
+    6610/60 plego 60 de 120 laterales, cerro el fichaje y se quedo sin
+    material. Estuvo marcado como "Parada" (5caad91) y se deshizo: lo que
+    hay que saber de ese bono es que ESE operario no puede ponerse con el,
+    que es justo lo que dice el semaforo. `reanudado` conserva aparte que el
+    trabajo viene a medias, para el tooltip."""
     cola = [bono(cantidad=120, arrancado=True, hechas=60, semaforo='bloqueada')]
     monkeypatch.setattr(lecturas, 'leer_cola', lambda: cola)
     items = produccion.encolar('empleado', {}, HASTA, AHORA, {(1, 10): (1, 1)},
                                MEDIAS, MONTAJES_TEST)
-    assert items[0]['estado'] == 'parada'
-    assert items[0]['semaforo'] == 'bloqueada'   # el rojo se conserva aparte
+    assert items[0]['estado'] == 'bloqueada'
+    assert items[0]['semaforo'] == 'bloqueada'
+    assert items[0]['reanudado'] is True         # el trabajo a medias no se pierde
 
 
 def test_el_que_nunca_arranco_y_esta_en_rojo_es_bloqueada(monkeypatch):

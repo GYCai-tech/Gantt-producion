@@ -23,8 +23,9 @@ def item(recurso, ini, fin, tipo='programado', estado='disponible', orden=1):
             'art_id': 'A1', 'art': 'Articulo', 'operacion': 'Maquina M1'}
 
 
-def montar(monkeypatch, items, grupos=None, ahora=AHORA):
+def montar(monkeypatch, items, grupos=None, ahora=AHORA, automaticas=()):
     monkeypatch.setattr(pl.produccion, 'calcular_items', lambda *a, **kw: items)
+    monkeypatch.setattr(pl.produccion, 'maquinas_automaticas', lambda: set(automaticas))
     monkeypatch.setattr(pl.produccion, 'censo', lambda *a, **kw: grupos or
                         [{'id': '1', 'nombre': 'Operario 1', 'areas': ['CHAPA']}])
     monkeypatch.setattr(pl, 'date', type('D', (date,), {'today': classmethod(lambda c: HOY)}))
@@ -219,3 +220,167 @@ def test_un_solape_de_un_minuto_no_se_marca(monkeypatch):
 
     assert celda['min_bonos'] - celda['min'] == 1
     assert celda['simultaneo'] is False
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  Lo que necesita la hoja del día
+# ─────────────────────────────────────────────────────────────────────
+#  La hoja se imprime la víspera y se cuelga para toda la planta. De cada bono
+#  tiene que decir a qué hora va, y si es un trabajo de varios días, qué día de
+#  cuántos es: una orden de tres días leída como tres trabajos sueltos no sirve.
+
+def test_una_orden_de_dos_dias_se_lee_como_tal_en_cada_dia(monkeypatch):
+    get_plan = montar(monkeypatch, [item('1', datetime(2026, 9, 9, 13),
+                                         datetime(2026, 9, 10, 9))])
+    hoy, manana = (c['bonos'][0] for c in get_plan(dias=2)['personas'][0]['dias'])
+
+    assert (hoy['inicio'], hoy['fin']) == (datetime(2026, 9, 9, 13), datetime(2026, 9, 9, 15))
+    assert (hoy['viene'], hoy['sigue'], hoy['dia_n'], hoy['dias_n']) == (False, True, 1, 2)
+    assert (manana['inicio'], manana['fin']) == (datetime(2026, 9, 10, 7), datetime(2026, 9, 10, 9))
+    assert (manana['viene'], manana['sigue'], manana['dia_n'], manana['dias_n']) == (True, False, 2, 2)
+
+
+def test_el_fin_de_semana_no_cuenta_como_dia_de_la_orden(monkeypatch):
+    # Viernes 14:00 -> lunes 08:00: son dos jornadas, no cuatro días.
+    get_plan = montar(monkeypatch, [item('1', datetime(2026, 9, 11, 14),
+                                         datetime(2026, 9, 14, 8))])
+    lunes = get_plan(dias=4)['personas'][0]['dias'][3]['bonos'][0]
+    assert (lunes['dia_n'], lunes['dias_n']) == (2, 2)
+
+
+def test_acabar_justo_al_abrir_no_es_un_dia_mas(monkeypatch):
+    """Una barra que termina a las 07:00 no ocupa nada de ese día: decir
+    "día 1 de 2" haría esperar una continuación que no existe."""
+    get_plan = montar(monkeypatch, [item('1', datetime(2026, 9, 9, 13),
+                                         datetime(2026, 9, 10, 7))])
+    b = get_plan(dias=2)['personas'][0]['dias'][0]['bonos'][0]
+    assert (b['sigue'], b['dias_n']) == (False, 1)
+
+
+def test_las_piezas_se_reparten_por_el_tiempo_de_cada_dia(monkeypatch):
+    # 120 piezas pendientes en 4 horas: 2 hoy (13-15) y 2 mañana (07-09).
+    it = item('1', datetime(2026, 9, 9, 13), datetime(2026, 9, 10, 9))
+    it.update(piezas_pendientes=120, piezas=200)
+    get_plan = montar(monkeypatch, [it])
+    hoy, manana = (c['bonos'][0] for c in get_plan(dias=2)['personas'][0]['dias'])
+
+    assert (hoy['piezas_dia'], manana['piezas_dia']) == (60, 60)
+    assert hoy['piezas_pendientes'] == 120 and hoy['piezas_objetivo'] == 200
+
+
+def test_sin_piezas_conocidas_no_se_inventa_el_reparto(monkeypatch):
+    get_plan = montar(monkeypatch, [item('1', datetime(2026, 9, 9, 8), datetime(2026, 9, 9, 10))])
+    b = get_plan(dias=1)['personas'][0]['dias'][0]['bonos'][0]
+    assert b['piezas_dia'] is None and b['piezas_pendientes'] is None
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  Tiempo efectivo del operario en la hoja del día
+# ─────────────────────────────────────────────────────────────────────
+#  Dos reglas de producción, SOLO para la hoja: la jornada son 7h45 porque el
+#  descanso de 11:00 a 11:15 no es trabajo, y en las máquinas automáticas al
+#  operario solo le cuenta el montaje. El plan y la rejilla no cambian.
+
+def maquina(it, matricula, **extra):
+    it.update(matricula=matricula, **extra)
+    return it
+
+
+def test_la_jornada_efectiva_son_siete_horas_y_tres_cuartos(monkeypatch):
+    get_plan = montar(monkeypatch, [item('1', datetime(2026, 9, 9, 7), datetime(2026, 9, 9, 15))])
+    celda = get_plan(dias=1)['personas'][0]['dias'][0]
+
+    assert celda['min'] == 480                       # la rejilla, como siempre
+    assert celda['min_operario'] == 465              # la hoja, sin el descanso
+    assert celda['disponible_operario'] == 465
+    assert celda['bonos'][0]['min_operario'] == 465
+
+
+def test_un_trabajo_que_no_toca_el_descanso_cuenta_entero(monkeypatch):
+    get_plan = montar(monkeypatch, [item('1', datetime(2026, 9, 9, 12), datetime(2026, 9, 9, 13))])
+    assert get_plan(dias=1)['personas'][0]['dias'][0]['min_operario'] == 60
+
+
+def test_en_una_automatica_solo_cuenta_el_montaje(monkeypatch):
+    # 30 min de preparación al principio de una barra de todo el día.
+    it = maquina(item('1', datetime(2026, 9, 9, 7), datetime(2026, 9, 9, 15)), 'M1',
+                 min_preparacion=30)
+    get_plan = montar(monkeypatch, [it], automaticas={'M1'})
+    celda = get_plan(dias=1)['personas'][0]['dias'][0]
+    b = celda['bonos'][0]
+
+    assert b['automatica'] is True
+    assert (b['op_inicio'], b['op_fin']) == (datetime(2026, 9, 9, 7), datetime(2026, 9, 9, 7, 30))
+    assert b['min_operario'] == 30 and celda['min_operario'] == 30
+    assert celda['min'] == 480                       # la máquina sigue ocupada
+
+
+def test_la_misma_barra_en_una_maquina_no_declarada_cuenta_entera(monkeypatch):
+    it = maquina(item('1', datetime(2026, 9, 9, 7), datetime(2026, 9, 9, 15)), 'M2',
+                 min_preparacion=30)
+    get_plan = montar(monkeypatch, [it], automaticas={'M1'})
+    b = get_plan(dias=1)['personas'][0]['dias'][0]['bonos'][0]
+    assert b['automatica'] is False and b['min_operario'] == 465
+
+
+def test_una_automatica_ya_montada_no_le_cuesta_nada(monkeypatch):
+    """Bono a medias con la máquina montada: la cola pone la preparación a 0."""
+    it = maquina(item('1', datetime(2026, 9, 9, 7), datetime(2026, 9, 9, 15)), 'M1',
+                 min_preparacion=0)
+    get_plan = montar(monkeypatch, [it], automaticas={'M1'})
+    celda = get_plan(dias=1)['personas'][0]['dias'][0]
+    assert celda['min_operario'] == 0 and celda['bonos'][0]['op_inicio'] is None
+
+
+def test_en_una_automatica_la_produccion_en_marcha_no_cuenta_y_el_montaje_si(monkeypatch):
+    montaje = maquina(item('1', datetime(2026, 9, 9, 7), datetime(2026, 9, 9, 8), tipo='real'),
+                      'M1', es_montaje=True)
+    produce = maquina(item('1', datetime(2026, 9, 9, 8), datetime(2026, 9, 9, 15), tipo='real',
+                           orden=2), 'M1', es_montaje=False)
+    get_plan = montar(monkeypatch, [montaje, produce], automaticas={'M1'})
+    celda = get_plan(dias=1)['personas'][0]['dias'][0]
+    assert celda['min_operario'] == 60
+
+
+def test_el_montaje_de_un_trabajo_de_dos_dias_cuenta_solo_el_primero(monkeypatch):
+    it = maquina(item('1', datetime(2026, 9, 9, 14), datetime(2026, 9, 10, 15)), 'M1',
+                 min_preparacion=90)             # 14:00-15:00 hoy y 07:00-07:30 mañana
+    get_plan = montar(monkeypatch, [it], automaticas={'M1'})
+    hoy, manana = get_plan(dias=2)['personas'][0]['dias']
+    assert hoy['min_operario'] == 60
+    assert manana['min_operario'] == 30
+    assert manana['bonos'][0]['op_fin'] == datetime(2026, 9, 10, 7, 30)
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  Quien falta no cuenta en la hoja del día
+# ─────────────────────────────────────────────────────────────────────
+
+def test_la_hoja_sabe_quien_falta_el_dia_entero(monkeypatch):
+    get_plan = montar(monkeypatch, [], grupos=[{'id': '13', 'nombre': 'Ángel', 'areas': []},
+                                               {'id': '7', 'nombre': 'Parcial', 'areas': []},
+                                               {'id': '1', 'nombre': 'Presente', 'areas': []}])
+    monkeypatch.setattr(pl.produccion, 'ausencias', lambda dia: {
+        '13': {'motivo': 'De baja', 'parcial': False},
+        '7':  {'motivo': 'Ausencia', 'parcial': True},     # trabaja el resto del día
+    })
+    falta = {p['nombre']: p['dias'][0]['ausencia'] for p in get_plan(dias=1, vista='empleado', ausencias=True)['personas']}
+    assert falta == {'Ángel': 'De baja', 'Parcial': None, 'Presente': None}
+
+
+def test_la_rejilla_de_carga_no_consulta_ausencias(monkeypatch):
+    get_plan = montar(monkeypatch, [])
+    def no_llamar(dia):
+        raise AssertionError('la rejilla no debe pagar la consulta a PORTALHR')
+    monkeypatch.setattr(pl.produccion, 'ausencias', no_llamar)
+    assert get_plan(dias=1)['personas'][0]['dias'][0]['ausencia'] is None
+
+
+def test_el_sobrante_de_un_montaje_del_dia_anterior_no_sale_como_hora(monkeypatch):
+    """1 min de montaje que empieza a las 14:59:40: 20 s hoy y 40 s mañana.
+    En la hoja salía "07:00–07:00"; menos de un minuto no es un montaje."""
+    it = maquina(item('1', datetime(2026, 9, 9, 14, 59, 40), datetime(2026, 9, 10, 12)), 'M1',
+                 min_preparacion=1)
+    get_plan = montar(monkeypatch, [it], automaticas={'M1'})
+    manana = get_plan(dias=2)['personas'][0]['dias'][1]
+    assert manana['bonos'][0]['op_inicio'] is None and manana['min_operario'] == 0

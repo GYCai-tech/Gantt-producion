@@ -17,6 +17,7 @@ MIN_BLOQUE_SIN_TIEMPO = 60
 #  cada grupo sigue mandando la secuencia manual del ERP.
 _PRIO_SEMAFORO = {'en_curso': 0, 'disponible': 1, 'bloqueada': 2}
 
+
 #  A partir de cuántos asignados un bono se trata como CUADRILLA: trabajan a la
 #  vez y el tiempo estimado —que son minutos-HOMBRE— se reparte entre ellos.
 #
@@ -323,10 +324,10 @@ def planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
         # Un bono sin estimar no se toca: su bloque nominal es un hueco
         # reservado a ojo y aplicarle una fracción sería afinar una conjetura.
         cuanto = (atencion or {}).get((b["matricula"] or "").strip(), 1.0)
+        setup_reloj = setup / len(asignados) if cuadrilla else setup
         if sin_tiempo or cuanto >= 1:
             dur_persona = dur_reloj
         else:
-            setup_reloj = setup / len(asignados) if cuadrilla else setup
             dur_persona = setup_reloj + cuanto * max(0.0, dur_reloj - setup_reloj)
         desatendida = dur_persona < dur_reloj
 
@@ -385,6 +386,10 @@ def planificar_cola(cola: list[dict], ocupado_hasta: dict, hasta_dt: datetime,
             # Cuánto de la barra ata de verdad al operario. Con la máquina
             # atendida coincide con `duracion` y no hay nada que explicar.
             "min_atencion": dur_persona, "desatendida": desatendida,
+            # La preparación va al principio de la barra y en minutos de reloj.
+            # No cambia nada del plan: la usa la hoja del día, que en las
+            # máquinas automáticas solo cuenta al operario el montaje.
+            "min_preparacion": 0.0 if sin_tiempo else setup_reloj,
         })
     return plan
 

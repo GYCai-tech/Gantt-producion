@@ -113,7 +113,13 @@ ORDER BY obl.Fecha
 #  encajar, un replace no falla — se queda sin sustituir y la consulta sale sin
 #  filtrar o revienta con los parámetros sin bindear, que es un 503 opaco.
 FILTRO_RANGO    = "CAST(obl.Fecha AS date) BETWEEN :desde AND :hasta"
-FILTRO_ABIERTAS = "obl.Hfinal IS NULL AND obl.Hinicial BETWEEN :limite AND :ahora"
+#  «Abierta» es siempre «abierta EN :ahora», no «abierta ahora mismo». Con
+#  el reloj en vivo son lo mismo; con el reloj congelado para la foto de las
+#  06:55 no: a las 12:56 la línea que estaba en marcha a las 06:55 ya tiene
+#  Hfinal, y un `Hfinal IS NULL` a secas la tiraba. La foto salía sin una
+#  sola barra de trabajo real.
+FILTRO_ABIERTAS = ("(obl.Hfinal IS NULL OR obl.Hfinal > :ahora)"
+                   " AND obl.Hinicial BETWEEN :limite AND :ahora")
 
 
 def consulta_lineas(filtro: str) -> str:
@@ -154,6 +160,10 @@ SQL_CENSO_EMPLEADOS = """
         FROM Ordenes_Bonos_Lineas obl
             JOIN Empleados_Datos ed ON obl.IdEmpleado = ed.IdEmpleado
         WHERE ed.IdDepartamento = :departamento
+          --  El 0 es el comodín del ERP, "Empleado Prueba0 (Sin Definir)": no es
+          --  una persona. Salía en el Gantt, en la carga y en la hoja del día como
+          --  un operario más sin trabajo. Producción pidió quitarlo (2026-09-24).
+          AND obl.IdEmpleado <> 0
     """
 
 #  El área de un operario no es su departamento del ERP sino la de las
@@ -507,20 +517,43 @@ WITH ausencia AS (
     FROM PORTALHR.dbo.Employees_Holidays h
     WHERE h.StatusId = 1
       AND CAST(h.[date] AS date) = :dia
-), resuelta AS (
-    --  Una baja pesa más que un permiso: si alguien tiene las dos el mismo día
-    --  manda la baja, que es la que explica de verdad por qué no está.
-    SELECT ce.IdEmpleado AS idempleado,
-           a.motivo,
-           a.desde, a.hasta, a.parcial, a.hora_ini, a.hora_fin,
-           ROW_NUMBER() OVER (PARTITION BY ce.IdEmpleado ORDER BY a.prioridad) AS rn
+), cruzada AS (
+    --  El cruce con el ERP es por el código de tarjeta. Si en PORTALHR falta
+    --  ese código, por el nombre completo, sin tildes ni mayúsculas, y solo si
+    --  el nombre da UN empleado: un homónimo no se adivina.
+    --
+    --  Es un apaño a un dato mal puesto, no el cruce normal. Ángel Diéguez
+    --  tiene en PORTALHR una baja del 01/01/2025 al 31/12/2026 y la ficha sin
+    --  AccessId, así que la app nunca le encontraba la baja y la hoja del día
+    --  lo contaba como disponible. Lo correcto es rellenar su AccessId en
+    --  PORTALHR (en el ERP su codigotag es el de su tarjeta); con eso este
+    --  camino deja de usarse solo.
+    SELECT COALESCE(por_tag.IdEmpleado,
+                    CASE WHEN por_nombre.n = 1 THEN por_nombre.IdEmpleado END) AS idempleado,
+           a.motivo, a.desde, a.hasta, a.parcial, a.hora_ini, a.hora_fin, a.prioridad
     FROM ausencia a
-        JOIN PORTALHR.dbo.Employees e           ON e.EmployeeId = a.EmployeeId
+        JOIN PORTALHR.dbo.Employees e ON e.EmployeeId = a.EmployeeId
         --  Sin este guardarraíl, un tag vacío casaría '' = '' y cruzaría gente
         --  sin ninguna relación. Hoy no ocurre (medido: 0 casos), pero basta un
         --  codigotag en blanco para que ocurra.
-        JOIN GOMEZYCRESPO.dbo.Conf_Empleados ce ON ce.codigotag = e.AccessId
-                                               AND LTRIM(RTRIM(e.AccessId)) <> ''
+        LEFT JOIN GOMEZYCRESPO.dbo.Conf_Empleados por_tag
+               ON por_tag.codigotag = e.AccessId
+              AND LTRIM(RTRIM(ISNULL(e.AccessId, ''))) <> ''
+        OUTER APPLY (
+            SELECT MIN(ed.IdEmpleado) AS IdEmpleado, COUNT(*) AS n
+            FROM GOMEZYCRESPO.dbo.Empleados_Datos ed
+            WHERE LTRIM(RTRIM(ISNULL(e.AccessId, ''))) = ''
+              AND UPPER(LTRIM(RTRIM(ed.Nombre)) + ' ' + LTRIM(RTRIM(ed.Apellidos)))
+                  COLLATE Latin1_General_CI_AI
+                = UPPER(LTRIM(RTRIM(e.FullName))) COLLATE Latin1_General_CI_AI
+        ) por_nombre
+), resuelta AS (
+    --  Una baja pesa más que un permiso: si alguien tiene las dos el mismo día
+    --  manda la baja, que es la que explica de verdad por qué no está.
+    SELECT idempleado, motivo, desde, hasta, parcial, hora_ini, hora_fin,
+           ROW_NUMBER() OVER (PARTITION BY idempleado ORDER BY prioridad) AS rn
+    FROM cruzada
+    WHERE idempleado IS NOT NULL
 )
 SELECT idempleado, motivo, desde, hasta, parcial, hora_ini, hora_fin
 FROM resuelta WHERE rn = 1

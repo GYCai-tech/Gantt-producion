@@ -172,6 +172,7 @@ def cargar_semaforo() -> dict:
     return mapa
 
 
+
 # ─────────────────────────────────────────────────────────────────────
 #  MÁQUINAS QUE TRABAJAN SOLAS
 # ─────────────────────────────────────────────────────────────────────
@@ -226,6 +227,24 @@ def _declaradas(ruta=None) -> set:
                   f"({', '.join(hallado)}): se declaran todas")
         matriculas.update(hallado)
     return matriculas
+
+
+def maquinas_automaticas() -> set:
+    """Las matrículas que la ficha declara automáticas, tal cual.
+
+    Es la lista de producción sin cruzar con el histórico. La usa la hoja del
+    día, que en estas máquinas solo cuenta al operario el montaje: la regla es
+    "si está en la lista", no "si el histórico dice que va sola". Lo que mide
+    el histórico es `cargar_atencion`, y eso es cosa del planificador.
+
+    DEGRADA: si hay nombres sin matrícula y el ERP no responde para
+    resolverlos, se quedan las matrículas escritas. La hoja sale igual.
+    """
+    try:
+        return _declaradas()
+    except ErpNoDisponible as e:
+        print(f"[atencion] no se pudieron resolver los nombres de la ficha: {e}")
+        return leer_ficha()[0]
 
 
 def cargar_atencion() -> dict:

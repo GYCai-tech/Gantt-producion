@@ -59,10 +59,10 @@ const App = (() => {
   const ST_LABEL = {
     plazo: 'En curso', completado: 'Completado',
     retrasada: 'Retrasada', riesgo: 'En riesgo', 'sin-estimar': 'Sin datos fiables',
-    //  Dos cosas distintas y el nombre importa en planta: BLOQUEADA es un
-    //  bono que aun no se ha hecho y no se puede empezar; PARADA es uno que
-    //  tuvo a alguien fichando y se quedo a medias.
-    parada: 'Parada', bloqueada: 'Bloqueada',
+    //  BLOQUEADA es un bono que aun no se ha hecho y no se puede empezar. No
+    //  hay "parada" deducida: la unica parada que se pinta es la ANOTADA en
+    //  el ERP, y esa va por `it.paro` / `.has-paro`, no por el estado.
+    bloqueada: 'Bloqueada',
     pausada: 'Pausada', parcial: 'Pausado (bono abierto)',
     programado: 'En espera', disponible: 'Disponible',
     'pendiente-cierre': 'Pendiente de cerrar',
@@ -78,9 +78,8 @@ const App = (() => {
     //  (.tag--sin-estimar) y lo que de verdad dice: falta informacion, no hay
     //  un problema en el bono. El naranja queda para lo que pide accion.
     retrasada: '#d83b46', riesgo: '#c4710c', 'sin-estimar': '#79859a',
-    //  La parada hereda el ambar del trabajo interrumpido; el granate se
-    //  queda para lo que ni ha empezado.
-    parada: '#b5651d', bloqueada: '#9a4b52',
+    //  El granate se queda para lo que ni ha empezado.
+    bloqueada: '#9a4b52',
     pausada: '#5b6b8a', parcial: '#c77b1f',
     programado: '#5b63b0', disponible: '#1f9254',
     'pendiente-cierre': '#3f7d9e',
@@ -223,12 +222,73 @@ const App = (() => {
   }
 
   // ── Arranque ───────────────────────────────────────────────────────
+  // ── Leyenda ────────────────────────────────────────────────────────
+  //  Los cuadritos son BARRAS DE VERDAD: llevan las mismas clases
+  //  `bar st-<estado>` que pinta el Gantt, asi que el color sale del mismo
+  //  sitio del CSS. Una leyenda con los colores copiados a mano es una
+  //  leyenda que miente en cuanto alguien retoca un tono.
+  //
+  //  Solo se listan los estados que el Gantt llega a pintar. `ST_LABEL` tiene
+  //  algunos mas --retrasada, pausada-- que hoy no produce ningun camino del
+  //  backend; ponerlos seria inventar casos que nadie va a ver.
+  const LEYENDA_ESTADOS = [
+    //  [estado, clase de tipo cuando SIEMPRE aparece con ella]
+    ['plazo',            'bar--real'],
+    ['continuacion',     'bar--programado'],   // siempre proyectada
+    ['pendiente-cierre', ''],
+    ['completado',       'bar--trabajado'],
+    ['disponible',       'bar--programado'],
+    ['bloqueada',        'bar--programado'],
+    ['riesgo',           ''],
+    ['sin-estimar',      ''],
+  ];
+
+  //  Lo que no es color va aparte, porque responde a otra pregunta: el color
+  //  dice EN QUE ESTA el bono y esto dice COMO SE LEE la barra.
+  function renderLeyenda() {
+    const caja = $('gantt-leyenda');
+    if (!caja) return;
+    const chip = (clases, texto) =>
+      `<span class="gantt__lg"><i class="bar ${clases}"></i>${esc(texto)}</span>`;
+    const icono = (ico, texto) =>
+      `<span class="gantt__lg"><b class="gantt__lg-ico">${ico}</b>${esc(texto)}</span>`;
+
+    caja.innerHTML =
+      '<span class="gantt__lg-tit">Estado</span>' +
+      LEYENDA_ESTADOS.map(([st, tipo]) =>
+        chip(`st-${st} ${tipo}`, ST_LABEL[st] || st)).join('') +
+      '<span class="gantt__lg-sep"></span>' +
+      '<span class="gantt__lg-tit">Cómo se lee</span>' +
+      chip('gantt__lg--neutro bar--programado', 'Rayada: previsión, aún no ha pasado') +
+      chip('gantt__lg--neutro bar--creciendo', 'Borde discontinuo: no se sabe cuándo acaba') +
+      chip('gantt__lg--neutro gantt__lg--exceso', 'Tramo rojo: pasado de presupuesto') +
+      icono('⚙', 'Incluye montaje de utillaje') +
+      //  El amarillo fuerte es ahora la UNICA parada que se pinta, asi que en
+      //  la leyenda tiene que verse el color, no solo el simbolo.
+      chip('has-paro', '⏻ Amarilla: parada anotada en el ERP');
+
+    //  Que siga abierta si el usuario la abrio. El plegado en si lo hace el
+    //  <details> nativo; esto solo recuerda como la dejo. Va en try/catch
+    //  porque en ventana privada leer localStorage puede lanzar, y entonces
+    //  lo correcto es enseñarla plegada, no quedarse sin leyenda.
+    const caja2 = $('leyenda-caja');
+    if (!caja2) return;
+    try {
+      caja2.open = localStorage.getItem('gyc_leyenda') === '1';
+    } catch (e) { /* sin memoria: plegada, que es el valor por defecto */ }
+    caja2.addEventListener('toggle', () => {
+      try { localStorage.setItem('gyc_leyenda', caja2.open ? '1' : '0'); }
+      catch (e) { /* no poder recordarlo no puede romper la pantalla */ }
+    });
+  }
+
   function init() {
     const now = new Date();
     winStart = startOfDay(now);
     buildDays();
     renderZoom();
     renderEscala();
+    renderLeyenda();
     montarRueda();
     tickClock(); setInterval(tickClock, 30000);
     // Si el arranque falla no hay nada que enseñar, asi que lo unico que se

@@ -57,7 +57,7 @@ def plan(cola, ocupado=None, hasta=HASTA):
 #  valen siempre `duracion` y False, así que no esconden ninguna diferencia
 #  de colocación —eso se comprueba abajo, en
 #  `test_sin_atencion_reserva_como_siempre`.
-_FUERA = ("bono", "asignados", "min_atencion", "desatendida")
+_FUERA = ("bono", "asignados", "min_atencion", "desatendida", "min_preparacion")
 
 
 def _comparable(tareas):
